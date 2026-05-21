@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import NetworkLandscape from './NetworkLandscape.jsx';
 import {
   // Nav
   Cpu, HardDrive, Layers, Boxes, Image as ImageIcon, ScrollText, Server,
+  Radar,
   // Layers
   Shield, Wifi, Monitor, Settings, Activity,
   // Actions
@@ -61,6 +63,7 @@ function writeJSON(key, value) {
 // ── Nav definition ─────────────────────────────────────────────────
 const NAV_SECTIONS = [
   { id: 'devices',   label: 'Devices',   icon: Cpu,        kind: 'active' },
+  { id: 'network',   label: 'Network',   icon: Radar,      kind: 'active' },
   { id: 'builds',    label: 'Builds',    icon: HardDrive,  kind: 'stub',   stubText: 'No builds yet — generate a build-plan to get started.' },
   { id: 'manifests', label: 'Manifests', icon: Layers,     kind: 'list' },
   { id: 'presets',   label: 'Presets',   icon: Boxes,      kind: 'stub',   stubText: 'Presets — coming soon.' },
@@ -477,7 +480,8 @@ function CentreWorkspace(props) {
     }}>
       {nav === 'devices'   && <DevicesView   {...props}/>}
       {nav === 'manifests' && <ManifestsView {...props}/>}
-      {nav !== 'devices' && nav !== 'manifests' && <StubView nav={nav}/>}
+      {nav === 'network'   && <NetworkLandscape/>}
+      {nav !== 'devices' && nav !== 'manifests' && nav !== 'network' && <StubView nav={nav}/>}
     </main>
   );
 }

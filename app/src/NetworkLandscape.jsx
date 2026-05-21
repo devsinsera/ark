@@ -1,0 +1,441 @@
+// NetworkLandscape — the "Tab 3" device spreadsheet view, packaged
+// as the four-tab Network Landscape view spec'd in
+// docs/NETWORK_LANDSCAPE.md.
+//
+// Talks to the local Ark Hub (typically http://localhost:7400). The
+// browser cannot do ARP / mDNS itself; the Hub does the discovery
+// and exposes the data via JSON. This component is the operator's
+// window onto whatever the Hub currently knows about.
+
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { Wifi, Cpu, Network as NetworkIcon, Share2, RefreshCw, AlertTriangle, Search } from 'lucide-react';
+import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO } from './lib/theme.js';
+
+const HUB_KEY = 'ark.hubUrl';
+const DEFAULT_HUB = 'http://localhost:7400';
+
+function readHubUrl() {
+  try {
+    const stored = window.localStorage.getItem(HUB_KEY);
+    return (stored && stored.replace(/\/+$/, '')) || DEFAULT_HUB;
+  } catch { return DEFAULT_HUB; }
+}
+
+const TABS = [
+  { id: 'devices', label: 'Devices',  icon: Cpu,         desc: 'Live LAN device spreadsheet' },
+  { id: 'wifi',    label: 'Wi-Fi',    icon: Wifi,        desc: 'Active + nearby networks' },
+  { id: 'active',  label: 'Networks', icon: NetworkIcon, desc: 'Networks Ark has observed' },
+  { id: 'graph',   label: 'Graph',    icon: Share2,      desc: 'Network ↔ device topology' },
+];
+
+export default function NetworkLandscape() {
+  const [tab, setTab] = useState('devices');
+  const [hubUrl, setHubUrl] = useState(readHubUrl);
+
+  const tabDef = TABS.find(t => t.id === tab);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <header style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <h2 style={{
+          fontFamily: FONT_HEADING,
+          fontSize: 28, fontWeight: 500, letterSpacing: -0.5,
+          margin: 0, color: COLORS.textPrimary,
+        }}>Network Landscape</h2>
+        <p style={{ margin: 0, color: COLORS.textMuted, fontSize: 13 }}>
+          {tabDef?.desc} · via Hub at <code style={{ color: COLORS.accent }}>{hubUrl}</code>
+        </p>
+      </header>
+
+      <TabBar tab={tab} setTab={setTab} />
+
+      {tab === 'devices' && <DevicesTab hubUrl={hubUrl}/>}
+      {tab === 'wifi'    && <WifiTab    hubUrl={hubUrl}/>}
+      {tab === 'active'  && <ActiveTab  hubUrl={hubUrl}/>}
+      {tab === 'graph'   && <GraphTab/>}
+
+      <HubFooter hubUrl={hubUrl} setHubUrl={setHubUrl}/>
+    </div>
+  );
+}
+
+// ── Tab bar ─────────────────────────────────────────────────────────
+function TabBar({ tab, setTab }) {
+  return (
+    <div style={{
+      display: 'flex', gap: 4, padding: 4,
+      background: COLORS.bgPanel, borderRadius: 10,
+      border: `1px solid ${COLORS.border}`, width: 'fit-content',
+    }}>
+      {TABS.map(t => {
+        const Icon = t.icon;
+        const isActive = tab === t.id;
+        return (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '8px 14px',
+            background: isActive ? COLORS.bgActive : 'transparent',
+            color: isActive ? COLORS.accentBright : COLORS.textSecondary,
+            border: `1px solid ${isActive ? COLORS.accentBorder : 'transparent'}`,
+            borderRadius: 8, cursor: 'pointer', fontSize: 13,
+            fontFamily: FONT_BODY, fontWeight: 500,
+            transition: 'all 120ms ease',
+          }}>
+            <Icon size={14}/> {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Devices tab (the spec'd Tab 3) ─────────────────────────────────
+function DevicesTab({ hubUrl }) {
+  const [state, setState] = useState({ status: 'loading', devices: [], scanned_at: null, error: null });
+  const [filter, setFilter] = useState('');
+  const [busy,   setBusy]   = useState(false);
+
+  const fetchDevices = useCallback(async () => {
+    try {
+      const res = await fetch(`${hubUrl}/api/devices`, { cache: 'no-cache' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setState({ status: 'ok', devices: data.devices || [], scanned_at: data.scanned_at, count: data.device_count, error: null });
+    } catch (e) {
+      setState(s => ({ ...s, status: 'error', error: e.message }));
+    }
+  }, [hubUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchDevices();
+    const t = setInterval(() => { if (!cancelled) fetchDevices(); }, 5000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [fetchDevices]);
+
+  const onScanNow = async () => {
+    setBusy(true);
+    try { await fetch(`${hubUrl}/api/scan`, { method: 'POST' }); await fetchDevices(); }
+    catch { /* fetchDevices surfaces the error */ }
+    finally { setBusy(false); }
+  };
+
+  const filtered = useMemo(() => {
+    if (!filter) return state.devices;
+    const q = filter.toLowerCase();
+    return state.devices.filter(d =>
+      (d.ip || '').includes(q) ||
+      (d.device_name || '').toLowerCase().includes(q) ||
+      (d.hostname || '').toLowerCase().includes(q) ||
+      (d.mac || '').toLowerCase().includes(q) ||
+      (d.vendor || '').toLowerCase().includes(q)
+    );
+  }, [filter, state.devices]);
+
+  if (state.status === 'error') return <HubUnreachable hubUrl={hubUrl} error={state.error}/>;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 200, position: 'relative' }}>
+          <Search size={14} style={{ position: 'absolute', top: 11, left: 10, color: COLORS.textMuted }}/>
+          <input
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            placeholder="filter by IP, MAC, hostname, vendor…"
+            style={{
+              width: '100%', boxSizing: 'border-box',
+              padding: '8px 12px 8px 32px',
+              background: COLORS.bgPanel, color: COLORS.textPrimary,
+              border: `1px solid ${COLORS.border}`, borderRadius: 8,
+              fontFamily: FONT_BODY, fontSize: 13, outline: 'none',
+            }}
+          />
+        </div>
+        <button onClick={onScanNow} disabled={busy} style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '8px 14px',
+          background: busy ? COLORS.bgPanel : COLORS.bgActive,
+          color: COLORS.accentBright,
+          border: `1px solid ${COLORS.accentBorder}`,
+          borderRadius: 8, fontFamily: FONT_BODY, fontSize: 13,
+          cursor: busy ? 'wait' : 'pointer',
+        }}>
+          <RefreshCw size={14} className={busy ? 'spin' : ''}/> {busy ? 'scanning…' : 'Scan now'}
+        </button>
+        <span style={{ fontSize: 12, color: COLORS.textMuted, fontFamily: FONT_MONO }}>
+          {state.scanned_at ? `last: ${state.scanned_at.slice(11, 19)} · ${state.count} device${state.count === 1 ? '' : 's'}` : 'awaiting first scan…'}
+        </span>
+      </div>
+
+      <div style={{
+        border: `1px solid ${COLORS.border}`, borderRadius: 10,
+        overflow: 'hidden', background: COLORS.bgPanel,
+      }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: FONT_BODY, fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: 'rgba(255,255,255,0.02)', color: COLORS.textMuted, fontWeight: 500, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              <Th>·</Th>
+              <Th>IP</Th>
+              <Th>Hostname / name</Th>
+              <Th>MAC</Th>
+              <Th>Vendor</Th>
+              <Th>Sources</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && state.status === 'ok' && (
+              <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', color: COLORS.textMuted }}>
+                {state.devices.length === 0 ? 'No devices visible yet — first scan still running, or this network is empty.' : 'No matches for that filter.'}
+              </td></tr>
+            )}
+            {filtered.length === 0 && state.status === 'loading' && (
+              <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', color: COLORS.textMuted }}>Loading…</td></tr>
+            )}
+            {filtered.map(d => <DeviceRow key={d.id || (d.ip + d.mac)} d={d}/>)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function Th({ children }) {
+  return <th style={{ textAlign: 'left', padding: '10px 14px', borderBottom: `1px solid ${COLORS.border}` }}>{children}</th>;
+}
+function Td({ children, mono = false, dim = false }) {
+  return <td style={{
+    padding: '10px 14px',
+    borderBottom: `1px solid ${COLORS.border}`,
+    color: dim ? COLORS.textMuted : COLORS.textPrimary,
+    fontFamily: mono ? FONT_MONO : FONT_BODY,
+    fontSize: mono ? 12 : 13,
+    whiteSpace: 'nowrap',
+  }}>{children}</td>;
+}
+
+function DeviceRow({ d }) {
+  const isPi = d.os === 'likely Pi' || /Raspberry Pi/i.test(d.vendor || '');
+  const hostnameDisplay = d.hostname || d.device_name || '—';
+  return (
+    <tr style={{ background: isPi ? 'rgba(6,182,212,0.04)' : 'transparent' }}>
+      <Td>
+        <span style={{
+          display: 'inline-block', width: 8, height: 8, borderRadius: 4,
+          background: isPi ? COLORS.accentBright : COLORS.success,
+          boxShadow: isPi ? `0 0 8px ${COLORS.accent}` : 'none',
+        }}/>
+      </Td>
+      <Td mono>{d.ip}</Td>
+      <Td>
+        {hostnameDisplay}
+        {isPi && (
+          <span style={{
+            marginLeft: 8, padding: '2px 6px', fontSize: 10,
+            background: COLORS.bgActive, color: COLORS.accentBright,
+            border: `1px solid ${COLORS.accentBorder}`, borderRadius: 4,
+            textTransform: 'uppercase', letterSpacing: 0.5,
+          }}>Pi</span>
+        )}
+      </Td>
+      <Td mono dim>{d.mac || '—'}</Td>
+      <Td dim>{d.vendor || '—'}</Td>
+      <Td dim style={{ fontSize: 11 }}>{(d.sources || []).join(', ') || '—'}</Td>
+    </tr>
+  );
+}
+
+// ── Wi-Fi tab ───────────────────────────────────────────────────────
+function WifiTab({ hubUrl }) {
+  const [state, setState] = useState({ status: 'loading', active: null, nearby: [], scanned_at: null, error: null });
+  const [busy,  setBusy]  = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`${hubUrl}/api/wifi`, { cache: 'no-cache' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setState({ status: 'ok', active: data.active, nearby: data.nearby || [], scanned_at: data.scanned_at, error: null });
+    } catch (e) {
+      setState(s => ({ ...s, status: 'error', error: e.message }));
+    }
+  }, [hubUrl]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const onRescan = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch(`${hubUrl}/api/wifi/refresh`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok || data.nearby) setState({ status: 'ok', active: data.active, nearby: data.nearby || [], scanned_at: data.scanned_at, error: data.error || null });
+    } catch (e) {
+      setState(s => ({ ...s, status: 'error', error: e.message }));
+    } finally { setBusy(false); }
+  };
+
+  if (state.status === 'error') return <HubUnreachable hubUrl={hubUrl} error={state.error}/>;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button onClick={onRescan} disabled={busy} style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px',
+          background: busy ? COLORS.bgPanel : COLORS.bgActive, color: COLORS.accentBright,
+          border: `1px solid ${COLORS.accentBorder}`, borderRadius: 8,
+          fontFamily: FONT_BODY, fontSize: 13, cursor: busy ? 'wait' : 'pointer',
+        }}><RefreshCw size={14}/> {busy ? 'scanning (5-10s)…' : 'Rescan'}</button>
+        <span style={{ fontSize: 12, color: COLORS.textMuted, fontFamily: FONT_MONO }}>
+          {state.scanned_at ? `last: ${state.scanned_at.slice(11, 19)}` : 'no scan yet — click Rescan'}
+        </span>
+      </div>
+
+      {state.active && (
+        <div style={{ padding: 16, background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10 }}>
+          <h3 style={{ margin: '0 0 8px', fontFamily: FONT_HEADING, fontSize: 18, color: COLORS.accentBright }}>Connected</h3>
+          <WifiRow row={state.active} highlight/>
+        </div>
+      )}
+
+      <div style={{ padding: 16, background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10 }}>
+        <h3 style={{ margin: '0 0 8px', fontFamily: FONT_HEADING, fontSize: 18, color: COLORS.textPrimary }}>
+          Nearby networks {state.nearby.length > 0 && <span style={{ color: COLORS.textMuted, fontSize: 14 }}>· {state.nearby.length}</span>}
+        </h3>
+        {state.nearby.length === 0
+          ? <div style={{ color: COLORS.textMuted, fontSize: 13 }}>No nearby networks visible. Click Rescan to refresh.</div>
+          : state.nearby.map((n, i) => <WifiRow key={n.bssid || i} row={n}/>)}
+      </div>
+    </div>
+  );
+}
+
+function WifiRow({ row, highlight }) {
+  const rssi = row.rssi;
+  const bars = rssi == null ? 0 : rssi >= -55 ? 4 : rssi >= -65 ? 3 : rssi >= -75 ? 2 : 1;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 14,
+      padding: '10px 0',
+      borderTop: highlight ? 'none' : `1px solid ${COLORS.border}`,
+    }}>
+      <SignalBars bars={bars}/>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontFamily: FONT_BODY, fontSize: 14, color: highlight ? COLORS.accentBright : COLORS.textPrimary }}>
+          {row.ssid || '(hidden)'}
+        </div>
+        <div style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLORS.textMuted }}>
+          ch {row.channel ?? '—'} · {row.security || 'unknown'} {row.bssid ? `· ${row.bssid}` : ''}
+        </div>
+      </div>
+      <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: COLORS.textSecondary, minWidth: 70, textAlign: 'right' }}>
+        {rssi != null ? `${rssi} dBm` : '—'}
+      </div>
+    </div>
+  );
+}
+
+function SignalBars({ bars }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, width: 18, height: 18 }}>
+      {[1,2,3,4].map(b => (
+        <div key={b} style={{
+          width: 3, height: 4 + b*3,
+          background: b <= bars ? COLORS.accent : COLORS.border,
+          borderRadius: 1,
+        }}/>
+      ))}
+    </div>
+  );
+}
+
+// ── Active networks tab ─────────────────────────────────────────────
+function ActiveTab() {
+  return (
+    <Placeholder
+      title="Networks observed by Ark"
+      body="Ark Hub records every network it sees devices on (Wi-Fi SSIDs, Ethernet subnets). This tab will show the full multi-network history once Hub SQLite persistence lands (Phase 4.3)."
+    />
+  );
+}
+
+function GraphTab() {
+  return (
+    <Placeholder
+      title="Network ↔ Device topology"
+      body="Force-directed graph of networks → devices → manifests. Lights up once we have telemetry from Ark Agents (Phase 4.2) and multi-network data (Phase 4.3)."
+    />
+  );
+}
+
+function Placeholder({ title, body }) {
+  return (
+    <div style={{
+      padding: 28, background: COLORS.bgPanel,
+      border: `1px dashed ${COLORS.border}`, borderRadius: 10,
+      display: 'flex', flexDirection: 'column', gap: 8,
+    }}>
+      <h3 style={{ margin: 0, fontFamily: FONT_HEADING, fontSize: 20, color: COLORS.textSecondary }}>{title}</h3>
+      <p style={{ margin: 0, color: COLORS.textMuted, fontSize: 13, lineHeight: 1.6 }}>{body}</p>
+    </div>
+  );
+}
+
+// ── Hub-unreachable error state ─────────────────────────────────────
+function HubUnreachable({ hubUrl, error }) {
+  return (
+    <div style={{
+      padding: 20, background: 'rgba(245, 180, 90, 0.06)',
+      border: `1px solid ${COLORS.warning}`, borderRadius: 10,
+      display: 'flex', gap: 14, alignItems: 'flex-start',
+    }}>
+      <AlertTriangle size={20} style={{ color: COLORS.warning, flexShrink: 0, marginTop: 2 }}/>
+      <div>
+        <h3 style={{ margin: '0 0 6px', fontFamily: FONT_HEADING, fontSize: 18, color: COLORS.warning }}>
+          Can't reach the Ark Hub at {hubUrl}
+        </h3>
+        <p style={{ margin: '0 0 10px', color: COLORS.textSecondary, fontSize: 13, lineHeight: 1.6 }}>
+          The Hub runs locally on the operator's machine and does the actual LAN scanning. The browser app talks to it via HTTP. Without the Hub running, no devices show.
+        </p>
+        <p style={{ margin: '0 0 10px', color: COLORS.textMuted, fontSize: 12, fontFamily: FONT_MONO }}>
+          {error ? `error: ${error}` : 'no specific error returned'}
+        </p>
+        <div style={{
+          padding: 12, background: COLORS.bgPanel, borderRadius: 6,
+          fontFamily: FONT_MONO, fontSize: 12, color: COLORS.textPrimary,
+          border: `1px solid ${COLORS.border}`,
+        }}>
+          <div style={{ color: COLORS.textMuted, marginBottom: 4 }}># start it from the Ark repo root</div>
+          node hub/src/index.mjs
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Hub footer (override URL) ───────────────────────────────────────
+function HubFooter({ hubUrl, setHubUrl }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(hubUrl);
+  if (!editing) {
+    return (
+      <div style={{ marginTop: 12, fontSize: 11, color: COLORS.textMuted, fontFamily: FONT_MONO }}>
+        Hub: {hubUrl} · <a onClick={() => { setDraft(hubUrl); setEditing(true); }} style={{ color: COLORS.accent, cursor: 'pointer' }}>change</a>
+      </div>
+    );
+  }
+  return (
+    <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', fontSize: 11, fontFamily: FONT_MONO }}>
+      <input value={draft} onChange={e => setDraft(e.target.value)}
+        style={{ flex: 1, padding: '6px 10px', background: COLORS.bgPanel, color: COLORS.textPrimary,
+          border: `1px solid ${COLORS.border}`, borderRadius: 6, fontFamily: FONT_MONO, fontSize: 12, outline: 'none' }}/>
+      <button onClick={() => {
+        try { window.localStorage.setItem(HUB_KEY, draft.replace(/\/+$/, '')); } catch {}
+        setHubUrl(draft.replace(/\/+$/, ''));
+        setEditing(false);
+      }} style={{ padding: '6px 12px', background: COLORS.bgActive, color: COLORS.accentBright,
+        border: `1px solid ${COLORS.accentBorder}`, borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>save</button>
+      <button onClick={() => setEditing(false)} style={{ padding: '6px 12px', background: 'transparent',
+        color: COLORS.textMuted, border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>cancel</button>
+    </div>
+  );
+}
