@@ -9,7 +9,7 @@ import {
   // Actions
   Plus, Copy as CopyIcon, Trash2, Download, Save, Upload,
   // State
-  ChevronDown, ChevronRight, ChevronUp, Check as CheckIcon, X as XIcon,
+  ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Check as CheckIcon, X as XIcon,
   AlertTriangle, Info, Gauge, Zap, FileText, Terminal, FileJson, Power,
 } from 'lucide-react';
 import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO, btnPrimary } from './lib/theme.js';
@@ -45,10 +45,14 @@ function uid() {
 }
 
 // localStorage keys for UI state (separate from manifest storage).
-const UI_DRAWER_OPEN_KEY   = 'ark.ui.drawer.open.v1';
+// drawer key bumped to v2 so the new collapsed-default takes effect
+// even for users who have a v1 "open=true" already in localStorage
+const UI_DRAWER_OPEN_KEY   = 'ark.ui.drawer.open.v2';
 const UI_DRAWER_HEIGHT_KEY = 'ark.ui.drawer.height.v1';
 const UI_DRAWER_TAB_KEY    = 'ark.ui.drawer.tab.v1';
 const UI_CONFIG_SUBTAB_KEY = 'ark.ui.drawer.configSubtab.v1';
+const UI_SIDEBAR_OPEN_KEY  = 'ark.ui.sidebar.open.v1';
+const UI_RIGHT_OPEN_KEY    = 'ark.ui.right.open.v1';
 const UI_NAV_KEY           = 'ark.ui.nav.v1';
 const UI_LAYERS_KEY        = 'ark.ui.layers.v1';
 
@@ -202,7 +206,9 @@ export default function App() {
   // ── UI state ────────────────────────────────────────────────────
   const [nav, setNav]                 = useState(() => readJSON(UI_NAV_KEY, 'devices'));
   const [openLayers, setOpenLayers]   = useState(() => readJSON(UI_LAYERS_KEY, { identity: true, hardware: true }));
-  const [drawerOpen, setDrawerOpen]   = useState(() => readJSON(UI_DRAWER_OPEN_KEY, true));
+  const [drawerOpen, setDrawerOpen]   = useState(() => readJSON(UI_DRAWER_OPEN_KEY, false));
+  const [sidebarOpen, setSidebarOpen] = useState(() => readJSON(UI_SIDEBAR_OPEN_KEY, true));
+  const [rightOpen,   setRightOpen]   = useState(() => readJSON(UI_RIGHT_OPEN_KEY,   true));
   const [drawerHeight, setDrawerHeight] = useState(() => readJSON(UI_DRAWER_HEIGHT_KEY, 340));
   const [drawerTab, setDrawerTab]     = useState(() => readJSON(UI_DRAWER_TAB_KEY, 'config'));
   const [configSubtab, setConfigSubtab] = useState(() => readJSON(UI_CONFIG_SUBTAB_KEY, 'dietpi'));
@@ -213,6 +219,8 @@ export default function App() {
   useEffect(() => { writeJSON(UI_NAV_KEY, nav); },                 [nav]);
   useEffect(() => { writeJSON(UI_LAYERS_KEY, openLayers); },        [openLayers]);
   useEffect(() => { writeJSON(UI_DRAWER_OPEN_KEY, drawerOpen); },   [drawerOpen]);
+  useEffect(() => { writeJSON(UI_SIDEBAR_OPEN_KEY, sidebarOpen); }, [sidebarOpen]);
+  useEffect(() => { writeJSON(UI_RIGHT_OPEN_KEY,   rightOpen); },   [rightOpen]);
   useEffect(() => { writeJSON(UI_DRAWER_HEIGHT_KEY, drawerHeight); }, [drawerHeight]);
   useEffect(() => { writeJSON(UI_DRAWER_TAB_KEY, drawerTab); },     [drawerTab]);
   useEffect(() => { writeJSON(UI_CONFIG_SUBTAB_KEY, configSubtab); }, [configSubtab]);
@@ -352,11 +360,14 @@ export default function App() {
       {/* ── TOP REGION: nav | centre | validation ─────────────────────── */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: '220px minmax(0, 1fr) 320px',
+        gridTemplateColumns: `${sidebarOpen ? '220px' : '32px'} minmax(0, 1fr) ${rightOpen ? '320px' : '32px'}`,
         minHeight: 0,
         borderBottom: `1px solid ${COLORS.border}`,
+        transition: 'grid-template-columns 180ms ease',
       }}>
-        <Sidebar nav={nav} setNav={setNav} count={Object.keys(manifests).length}/>
+        {sidebarOpen
+          ? <Sidebar nav={nav} setNav={setNav} count={Object.keys(manifests).length} onCollapse={() => setSidebarOpen(false)}/>
+          : <CollapsedRail side="left" onExpand={() => setSidebarOpen(true)} label="Open nav"/>}
 
         <CentreWorkspace
           nav={nav} setNav={setNav}
@@ -369,13 +380,12 @@ export default function App() {
           downloadManifestJson={downloadManifestJson}
         />
 
-        <ValidationPanel
-          active={active}
-          warnings={warnings}
-          risks={risks}
-          score={score}
-          buildStatus={buildStatus}
-        />
+        {rightOpen
+          ? <ValidationPanel
+              active={active} warnings={warnings} risks={risks} score={score} buildStatus={buildStatus}
+              onCollapse={() => setRightOpen(false)}
+            />
+          : <CollapsedRail side="right" onExpand={() => setRightOpen(true)} label="Open validation panel"/>}
       </div>
 
       {/* ── BOTTOM DRAWER ────────────────────────────────────────────── */}
@@ -401,7 +411,7 @@ export default function App() {
 // =====================================================================
 //  Sidebar
 // =====================================================================
-function Sidebar({ nav, setNav, count }) {
+function Sidebar({ nav, setNav, count, onCollapse }) {
   return (
     <aside style={{
       borderRight: `1px solid ${COLORS.border}`,
@@ -409,8 +419,9 @@ function Sidebar({ nav, setNav, count }) {
       display: 'flex', flexDirection: 'column', gap: 4,
       background: '#070707',
       overflowY: 'auto',
+      position: 'relative',
     }}>
-      <div style={{ padding: '4px 8px 18px' }}>
+      <div style={{ padding: '4px 8px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{
           fontFamily: FONT_HEADING,
           fontStyle: 'italic',
@@ -422,6 +433,16 @@ function Sidebar({ nav, setNav, count }) {
         }}>
           Ark
         </div>
+        {onCollapse && (
+          <button
+            onClick={onCollapse}
+            title="Collapse navigation"
+            aria-label="Collapse navigation"
+            style={paneToggleBtn()}
+          >
+            <ChevronLeft size={14}/>
+          </button>
+        )}
       </div>
 
       {NAV_SECTIONS.map(s => {
@@ -445,6 +466,52 @@ function Sidebar({ nav, setNav, count }) {
       })}
 
       <div style={{ flex: 1 }}/>
+    </aside>
+  );
+}
+
+function paneToggleBtn() {
+  return {
+    width: 24, height: 24,
+    background: 'transparent',
+    border: `1px solid ${COLORS.border}`,
+    color: COLORS.textMuted,
+    borderRadius: 4,
+    cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: 0,
+  };
+}
+
+// Tiny vertical rail shown when a pane is collapsed. One chevron
+// button expands it back. 32px wide; matches the grid template.
+function CollapsedRail({ side, onExpand, label }) {
+  const ChevIcon = side === 'left' ? ChevronRight : ChevronLeft;
+  return (
+    <aside style={{
+      borderRight: side === 'left' ? `1px solid ${COLORS.border}` : 'none',
+      borderLeft:  side === 'right' ? `1px solid ${COLORS.border}` : 'none',
+      background: '#070707',
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      padding: '16px 0',
+    }}>
+      <button
+        onClick={onExpand}
+        title={label}
+        aria-label={label}
+        style={{
+          width: 24, height: 24,
+          background: 'transparent',
+          border: `1px solid ${COLORS.border}`,
+          color: COLORS.textMuted,
+          borderRadius: 4,
+          cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: 0,
+        }}
+      >
+        <ChevIcon size={14}/>
+      </button>
     </aside>
   );
 }
@@ -1008,10 +1075,25 @@ function KioskBody({ active, update }) {
 // =====================================================================
 //  Validation panel
 // =====================================================================
-function ValidationPanel({ active, warnings, risks, score, buildStatus }) {
+function ValidationPanel({ active, warnings, risks, score, buildStatus, onCollapse }) {
+  const CollapseBtn = onCollapse ? (
+    <button
+      onClick={onCollapse}
+      title="Collapse validation panel"
+      aria-label="Collapse validation panel"
+      style={{
+        position: 'absolute', top: 14, right: 14,
+        ...paneToggleBtn(),
+      }}
+    >
+      <ChevronRight size={14}/>
+    </button>
+  ) : null;
+
   if (!active) {
     return (
-      <aside style={panelStyle()}>
+      <aside style={{ ...panelStyle(), position: 'relative' }}>
+        {CollapseBtn}
         <div style={{ color: COLORS.textMuted, fontSize: 13, padding: 20, textAlign: 'center' }}>
           No manifest selected.
         </div>
@@ -1024,7 +1106,8 @@ function ValidationPanel({ active, warnings, risks, score, buildStatus }) {
   const scoreCol = scoreColor(score);
 
   return (
-    <aside style={panelStyle()}>
+    <aside style={{ ...panelStyle(), position: 'relative' }}>
+      {CollapseBtn}
       {/* ── Compatibility score ──────────────────────────────────── */}
       <div style={{ padding: '18px 18px 14px', borderBottom: `1px solid ${COLORS.border}` }}>
         <div style={panelLabel()}>Compatibility</div>
