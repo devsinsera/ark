@@ -1,0 +1,22 @@
+{
+  "name": "ark",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Ark — Sinsera Pi Kiosk Builder (standalone; lives at sinsera.co/ark/)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "bash scripts/deploy.sh \"$npm_config_msg\""
+  },
+  "dependencies": {
+    "lucide-react": "^1.11.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "vite": "^5.1.4"
+  }
+}

@@ -1,0 +1,20 @@
+# Build + deps
+app/node_modules
+app/dist
+app/dist.zip
+app/.vite
+
+# Local secrets
+app/.env.local
+app/.env.production
+
+# OS image binaries — too big for git (~1 GB raw, ~200 MB compressed).
+# Keep these locally; they're seed flash images, not source code.
+Os/*.img
+Os/*.img.xz
+Os/*.iso
+Os/*.zip
+
+# macOS metadata
+.DS_Store
+*.log
