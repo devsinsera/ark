@@ -52,7 +52,7 @@ export default function NetworkLandscape() {
       {tab === 'devices' && <DevicesTab hubUrl={hubUrl}/>}
       {tab === 'wifi'    && <WifiTab    hubUrl={hubUrl}/>}
       {tab === 'active'  && <ActiveTab  hubUrl={hubUrl}/>}
-      {tab === 'graph'   && <GraphTab/>}
+      {tab === 'graph'   && <GraphTab hubUrl={hubUrl}/>}
 
       <HubFooter hubUrl={hubUrl} setHubUrl={setHubUrl}/>
     </div>
@@ -348,21 +348,136 @@ function SignalBars({ bars }) {
   );
 }
 
-// ── Active networks tab ─────────────────────────────────────────────
-function ActiveTab() {
+// ── Active networks tab — backed by Hub's SQLite store (Phase 4.3) ──
+function ActiveTab({ hubUrl }) {
+  const [state, setState] = useState({ status: 'loading', networks: [], error: null });
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await fetch(`${hubUrl}/api/networks`, { cache: 'no-cache' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (cancelled) return;
+        setState({ status: 'ok', networks: data.networks || [], error: null });
+      } catch (e) {
+        if (cancelled) return;
+        setState(s => ({ ...s, status: 'error', error: e.message }));
+      }
+    };
+    tick();
+    const t = setInterval(tick, 15000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [hubUrl]);
+
+  if (state.status === 'error') return <HubUnreachable hubUrl={hubUrl} error={state.error}/>;
+  if (state.networks.length === 0) {
+    return (
+      <Placeholder
+        title="No networks recorded yet"
+        body="The Hub records each network it observes devices on (Wi-Fi SSIDs, Ethernet subnets). Once the first scan tick completes the network will appear here, along with every other network the Hub has ever seen."
+      />
+    );
+  }
+
   return (
-    <Placeholder
-      title="Networks observed by Ark"
-      body="Ark Hub records every network it sees devices on (Wi-Fi SSIDs, Ethernet subnets). This tab will show the full multi-network history once Hub SQLite persistence lands (Phase 4.3)."
-    />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{
+        fontSize: 12, color: COLORS.textMuted,
+        fontFamily: FONT_MONO,
+      }}>
+        {state.networks.length} network{state.networks.length === 1 ? '' : 's'} observed · history persisted in <code>~/.ark/ark-hub.db</code>
+      </div>
+      {state.networks.some(n => n.ssid === '<redacted>') && <RedactionHint/>}
+      <div style={{
+        border: `1px solid ${COLORS.border}`, borderRadius: 10,
+        overflow: 'hidden', background: COLORS.bgPanel,
+      }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: FONT_BODY, fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: 'rgba(255,255,255,0.02)', color: COLORS.textMuted, fontWeight: 500, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              <Th>Type</Th><Th>SSID / Subnet</Th><Th>Gateway</Th><Th>Devices</Th><Th>First seen</Th><Th>Last seen</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {state.networks.map(n => (
+              <tr key={n.network_id}>
+                <Td><NetworkTypeBadge type={n.type}/></Td>
+                <Td>{n.ssid || n.subnet || '—'}</Td>
+                <Td mono dim>{n.gateway_ip || '—'} {n.gateway_mac && <span style={{ color: COLORS.textMuted }}>({n.gateway_mac.slice(-8)})</span>}</Td>
+                <Td>{n.device_count ?? 0}</Td>
+                <Td mono dim>{(n.first_seen || '').slice(0, 16).replace('T', ' ')}</Td>
+                <Td mono dim>{(n.last_seen || '').slice(0, 16).replace('T', ' ')}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ExportRow hubUrl={hubUrl}/>
+    </div>
   );
 }
 
-function GraphTab() {
+function RedactionHint() {
+  return (
+    <div style={{
+      padding: 14, fontSize: 12, lineHeight: 1.6,
+      background: 'rgba(245,180,90,0.08)',
+      border: `1px solid ${COLORS.warning}`, borderRadius: 8,
+      color: COLORS.textSecondary,
+    }}>
+      <strong style={{ color: COLORS.warning }}>Wi-Fi SSIDs are showing as &lt;redacted&gt;.</strong>{' '}
+      This is macOS hiding the SSID from any app without Location Services permission — not Ark. To see real
+      SSIDs, grant Location Services to your terminal: <em>System Settings → Privacy &amp; Security → Location Services
+      → enable Terminal</em> (or iTerm, or whichever shell you launch <code>node</code> from). Then{' '}
+      <code>launchctl kickstart -k gui/$(id -u)/co.sinsera.ark.hub</code>.
+    </div>
+  );
+}
+
+function NetworkTypeBadge({ type }) {
+  const colors = {
+    wifi:     { bg: 'rgba(34,211,238,0.14)',  fg: COLORS.accentBright },
+    ethernet: { bg: 'rgba(245,180,90,0.14)',  fg: COLORS.warning },
+    unknown:  { bg: 'rgba(124,132,153,0.14)', fg: COLORS.textMuted },
+  };
+  const c = colors[type] || colors.unknown;
+  return (
+    <span style={{
+      padding: '2px 8px', fontSize: 11, borderRadius: 4,
+      background: c.bg, color: c.fg,
+      textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 500,
+    }}>{type || 'unknown'}</span>
+  );
+}
+
+function ExportRow({ hubUrl }) {
+  const items = [
+    { label: 'Devices · CSV',   href: `${hubUrl}/api/export/devices.csv` },
+    { label: 'Networks · CSV',  href: `${hubUrl}/api/export/networks.csv` },
+    { label: 'Fleet snapshot · JSON', href: `${hubUrl}/api/export/snapshot.json` },
+  ];
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+      <span style={{ fontSize: 11, color: COLORS.textMuted, alignSelf: 'center', fontFamily: FONT_MONO }}>Export:</span>
+      {items.map(i => (
+        <a key={i.href} href={i.href} target="_blank" rel="noreferrer" style={{
+          padding: '6px 12px', fontSize: 12, fontFamily: FONT_BODY,
+          background: COLORS.bgPanel, color: COLORS.accentBright,
+          border: `1px solid ${COLORS.accentBorder}`, borderRadius: 6,
+          textDecoration: 'none',
+        }}>{i.label}</a>
+      ))}
+    </div>
+  );
+}
+
+function GraphTab({ hubUrl }) {
   return (
     <Placeholder
       title="Network ↔ Device topology"
-      body="Force-directed graph of networks → devices → manifests. Lights up once we have telemetry from Ark Agents (Phase 4.2) and multi-network data (Phase 4.3)."
+      body="Force-directed graph view — gated on multi-network data (need at least 2 networks observed) + Agent telemetry from at least one Pi reporting. The data is being collected; this view appears in Phase 4.4."
     />
   );
 }
