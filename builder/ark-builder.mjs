@@ -9,7 +9,7 @@
 
 import { argv, exit, stderr, stdout } from 'node:process';
 import { renderPlan } from './lib/render.mjs';
-import { buildImage } from './lib/build.mjs';
+import { buildImage, checkHost } from './lib/build.mjs';
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -33,13 +33,16 @@ function usage() {
 
 Usage:
   ark-builder render --plan <plan.json> --out <dir>
-  ark-builder build  --plan <plan.json> --base <image.img> --out <dir>
+  ark-builder build  --plan <plan.json> --base <image.img> --out <dir> [--runner docker|podman] [--skip-install]
+  ark-builder check
 
 Subcommands:
   render    Phase 1. Read a build plan, write dietpi.txt + Automation_Custom_Script.sh.
             No root required. Equivalent to what the browser UI produces.
   build     Phase 3. Full pipeline: mount base image, chroot, apt-install, repack.
-            Linux only. Requires sudo + qemu-user-static + losetup. STUB FOR NOW.
+            Runs the chroot inside a Linux container (Docker / Podman / Colima).
+            Apple Silicon hosts run native arm64; x86 hosts emulate via qemu-user-static.
+  check     Diagnose host setup — checks for docker/podman/colima availability.
 
 Options:
   --plan <path>     JSON build plan emitted by the browser UI.
@@ -71,13 +74,41 @@ async function main() {
       stderr.write('ark-builder build: --plan, --base, and --out are required.\n');
       exit(2);
     }
-    const result = await buildImage({ planPath: args.plan, basePath: args.base, outDir: args.out });
+    const result = await buildImage({
+      planPath:    args.plan,
+      basePath:    args.base,
+      outDir:      args.out,
+      runner:      args.runner || 'docker',
+      skipInstall: !!args['skip-install'],
+    });
     if (!result.ok) {
       stderr.write(`✖ Build failed: ${result.error || 'unknown'}\n`);
+      if (result.hint) stderr.write(`\n  ${result.hint}\n`);
       exit(1);
     }
-    stdout.write(`✔ Built image at ${result.imagePath}\n`);
+    stdout.write(`\n✔ Image built\n`);
+    stdout.write(`    image:   ${result.out_img}\n`);
+    stdout.write(`    sha256:  ${result.sha256}\n`);
+    stdout.write(`    log:     ${result.log_file}\n`);
+    stdout.write(`\nFlash to an SD card: dd if=${result.out_img} of=/dev/diskN bs=4M status=progress\n`);
     exit(0);
+  }
+
+  if (sub === 'check') {
+    const r = await checkHost();
+    stdout.write(`host:     ${r.host_os}/${r.host_arch}\n`);
+    stdout.write(`docker:   ${r.docker  ? '✓' : '✗'}\n`);
+    stdout.write(`podman:   ${r.podman  ? '✓' : '✗'}\n`);
+    stdout.write(`colima:   ${r.colima  ? '✓' : '✗'}\n`);
+    if (r.has_runtime) {
+      stdout.write(`\n✔ Ready to build. Try:\n  node ark-builder.mjs build --plan plan.json --base Os/DietPi_RPi5-ARMv8-Trixie.img --out builds/output\n`);
+      exit(0);
+    } else {
+      stdout.write(`\n✖ No container runtime found.\n`);
+      stdout.write(`  Install one:\n`);
+      stdout.write(`    brew install colima docker && colima start --arch aarch64 --cpu 2 --memory 4\n`);
+      exit(1);
+    }
   }
 
   stderr.write(`ark-builder: unknown subcommand "${sub}"\n`);

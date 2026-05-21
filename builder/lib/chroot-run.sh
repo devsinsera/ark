@@ -1,0 +1,179 @@
+#!/bin/bash
+# chroot-run.sh — runs INSIDE the ark-builder Linux container.
+#
+# Takes a base .img file, copies it to an output path, mounts it,
+# chroots in, and executes the install plan. The plan was emitted by
+# the Ark Installer Engine; running it pre-installs every apt + pip
+# dep so the Pi's first boot is near-instant.
+#
+# Arguments (positional):
+#   $1 = path inside container to base .img        (e.g. /work/base.img)
+#   $2 = path inside container to install plan .sh (e.g. /work/install.plan.sh)
+#   $3 = path inside container to write output .img to (e.g. /work/out/ark.img)
+#
+# Environment knobs:
+#   ARK_SKIP_INSTALL=1  — mount + bind only, don't run plan (debug)
+#   ARK_KEEP_MOUNTED=1  — don't unmount/detach on exit (debug)
+#
+# Idempotent: every mount/losetup is cleaned up via the EXIT trap even
+# on partial failure. Re-running with the same arguments is safe.
+
+set -euo pipefail
+
+BASE_IMG="${1:-}"
+PLAN_SH="${2:-}"
+OUT_IMG="${3:-}"
+
+if [[ -z "$BASE_IMG" || -z "$PLAN_SH" || -z "$OUT_IMG" ]]; then
+  echo "ERROR: chroot-run.sh <base.img> <install.plan.sh> <out.img>" >&2
+  exit 2
+fi
+[[ -f "$BASE_IMG" ]] || { echo "ERROR: base image not found: $BASE_IMG" >&2; exit 2; }
+[[ -f "$PLAN_SH" ]]  || { echo "ERROR: plan not found: $PLAN_SH" >&2; exit 2; }
+
+MNT_BOOT="/mnt/ark-boot"
+MNT_ROOT="/mnt/ark-root"
+LOOP_DEV=""
+EXIT_CODE=0
+
+log() { echo "[chroot-run] $*"; }
+
+cleanup() {
+  local ec=$?
+  if [[ "${ARK_KEEP_MOUNTED:-0}" == "1" ]]; then
+    log "ARK_KEEP_MOUNTED=1 — leaving mounts in place for inspection"
+    return
+  fi
+  log "cleanup…"
+  # Best-effort: unmount in reverse order. Ignore "not mounted" errors.
+  for m in \
+      "$MNT_ROOT/dev/pts" \
+      "$MNT_ROOT/dev"     \
+      "$MNT_ROOT/proc"    \
+      "$MNT_ROOT/sys"     \
+      "$MNT_ROOT/boot/firmware" \
+      "$MNT_ROOT"         \
+      "$MNT_BOOT"         ; do
+    mountpoint -q "$m" && umount "$m" 2>/dev/null || true
+  done
+  if [[ -n "$LOOP_DEV" ]]; then
+    losetup -d "$LOOP_DEV" 2>/dev/null || true
+  fi
+  # Restore the trap's original exit code so the script exits with
+  # whatever the failing step produced.
+  exit "${EXIT_CODE:-$ec}"
+}
+trap cleanup EXIT
+
+# ── 1) copy base → output (don't mutate the source) ──────────────────
+log "copying base image (this may take a minute)…"
+mkdir -p "$(dirname "$OUT_IMG")"
+cp --reflink=auto "$BASE_IMG" "$OUT_IMG"
+log "copied → $OUT_IMG ($(stat --printf='%s' "$OUT_IMG") bytes)"
+
+# ── 2) losetup with partition scan ───────────────────────────────────
+log "loop-attaching $OUT_IMG"
+LOOP_DEV=$(losetup --find --partscan --show "$OUT_IMG")
+log "loop = $LOOP_DEV"
+# Give the kernel a beat to settle partition devices
+partprobe "$LOOP_DEV" 2>/dev/null || true
+sleep 0.2
+
+# ── 3) discover + mount partitions ───────────────────────────────────
+# DietPi / Pi OS layout: p1 = FAT32 boot, p2 = ext4 rootfs.
+BOOT_PART="${LOOP_DEV}p1"
+ROOT_PART="${LOOP_DEV}p2"
+[[ -b "$BOOT_PART" ]] || { echo "ERROR: boot partition not visible at $BOOT_PART" >&2; exit 3; }
+[[ -b "$ROOT_PART" ]] || { echo "ERROR: root partition not visible at $ROOT_PART" >&2; exit 3; }
+
+mkdir -p "$MNT_BOOT" "$MNT_ROOT"
+log "mounting $ROOT_PART → $MNT_ROOT"
+mount "$ROOT_PART" "$MNT_ROOT"
+log "mounting $BOOT_PART → $MNT_BOOT"
+mount "$BOOT_PART" "$MNT_BOOT"
+
+# Pi OS bookworm+ expects /boot/firmware to be the firmware partition;
+# DietPi mounts boot at /boot. Try both.
+if [[ -d "$MNT_ROOT/boot/firmware" ]]; then
+  log "binding boot partition → $MNT_ROOT/boot/firmware"
+  mount --bind "$MNT_BOOT" "$MNT_ROOT/boot/firmware"
+else
+  # Backwards compat: also bind to /boot in case the chroot scripts
+  # write to that path. We can't bind both, so pick /boot/firmware
+  # when present; else use /boot via remount.
+  if [[ -d "$MNT_ROOT/boot" && ! -d "$MNT_ROOT/boot/firmware" ]]; then
+    log "binding boot partition → $MNT_ROOT/boot"
+    mount --bind "$MNT_BOOT" "$MNT_ROOT/boot"
+  fi
+fi
+
+# ── 4) bind-mount /dev, /proc, /sys so the chroot can use them ──────
+log "bind-mounting /dev /proc /sys"
+mount --bind /dev     "$MNT_ROOT/dev"
+mount -t devpts none  "$MNT_ROOT/dev/pts" 2>/dev/null || mount --bind /dev/pts "$MNT_ROOT/dev/pts"
+mount -t proc  none   "$MNT_ROOT/proc"
+mount -t sysfs none   "$MNT_ROOT/sys"
+
+# ── 5) handle cross-arch: copy qemu-static if host ≠ image arch ─────
+# Apple Silicon hosts run arm64 containers natively, so this is a
+# no-op there. x86 hosts emulating arm64 need the static binary inside
+# the rootfs so the dynamic linker can find it.
+HOST_ARCH=$(uname -m)
+case "$HOST_ARCH" in
+  x86_64|i*86)
+    if [[ -x /usr/bin/qemu-aarch64-static ]]; then
+      log "x86 host detected — installing qemu-aarch64-static into rootfs"
+      cp /usr/bin/qemu-aarch64-static "$MNT_ROOT/usr/bin/qemu-aarch64-static"
+    else
+      echo "WARN: x86 host but /usr/bin/qemu-aarch64-static not present in container" >&2
+    fi
+    ;;
+  aarch64|arm64)
+    log "arm64 host — no qemu emulation needed"
+    ;;
+esac
+
+# ── 6) DNS for apt inside the chroot ─────────────────────────────────
+if [[ -L "$MNT_ROOT/etc/resolv.conf" ]]; then
+  rm -f "$MNT_ROOT/etc/resolv.conf"
+fi
+cp /etc/resolv.conf "$MNT_ROOT/etc/resolv.conf"
+
+# ── 7) copy install plan into the chroot ────────────────────────────
+log "staging install plan inside chroot"
+mkdir -p "$MNT_ROOT/ark"
+cp "$PLAN_SH" "$MNT_ROOT/ark/install.plan.sh"
+chmod +x "$MNT_ROOT/ark/install.plan.sh"
+
+# ── 8) chroot + run the plan ────────────────────────────────────────
+if [[ "${ARK_SKIP_INSTALL:-0}" == "1" ]]; then
+  log "ARK_SKIP_INSTALL=1 — skipping plan execution (debug)"
+else
+  log "chroot → /ark/install.plan.sh"
+  # set +e so we can capture the chroot's exit code without aborting
+  # the cleanup trap below.
+  set +e
+  chroot "$MNT_ROOT" /bin/bash -lc "/ark/install.plan.sh"
+  EXIT_CODE=$?
+  set -e
+  if [[ $EXIT_CODE -ne 0 ]]; then
+    log "WARN: install plan exited with code $EXIT_CODE"
+  else
+    log "install plan succeeded"
+  fi
+fi
+
+# ── 9) optional sanitisation — wipe transient state ─────────────────
+log "sanitising rootfs (logs, machine-id, apt cache)…"
+chroot "$MNT_ROOT" /bin/bash -lc '
+  apt-get clean 2>/dev/null || true
+  rm -rf /var/lib/apt/lists/*
+  rm -rf /var/log/* /tmp/* /var/tmp/*
+  rm -f  /etc/machine-id
+  touch  /etc/machine-id
+  rm -f  /root/.bash_history
+  history -c 2>/dev/null || true
+' || true
+
+log "done — output: $OUT_IMG"
+EXIT_CODE=${EXIT_CODE:-0}

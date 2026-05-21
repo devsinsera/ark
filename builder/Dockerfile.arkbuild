@@ -1,0 +1,38 @@
+# ark-builder runtime image
+#
+# A minimal Linux container that has everything chroot-run.sh needs to
+# mount a Pi .img, enter the rootfs, and run the install plan against
+# the chrooted environment.
+#
+# Apple Silicon hosts: this image runs as native arm64 (no emulation).
+# x86 hosts: docker can still run this via binfmt + qemu-user-static
+# but build performance is ~3x slower because every command inside the
+# chroot is emulated.
+
+FROM debian:bookworm-slim
+
+# Tools we need:
+#   util-linux  — losetup, mount, umount, partprobe
+#   parted      — partition probing (occasionally needed)
+#   coreutils   — cp / dd / sync
+#   ca-certs    — for apt-https inside the chroot
+#   qemu-user-static — only used by x86 hosts emulating arm64; on a
+#     native arm64 host it's installed but never executed.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      util-linux \
+      mount \
+      parted \
+      coreutils \
+      ca-certificates \
+      qemu-user-static \
+      binfmt-support \
+      xz-utils \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work
+COPY chroot-run.sh /usr/local/bin/chroot-run.sh
+RUN chmod +x /usr/local/bin/chroot-run.sh
+
+ENTRYPOINT ["/usr/local/bin/chroot-run.sh"]
