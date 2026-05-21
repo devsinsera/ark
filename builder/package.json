@@ -1,0 +1,16 @@
+{
+  "name": "ark-builder",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Linux-side image compiler for Ark device manifests. Consumes a build plan emitted by the Ark browser UI.",
+  "bin": {
+    "ark-builder": "./ark-builder.mjs"
+  },
+  "scripts": {
+    "render": "node ark-builder.mjs render"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

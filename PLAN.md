@@ -1,208 +1,203 @@
 # Ark — Plan
 
-Ark is a **device provisioning + manifest + fleet system** for
-Raspberry Pi (and future ARM SBC) deployments.
+Ark is a **deterministic device compiler** for Raspberry Pi (and
+future ARM SBC) deployments. Manifest in, flashable image out.
 
-This file is the canonical spec. It supersedes the original
-"Sinsera Pi Kiosk Builder" module — that was the seed; Ark is the
-expanded system.
+> "Ark is not a kiosk config form. Ark is a device compiler."
 
----
-
-## Vision
-
-> **A reproducible deployment system for edge devices.**
-> Every configuration is versioned, cloneable, portable,
-> hardware-aware, and recoverable.
-
-### Pipeline
-
-```
-Device Manifest  →  Ark Build Engine  →  Image / config bundle
-                                            │
-                                            ▼
-                                          Flash
-                                            │
-                                            ▼
-                                          Boot
-                                            │
-                                            ▼
-                            Device reports back (optional)
-                                            │
-                                            ▼
-                                       Fleet tracking
-```
+This file is the canonical spec. Supersedes the earlier
+"Sinsera Pi Kiosk Builder" doc.
 
 ---
 
-## The manifest — core data model
+## Architecture
 
-Every device is a manifest with **six layers**:
+```
+┌──────────────────────── browser side ───────────────────────┐
+│                                                              │
+│   Device Stack UI    →    Manifest (JSON)                    │
+│                                ↓                             │
+│                      Validation Engine                       │
+│                                ↓                             │
+│                      Build Plan Generator                    │
+│                                ↓                             │
+│                          plan.json                           │
+└──────────────────────────────│───────────────────────────────┘
+                               │     (downloads + drops on Linux)
+                               ↓
+┌──────────────────────── Linux side ─────────────────────────┐
+│                                                              │
+│   ark-builder render    →    dietpi.txt + autostart.sh       │
+│                                                              │
+│   ark-builder build     →    ark-<name>-vN.img + sha256.xz   │
+│                              (Phase 3 — chroot pipeline)     │
+└──────────────────────────────────────────────────────────────┘
+                               ↓
+                         Flash SD with Imager
+                               ↓
+                         Boot Pi → kiosk live
+                               ↓
+                  (optional) Pi reports telemetry to Supabase
+                               ↓
+                          Fleet dashboard
+```
 
-```jsonc
-{
-  "identity": {
-    "name":  "ark-kiosk-01",         // unique slug
-    "role":  "kiosk",                // kiosk | signage | portable | dashboard | headless
-    "version": 1
-  },
+The **plan.json** is the contract between sides. Same input → same
+output, regardless of who's running the renderer. That's
+determinism.
 
-  "hardware": {
-    "model":      "pi-zero-2-w",      // pi-zero-2-w | pi-4 | pi-5 | other
-    "pisugar":    false,              // battery / UPS HAT present?
-    "display":    "hdmi",             // hdmi | lcd-spi | dsi | headless
-    "ethernet":   false,              // ethernet HAT?
-    "gpio":       [],
-    "power_note": ""
-  },
+---
 
-  "network": {
-    "hostname":      "ark-kiosk-01",
-    "wifi_ssid":     "",
-    "wifi_password": "",
-    "wifi_security": "wpa2",          // wpa2 | wpa3 | enterprise (future)
-    "static_ip":     null,
-    "ssh_enabled":   true,
-    "ssh_pubkeys":   [],              // authorized_keys lines
-    "mdns":          true
-  },
+## Repo layout
 
-  "software": {
-    "os":             "dietpi",
-    "packages":       ["chromium","lxde"], // derived from role
-    "boot_target":    "kiosk",        // kiosk | desktop | headless
-    "timezone":       "Australia/Brisbane",
-    "root_password":  "sinsera-kiosk"
-  },
-
-  "kiosk": {
-    "url":               "https://sinsera.co",
-    "fullscreen":        true,
-    "auto_reload_min":   0,
-    "hide_cursor":       true,
-    "disable_blanking":  true,
-    "rotation":          "normal",
-    "fallback_html":     null
-  },
-
-  "behaviour": {
-    "watchdog":             false,
-    "auto_reboot_schedule": null,
-    "offline_fallback":     false,
-    "recovery_rules":       []
-  }
-}
+```
+Ark/
+├── PLAN.md               ← this file
+├── Os/                   ← gitignored, large .img files
+│   └── DietPi_RPi5-*.img
+├── app/                  ← browser-side UI (Vite + React)
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── manifest.js   ← data model + storage + role defaults
+│   │   ├── output.js     ← legacy renderer (kept for live preview)
+│   │   ├── build_plan.js ← NEW: emits plan.json
+│   │   └── lib/theme.js
+│   └── scripts/deploy.sh
+└── builder/              ← Linux-side image compiler (Node CLI)
+    ├── ark-builder.mjs
+    ├── lib/
+    │   ├── render.mjs    ← Phase 1: plan → text files
+    │   └── build.mjs     ← Phase 3 stub
+    └── README.md
 ```
 
 ---
 
-## Output modes
+## The manifest
 
-### 1. **Config mode** — Phase 1 (shipping now)
-Generates two text files:
-- `dietpi.txt` — DietPi unattended install
-- `Automation_Custom_Script.sh` — first-boot hook (kiosk service,
-  cursor hide, blanking off, rotation, autoreload)
+Every device is a manifest with six layers (per spec). See
+`app/src/manifest.js` for the schema. Phase 1 in `emptyManifest()`:
 
-User flashes a stock DietPi image with Raspberry Pi Imager, drops
-these two files onto the SD's boot partition, boots the Pi.
-
-### 2. **Image mode** — Phase 3 (deferred)
-Generates a full flashable `ark-device-<name>-vN.img`.
-
-Browser-only is impossible (you can't mount + modify a multi-GB
-image client-side). Realistic paths:
-- A **Pi-side build script** the user runs once on a Linux box
-- OR a **`pi-bridge`-style daemon** on a local machine that
-  performs the mount + inject + emit
-- OR a **GitHub Actions workflow** that builds the image on push
-
-### 3. **Clone mode** — Phase 2 (shipping next)
-Duplicate an existing manifest, override identity (new hostname /
-keys), keep hardware + software + kiosk + behaviour the same.
-Use case: deploy 5 identical kiosks across multiple rooms.
+| Layer | Owns |
+|---|---|
+| `identity` | name, role, version |
+| `hardware` | Pi model, PiSugar, display, ethernet HAT, GPIO, power notes |
+| `network` | hostname, WiFi, static IP, SSH, SSH keys, mDNS |
+| `software` | OS (DietPi), packages, services, boot target, timezone, root password |
+| `kiosk` | URL, fullscreen, auto-reload, hide cursor, blanking, rotation, fallback page |
+| `behaviour` | watchdog, auto-reboot schedule, offline fallback, recovery rules |
 
 ---
 
 ## Roadmap
 
-### ✅ Phase 0 — Scaffold (in progress today)
-- Vite + React standalone app at `Dev-Sinsera/Ark/app/`
-- Deploy target: `sinsera.co/ark/` (HostGator FTP)
-- GitHub repo: `devsinsera/ark`
+### ✅ Phase 0 — Scaffold
+Vite + React standalone app at `Ark/app/`; deploy target
+`sinsera.co/ark/` (HostGator); GitHub repo `devsinsera/ark`.
 
-### 🚧 Phase 1 — Manifest + Config Mode (tonight's target)
-- Manifest data model + defaults
-- Manifest editor UI (6 sections: identity, hardware, network,
-  software, kiosk, behaviour)
-- Save / load named manifests in localStorage
-- Output: `dietpi.txt` + `Automation_Custom_Script.sh` (Blob
-  download, same as the original Pi Kiosk Builder)
-- SSH key injection (authorized_keys)
-- Headless mode toggle (skip Chromium + LXDE)
-- Live preview of generated files
+### ✅ Phase 1 — Manifest + config + browser UI (THIS BUILD)
+- Manifest data model + defaults + role-aware autoconfig
+- localStorage manifest library (named save / load / clone / delete)
+- Validation engine — hardware-aware warnings, compatibility score
+- Build plan generator (`build_plan.js`) — emits structured `plan.json`
+- Live preview of dietpi.txt / autostart / plan.json
+- Browser-side rendering for instant download
+- **Builder CLI (`builder/ark-builder.mjs render`)** — parity rendering for CI
+- SSH key injection, headless mode, screen rotation, auto-reload
 
-### 🟡 Phase 2 — Multi-manifest + clone + library
-- Sidebar showing all saved manifests
-- Clone-with-overrides flow
-- Batch-download (zip of 5 manifests' files)
-- Manifest export / import as JSON
+### 🚧 Phase 2 — Builder UX + multi-device
+- 3-pane workspace: Nav (Devices/Builds/Manifests/Presets/Fleet/Images/Logs) · Device Stack · Validation
+- Build Output drawer (Config / Image / Manifest tabs)
+- Clone-with-overrides workflow (already in data model — needs UI)
+- Batch zip of N devices' files
+- Manifest JSON import (currently export-only)
 - Diff view between two manifests
-- Hardware compatibility warnings system
-  (e.g. "PiSugar HAT + headless → battery monitoring service
-  pointless; consider enabling")
+- Compatibility-warning rules engine (a real graph, not a flat list)
 
-### 🟢 Phase 3 — Image builder (requires native tooling)
-- Decide: Pi-side script vs. GitHub Actions vs. local daemon
-- `ark-device-<name>-vN.img` output with configs pre-injected
-- Versioning + reproducible builds
+### 🟡 Phase 3 — Image builder pipeline
+The 11-step chroot pipeline in `Ark/builder/lib/build.mjs`. Linux
+only. Requires:
+- `qemu-user-static` + `binfmt-support`
+- `losetup` / `kpartx`
+- `parted`
+- `xz-utils`
+- `sudo`
 
-### 🔵 Phase 4 — Runtime feedback + fleet
-- Devices POST telemetry to a Supabase / edge function
-- Ark UI subscribes via Realtime
-- Per-device status: uptime, CPU temp, RAM, disk, WiFi RSSI,
-  PiSugar battery %, service health, last reboot reason
-- "Fleet dashboard" — grid of all known devices, colour-coded
-- Alerts: kiosk crashed, network lost, temp spike
+Realistic execution surfaces:
+- **GitHub Actions workflow** — committed plan triggers build,
+  emits artefact + checksum
+- **Local Linux box** (Pi runs Linux, anyone can build on a Pi)
+- **macOS via Docker/OrbStack/Lima** — Linux container with the above
 
-### 🟣 Phase 5 — Discovery + auto-import
-- SSH scan a network, find Pi devices, auto-generate manifest
-  from observed state
-- Compare existing fleet manifests to live state → flag drift
+### 🔵 Phase 4 — Fleet runtime
+Devices POST telemetry to a Supabase / edge function. UI subscribes
+via Realtime. Per-device card with uptime / CPU temp / RAM / disk /
+WiFi RSSI / PiSugar battery / service health / last reboot reason.
+Fleet grid view + alerts.
 
----
-
-## What's NOT in scope (yet)
-
-- **Provisioning anything other than Pi.** No general ARM SBC
-  support, no x86 nodes. Pi-first.
-- **Cloud-hosted backend.** Everything stays browser-side +
-  localStorage in Phase 1 + 2. Telemetry needs a backend, comes
-  in Phase 4.
-- **OTA updates** to already-deployed devices. Out for now.
-- **Pi DRM provisioning** (vault-level secrets per device).
-  Out for now; can be added later via the systemd unit layer.
+### 🟣 Phase 5 — Discovery + drift
+SSH-scan a network → import devices into Ark. Compare to manifests
+→ flag drift (e.g. installed Chromium 121, manifest says "any").
 
 ---
 
-## Inheritance from "Sinsera Pi Kiosk Builder"
+## What's NOT in scope
 
-The Phase 1 deliverable subsumes the original kiosk builder. All
-of these features carry over:
-- Target URL input + presets (Garage / Core / DarkHaus / Payroll)
-- WiFi SSID + password fields
-- Hostname + timezone + root password
-- Screen rotation, auto-reload interval, hide-cursor, no-blanking
-- Live preview of both output files
-- Client-side privacy (no upload)
+- **Non-Pi hardware** — no general ARM SBC support, no x86 nodes.
+- **OTA updates** to already-deployed devices.
+- **Per-device DRM / vault secrets**.
+- **Backend** for Phase 1 + 2. Everything is browser + localStorage
+  + a separate Linux build host.
 
-New in Ark Phase 1:
-- Named manifests + save/load (Library sidebar)
-- SSH public-key injection
-- Headless mode toggle
-- Role selector (kiosk / signage / portable / dashboard / headless)
-- Hardware-aware warnings (basic — e.g. headless + display setting
-  mismatch → flag)
+---
+
+## How to use today (Phase 1)
+
+### From the browser UI
+1. Open `https://sinsera.co/ark/`
+2. Build a manifest (Identity → Hardware → Network → … → Kiosk)
+3. Right panel shows live validation
+4. Bottom drawer → CONFIG tab → download `dietpi.txt` +
+   `Automation_Custom_Script.sh`
+5. Flash a stock DietPi image with Raspberry Pi Imager
+6. Drop the two files onto the boot partition
+7. Boot the Pi
+
+### From the CLI (parity for CI)
+1. From the UI → Bottom drawer → CONFIG tab → download `plan.json`
+2. On a Linux machine:
+   ```
+   cd Ark/builder
+   node ark-builder.mjs render --plan ~/Downloads/plan.json --out ./build/
+   ```
+3. `./build/dietpi.txt` + `./build/Automation_Custom_Script.sh` —
+   byte-identical to what the browser would have emitted.
+
+---
+
+## How to use later (Phase 3 — when image builder lands)
+
+```
+node ark-builder.mjs build \
+  --plan ~/Downloads/plan.json \
+  --base Ark/Os/DietPi_RPi5-ARMv8-Trixie.img \
+  --out  /tmp/ark-out/
+```
+
+Output: `ark-<device-name>-v1.img` + `.xz` + `.sha256`. Flash that
+.img with Imager → boot → device is already fully configured.
+
+---
+
+## Realistic development rule
+
+> Do not over-engineer fleet / telemetry first.
+> Start with: manifest + config + image-builder pipeline.
+> Then iterate based on real Pi boot results.
+> Primary validation: flash SD → boot Pi → observe failure → refine.
+
+(Verbatim from the user's Ark spec — kept here so it never gets
+lost.)
 
 ---
 
@@ -210,19 +205,8 @@ New in Ark Phase 1:
 
 | | |
 |---|---|
-| Live app | `https://sinsera.co/ark/` (TBD until first deploy) |
-| Repo | `https://github.com/devsinsera/ark` (TBD) |
-| Deploy | `cd app && npm run deploy` (lftp → HostGator `/ark/`) |
-| Local OS images | `/Dev-Sinsera/Ark/Os/*.img*` (gitignored) |
-
----
-
-## Realistic development rule
-
-> Do not over-engineer telemetry or fleet features first.
-> Start with: manifest + config generation + optional image builder.
-> Iterate based on real Pi boot results.
-> Primary validation: flash SD → boot Pi → observe → refine.
-
-(Verbatim from the user's Ark spec — kept here so it never gets
-lost.)
+| Live app | `https://sinsera.co/ark/` |
+| Repo | `https://github.com/devsinsera/ark` |
+| Browser deploy | `cd app && npm run deploy` (lftp → HostGator `/ark/`) |
+| Builder CLI | `cd builder && node ark-builder.mjs --help` |
+| Local OS images | `Ark/Os/*.img*` (gitignored) |
