@@ -66,9 +66,9 @@ function normaliseMac(raw) {
 // blockingly wait for responses, so we cap with a SIGTERM timeout.
 export async function mdnsBrowse({ timeoutMs = 5000 } = {}) {
   const services = new Set();
-  const hosts = {};   // hostname -> { ip?, port?, txt? }
+  const hosts = {};   // hostname -> { ip?, port?, service? }
+  const byIp  = {};   // ip -> hostname.local
 
-  // Service list we care about
   const wantServices = [
     '_arkagent._tcp',
     '_http._tcp',
@@ -84,39 +84,91 @@ export async function mdnsBrowse({ timeoutMs = 5000 } = {}) {
 
   try {
     if (IS_MAC) {
-      // dns-sd -B blocks; capture first ~timeoutMs of output then kill.
+      // dns-sd -B blocks; capture ~timeoutMs of output then kill.
+      // Instance names look like  "SinseraCore [88:a2:9e:a6:a9:f1]" —
+      // strip the bracketed hint to get the bare hostname.
+      const candidates = new Set();
       for (const svc of wantServices) {
         try {
           const out = await runWithTimeout(`dns-sd -B ${svc} local.`, timeoutMs / wantServices.length);
           for (const line of out.split('\n')) {
             const m = line.match(/\s+Add\s+\d+\s+\d+\s+local\.\s+\S+\s+(.+)$/);
             if (m) {
-              const name = m[1].trim();
-              services.add(`${svc}|${name}`);
-              hosts[name] = hosts[name] || { service: svc };
+              const raw = m[1].trim();
+              const cleaned = raw.replace(/\s*\[[^\]]+\]\s*$/, '').trim();
+              if (!cleaned) continue;
+              services.add(`${svc}|${cleaned}`);
+              hosts[cleaned] = hosts[cleaned] || { service: svc };
+              candidates.add(cleaned);
             }
           }
         } catch { /* keep going across services */ }
       }
+      // Forward-resolve every candidate name → IP. dscacheutil is fast
+      // and respects the mDNS resolver on macOS; reverse-PTR lookups
+      // don't work, so we build the reverse map ourselves.
+      await resolveCandidatesByIp([...candidates], byIp, hosts);
     } else {
       // avahi-browse -art (terminate, return all, resolve) — single shot.
       try {
         const out = await runWithTimeout('avahi-browse -art', timeoutMs);
         for (const line of out.split('\n')) {
-          // = field lines have IPv4 + port
           const m = line.match(/^= \S+\s+IPv4\s+(\S+)\s+(\S+)\s+local/);
           if (m) {
             services.add(`${m[2]}|${m[1]}`);
             hosts[m[1]] = { service: m[2] };
+            // avahi-browse -r resolves; on Linux byIp can be filled from
+            // additional "address = " lines, but minimal handling here.
           }
         }
       } catch {}
     }
-  } catch (e) {
+  } catch {
     // mDNS is best-effort; never fail the scan because of it.
   }
 
-  return { services: [...services], hosts };
+  return { services: [...services], hosts, byIp };
+}
+
+// Forward-resolve a batch of bare hostnames (without `.local` suffix),
+// populating byIp + hosts[name].ip. Uses TWO macOS resolvers in
+// parallel because each only reports one interface:
+//   - dscacheutil → the resolver's preferred A record
+//   - dig +short -p 5353 @224.0.0.251 → the multicast-side A record
+// Their union covers Pis like SinseraCore that expose both Ethernet
+// and Wi-Fi interfaces under the same .local name.
+async function resolveCandidatesByIp(names, byIp, hosts) {
+  const limited = names.slice(0, 30);
+  await Promise.all(limited.map(async (name) => {
+    const fqdn = name.endsWith('.local') ? name : `${name}.local`;
+    const ips  = new Set();
+
+    // Resolver 1: dscacheutil
+    try {
+      const out = await runWithTimeout(`dscacheutil -q host -a name ${shellEscape(fqdn)}`, 900);
+      for (const m of out.matchAll(/ip_address:\s+(\d+\.\d+\.\d+\.\d+)/g)) ips.add(m[1]);
+    } catch {}
+
+    // Resolver 2: dig over mDNS multicast (catches the other interface)
+    try {
+      const out = await runWithTimeout(`dig +short +time=1 +tries=1 -p 5353 @224.0.0.251 ${shellEscape(fqdn)} A`, 1500);
+      for (const line of out.split('\n')) {
+        const m = line.trim().match(/^(\d+\.\d+\.\d+\.\d+)$/);
+        if (m) ips.add(m[1]);
+      }
+    } catch {}
+
+    for (const ip of ips) {
+      if (!byIp[ip]) byIp[ip] = fqdn;
+      if (hosts[name] && !hosts[name].ip) hosts[name].ip = ip;
+    }
+  }));
+}
+
+function shellEscape(s) {
+  const str = String(s);
+  if (str.includes("'")) return `"${str.replace(/"/g, '\\"')}"`;
+  return `'${str}'`;
 }
 
 function runWithTimeout(cmd, ms) {
@@ -154,7 +206,7 @@ export async function reverseMdns(ip, timeoutMs = 1500) {
 
 // ── Merge ───────────────────────────────────────────────────────────
 // Combine ARP rows with mDNS data and ARK agent reports.
-export function mergeSources({ arp = [], mdns = { services: [], hosts: {} }, agents = [] }) {
+export function mergeSources({ arp = [], mdns = { services: [], hosts: {}, byIp: {} }, agents = [] }) {
   // Start from ARP (the most ground-truthed signal).
   const by = new Map();
   for (const r of arp) {
@@ -179,13 +231,19 @@ export function mergeSources({ arp = [], mdns = { services: [], hosts: {} }, age
     });
   }
 
-  // Layer in mDNS service hints — anything in mDNS with `_arkagent._tcp`
-  // gets bumped to a stronger identity.
-  for (const svcLine of mdns.services || []) {
-    const [svc, name] = svcLine.split('|');
-    // We don't know which IP this mDNS name maps to without resolving it,
-    // so just record the service set; later phases will resolve hosts.
-    // For now, surface the service list for unknown devices at the bottom.
+  // Layer in mDNS hostnames — for any device whose IP appears in the
+  // mDNS byIp map, attach the .local hostname and (if the merged
+  // device_name is still synthetic) replace it with the real one.
+  for (const [ip, host] of Object.entries(mdns.byIp || {})) {
+    for (const d of by.values()) {
+      if (d.ip === ip) {
+        d.hostname = host;
+        if (d.device_name === 'unknown' || /^pi-[a-f0-9]+$/.test(d.device_name)) {
+          d.device_name = host.replace(/\.local\.?$/, '');
+        }
+        if (!d.sources.includes('mdns')) d.sources.push('mdns');
+      }
+    }
   }
 
   // Agent reports always win — they're authoritative for their device.
