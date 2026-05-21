@@ -7,18 +7,48 @@
 // Phase 4.7: exposes /api/export/* and /api/import/* endpoints.
 
 import { createServer } from 'node:http';
+import { readFile, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { arpScan, mdnsBrowse, mergeSources, wifiScan, detectCurrentNetwork } from './scan.mjs';
 import { openStore } from './store.mjs';
+import { openVault } from './vault.mjs';
+import { initDrift, detectConfigDrift, detectNetworkDrift, recordDriftEvents, listDrift, resolveDrift } from './drift.mjs';
+import { computeHealth } from './health.mjs';
 import { devicesCsv, networksCsv, deviceExport, fleetExport, importSnapshot } from './export.mjs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 const PORT = Number(process.env.ARK_HUB_PORT || 7400);
 const SCAN_INTERVAL_MS = Number(process.env.ARK_HUB_SCAN_INTERVAL_MS || 5000);
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
+const AGENT_FILE = path.join(REPO_ROOT, 'agent', 'ark-agent.py');
 
 // Persistent store (SQLite). Opens — and creates the file if it
 // doesn't exist — at construction time. Fatal if we can't reach it.
 const store = openStore();
 console.log(`[hub] persistent store: ${store.path}`);
+
+// Encrypted credential vault — Phase 5.1. Shares the same SQLite DB.
+const vault = openVault(store.db);
+console.log(`[hub] vault ready (key fingerprint ${vault.keyFingerprint()})`);
+
+// Drift event table — Phase 4.5 / Phase 5.2 multi-network drift.
+initDrift(store.db);
+
+// Pre-compute agent file metadata for the OTA endpoint. Re-checked on
+// each /api/agent/latest call so swapping the file picks up live.
+async function agentMeta() {
+  if (!existsSync(AGENT_FILE)) return null;
+  const body = await readFile(AGENT_FILE);
+  const version = (body.toString().match(/^AGENT_VERSION\s*=\s*"([^"]+)"/m) || [, 'unknown'])[1];
+  const sha256  = createHash('sha256').update(body).digest('hex');
+  const size    = body.length;
+  return { version, sha256, size };
+}
 
 // In-memory state (live scan view; the DB is the long-term record).
 const state = {
@@ -29,6 +59,10 @@ const state = {
   scan_count: 0,
   wifi: { scanned_at: null, active: null, nearby: [] },
   wifi_inflight: false,
+  // Phase 4.5: in-memory manifest registry used by drift detection.
+  // Populated via POST /api/manifests/register — UI hands the Hub
+  // the manifests it cares about so the Hub can compare Agent reports.
+  manifests: new Map(),
 };
 
 async function runScan() {
@@ -142,7 +176,7 @@ const server = createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/agent/report') {
     let body = '';
     req.on('data', d => { body += d; });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const r = JSON.parse(body);
         if (!r.device_name) throw new Error('device_name required');
@@ -163,16 +197,147 @@ const server = createServer(async (req, res) => {
           hostname:    r.hostname,
           device_name: r.device_name,
           os:          r.os,
+          manifest_id: r.manifest_id,
           trust_state: 'trusted',
         });
         store.recordTelemetry(deviceId, r);
 
-        return json(res, { ok: true, device_name: r.device_name, device_id: deviceId });
+        // Phase 4.5 — detect config drift against the device's manifest.
+        const manifest = r.manifest_id ? state.manifests.get(r.manifest_id) : null;
+        const driftEvents = detectConfigDrift({ deviceId, report: r, manifest });
+        const netDrift    = detectNetworkDrift({ deviceId, store });
+        const recorded = recordDriftEvents(store.db, [...driftEvents, ...netDrift]);
+
+        // Tell the agent if there's a newer version available, so it
+        // can self-update without polling another endpoint.
+        const meta = await agentMeta();
+        const update = (meta && r.agent_version && meta.version !== r.agent_version)
+          ? { available_version: meta.version, sha256: meta.sha256, url: '/api/agent/download' }
+          : null;
+
+        return json(res, {
+          ok: true,
+          device_name: r.device_name,
+          device_id: deviceId,
+          drift_recorded: recorded,
+          update,
+        });
       } catch (e) {
         return json(res, { ok: false, error: e.message }, 400);
       }
     });
     return;
+  }
+
+  // ── OTA: agent version metadata ──
+  if (req.method === 'GET' && url.pathname === '/api/agent/latest') {
+    const meta = await agentMeta();
+    if (!meta) return json(res, { ok: false, error: 'agent file not found' }, 404);
+    return json(res, { ok: true, ...meta, url: '/api/agent/download' });
+  }
+
+  // ── OTA: agent download ──
+  if (req.method === 'GET' && url.pathname === '/api/agent/download') {
+    if (!existsSync(AGENT_FILE)) return json(res, { ok: false, error: 'agent file not found' }, 404);
+    const body = await readFile(AGENT_FILE);
+    res.writeHead(200, {
+      'content-type': 'text/x-python',
+      'content-disposition': 'attachment; filename="ark-agent.py"',
+      'content-length': body.length,
+    });
+    return res.end(body);
+  }
+
+  // ── Vault (Phase 5.1) ──
+  if (req.method === 'POST' && url.pathname === '/api/vault/set') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try {
+        const r = JSON.parse(body);
+        const out = vault.set(r);
+        return json(res, { ok: true, ...out });
+      } catch (e) {
+        return json(res, { ok: false, error: e.message }, 400);
+      }
+    });
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === '/api/vault/list') {
+    return json(res, { entries: vault.list() });
+  }
+  const vaultDel = url.pathname.match(/^\/api\/vault\/([^/]+)$/);
+  if (req.method === 'DELETE' && vaultDel) {
+    const ok = vault.delete(decodeURIComponent(vaultDel[1]));
+    return json(res, { ok });
+  }
+
+  // ── Drift events (Phase 4.5 + 5.2) ──
+  if (req.method === 'GET' && url.pathname === '/api/drift') {
+    const includeResolved = url.searchParams.get('include_resolved') === '1';
+    const limit = Number(url.searchParams.get('limit') || 100);
+    return json(res, { events: listDrift(store.db, { limit, includeResolved }) });
+  }
+  const driftDevMatch = url.pathname.match(/^\/api\/devices\/([^/]+)\/drift$/);
+  if (req.method === 'GET' && driftDevMatch) {
+    const id = decodeURIComponent(driftDevMatch[1]);
+    const includeResolved = url.searchParams.get('include_resolved') === '1';
+    return json(res, { events: listDrift(store.db, { deviceId: id, includeResolved }) });
+  }
+  const driftResolveMatch = url.pathname.match(/^\/api\/drift\/(\d+)\/resolve$/);
+  if (req.method === 'POST' && driftResolveMatch) {
+    const id = Number(driftResolveMatch[1]);
+    const ok = resolveDrift(store.db, id);
+    return json(res, { ok });
+  }
+
+  // ── Manifest registry (Phase 4.5 — UI pushes manifests for drift checks) ──
+  if (req.method === 'POST' && url.pathname === '/api/manifests/register') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try {
+        const m = JSON.parse(body);
+        if (!m.id) throw new Error('manifest id required');
+        // Strip credential-shaped fields before storing — even though
+        // this is local-only, defense-in-depth.
+        const sanitized = { ...m };
+        if (sanitized.network) {
+          delete sanitized.network.wifi_password;
+          delete sanitized.network.ssh_private_key;
+        }
+        state.manifests.set(m.id, sanitized);
+        return json(res, { ok: true, registered: m.id, count: state.manifests.size });
+      } catch (e) {
+        return json(res, { ok: false, error: e.message }, 400);
+      }
+    });
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === '/api/manifests') {
+    return json(res, { count: state.manifests.size, ids: [...state.manifests.keys()] });
+  }
+
+  // ── Health (Phase 4.6) ──
+  const healthMatch = url.pathname.match(/^\/api\/devices\/([^/]+)\/health$/);
+  if (req.method === 'GET' && healthMatch) {
+    const id = decodeURIComponent(healthMatch[1]);
+    const device = store.getDevice(id);
+    if (!device) return json(res, { ok: false, error: 'device not found' }, 404);
+    const tel = store.latestTelemetry(id);
+    const sgt = store.listDeviceSightings(id, 5);
+    const h = computeHealth({ telemetry: tel, sightings: sgt, manifestId: device.manifest_id });
+    return json(res, { device_id: id, ...h });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/health/fleet') {
+    const devices = store.listDevices();
+    const fleet = devices.map(d => {
+      const tel = store.latestTelemetry(d.device_id);
+      const sgt = store.listDeviceSightings(d.device_id, 5);
+      const h = computeHealth({ telemetry: tel, sightings: sgt, manifestId: d.manifest_id });
+      return { device_id: d.device_id, device_name: d.device_name || d.hostname, ...h };
+    });
+    return json(res, { fleet });
   }
 
   // ── Manual scan trigger ──
@@ -248,11 +413,18 @@ const server = createServer(async (req, res) => {
 <h1>Ark Hub v${VERSION}</h1>
 <p>${state.devices.length} live device(s) · scan #${state.scan_count} · ${state.scanned_at || 'first-scan-pending'}</p>
 <p>Persistent store: <code>${store.path}</code></p>
+<p>Vault: <code>${vault.keyFingerprint()}</code> · ${vault.list().length} entries</p>
 <h2>Discovery</h2><ul>
   <li><a href="/api/health">/api/health</a></li>
   <li><a href="/api/devices">/api/devices</a></li>
   <li><a href="/api/networks">/api/networks</a></li>
   <li><a href="/api/wifi">/api/wifi</a></li>
+</ul>
+<h2>Fleet</h2><ul>
+  <li><a href="/api/health/fleet">/api/health/fleet</a></li>
+  <li><a href="/api/drift">/api/drift</a></li>
+  <li>/api/devices/&lt;id&gt;/health</li>
+  <li>/api/devices/&lt;id&gt;/drift</li>
 </ul>
 <h2>Export</h2><ul>
   <li><a href="/api/export/devices.csv">/api/export/devices.csv</a></li>
@@ -260,9 +432,17 @@ const server = createServer(async (req, res) => {
   <li><a href="/api/export/snapshot.json">/api/export/snapshot.json</a></li>
   <li>/api/export/device/&lt;device_id&gt;.json</li>
 </ul>
-<h2>Ingest</h2><ul>
+<h2>Vault</h2><ul>
+  <li><a href="/api/vault/list">/api/vault/list</a> (refs + labels; never values)</li>
+  <li>POST /api/vault/set · DELETE /api/vault/&lt;ref&gt;</li>
+</ul>
+<h2>Agent (OTA)</h2><ul>
+  <li><a href="/api/agent/latest">/api/agent/latest</a></li>
+  <li><a href="/api/agent/download">/api/agent/download</a></li>
   <li>POST /api/agent/report</li>
-  <li>POST /api/import/snapshot</li>
+</ul>
+<h2>Ingest</h2><ul>
+  <li>POST /api/import/snapshot · POST /api/manifests/register</li>
   <li>POST /api/scan · POST /api/wifi/refresh</li>
 </ul>`);
   }
