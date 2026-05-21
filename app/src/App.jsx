@@ -419,9 +419,6 @@ function Sidebar({ nav, setNav, count }) {
         }}>
           Ark
         </div>
-        <div style={{ fontSize: 10, color: COLORS.textMuted, letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 600, marginTop: 4 }}>
-          Provisioning · Phase 1
-        </div>
       </div>
 
       {NAV_SECTIONS.map(s => {
@@ -445,10 +442,6 @@ function Sidebar({ nav, setNav, count }) {
       })}
 
       <div style={{ flex: 1 }}/>
-      <div style={{ padding: '8px', fontSize: 10, color: COLORS.textMuted, lineHeight: 1.5, borderTop: `1px solid ${COLORS.border}` }}>
-        Sinsera Pty Ltd<br/>
-        <span style={{ letterSpacing: '0.08em' }}>ARK · v0.1</span>
-      </div>
     </aside>
   );
 }
@@ -976,14 +969,6 @@ function KioskBody({ active, update }) {
           onChange={(e) => update('kiosk.url', e.target.value)}
           placeholder="https://sinsera.co"
           style={inputStyle()}/>
-      </Row>
-      <Row label="Presets">
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {URL_PRESETS.map(p => (
-            <button key={p.id} onClick={() => update('kiosk.url', p.url)} title={p.hint || ''}
-              style={presetBtn(active.kiosk.url === p.url)}>{p.label}</button>
-          ))}
-        </div>
       </Row>
       <Row label="Display">
         <Check checked={!!active.kiosk.fullscreen}
