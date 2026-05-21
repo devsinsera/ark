@@ -1,0 +1,17 @@
+{
+  "name": "ark-hub",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Ark Hub — LAN discovery + agent collector. Runs on the user's Mac during dev or a Pi/NAS in production. Pure stdlib, no deps.",
+  "bin": {
+    "ark-hub": "./src/index.mjs"
+  },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "dev":   "node src/index.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
