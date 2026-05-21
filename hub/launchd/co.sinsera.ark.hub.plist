@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>co.sinsera.ark.hub</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/Users/petastockdale/Dev-Sinsera/Ark/hub/src/index.mjs</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/petastockdale/Dev-Sinsera/Ark</string>
+
+  <!-- launchd starts with an empty PATH, but the Hub shells out to
+       dscacheutil / dig / arp / dns-sd / system_profiler. Ensure those
+       are reachable. /usr/sbin gives us arp, /usr/bin gives us dig +
+       dns-sd, /opt/homebrew/bin gives us a sane node path. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>ARK_HUB_PORT</key>
+    <string>7400</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- KeepAlive restarts the Hub if it crashes. Bounded by
+       ThrottleInterval so a tight crash-loop doesn't burn CPU. -->
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- Logs land in ~/Library/Logs so Console.app can tail them. -->
+  <key>StandardOutPath</key>
+  <string>/Users/petastockdale/Library/Logs/ark-hub.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/petastockdale/Library/Logs/ark-hub.log</string>
+
+  <!-- ProcessType=Background asks the kernel to deprioritise the Hub
+       for resource scheduling so it doesn't compete with foreground
+       apps. -->
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
