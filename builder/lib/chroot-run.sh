@@ -34,7 +34,11 @@ fi
 MNT_BOOT="/mnt/ark-boot"
 MNT_ROOT="/mnt/ark-root"
 LOOP_DEV=""
-EXIT_CODE=0
+KPARTX_USED=0
+# Leave EXIT_CODE unset so the trap can fall back to $? (the actual
+# last-command exit code). Initialising to 0 here causes the trap to
+# happily exit 0 even when the script aborted via `exit 3`.
+EXIT_CODE=""
 
 log() { echo "[chroot-run] $*"; }
 
@@ -45,22 +49,23 @@ cleanup() {
     return
   fi
   log "cleanup…"
-  # Best-effort: unmount in reverse order. Ignore "not mounted" errors.
   for m in \
       "$MNT_ROOT/dev/pts" \
       "$MNT_ROOT/dev"     \
       "$MNT_ROOT/proc"    \
       "$MNT_ROOT/sys"     \
       "$MNT_ROOT/boot/firmware" \
+      "$MNT_ROOT/boot"    \
       "$MNT_ROOT"         \
       "$MNT_BOOT"         ; do
     mountpoint -q "$m" && umount "$m" 2>/dev/null || true
   done
+  if [[ "$KPARTX_USED" == "1" && -n "$LOOP_DEV" ]]; then
+    kpartx -d "$LOOP_DEV" 2>/dev/null || true
+  fi
   if [[ -n "$LOOP_DEV" ]]; then
     losetup -d "$LOOP_DEV" 2>/dev/null || true
   fi
-  # Restore the trap's original exit code so the script exits with
-  # whatever the failing step produced.
   exit "${EXIT_CODE:-$ec}"
 }
 trap cleanup EXIT
@@ -71,20 +76,43 @@ mkdir -p "$(dirname "$OUT_IMG")"
 cp --reflink=auto "$BASE_IMG" "$OUT_IMG"
 log "copied → $OUT_IMG ($(stat --printf='%s' "$OUT_IMG") bytes)"
 
-# ── 2) losetup with partition scan ───────────────────────────────────
+# ── 2) losetup ──────────────────────────────────────────────────────
+# In Colima / Docker on macOS, the host kernel doesn't always create
+# /dev/loopXpN partition devices even with --partscan, because the
+# partition-table scan needs udev which the container lacks. kpartx
+# uses device-mapper to expose partitions as /dev/mapper/loopXpN,
+# which works inside privileged containers without udev.
 log "loop-attaching $OUT_IMG"
-LOOP_DEV=$(losetup --find --partscan --show "$OUT_IMG")
+LOOP_DEV=$(losetup --find --show "$OUT_IMG")
+LOOP_BASE=$(basename "$LOOP_DEV")
 log "loop = $LOOP_DEV"
-# Give the kernel a beat to settle partition devices
-partprobe "$LOOP_DEV" 2>/dev/null || true
-sleep 0.2
 
-# ── 3) discover + mount partitions ───────────────────────────────────
-# DietPi / Pi OS layout: p1 = FAT32 boot, p2 = ext4 rootfs.
+# Try partprobe first (cheap; works on metal); fall back to kpartx if
+# the partition devices don't materialise.
+partprobe "$LOOP_DEV" 2>/dev/null || true
+sleep 0.5
 BOOT_PART="${LOOP_DEV}p1"
 ROOT_PART="${LOOP_DEV}p2"
-[[ -b "$BOOT_PART" ]] || { echo "ERROR: boot partition not visible at $BOOT_PART" >&2; exit 3; }
-[[ -b "$ROOT_PART" ]] || { echo "ERROR: root partition not visible at $ROOT_PART" >&2; exit 3; }
+if [[ ! -b "$BOOT_PART" || ! -b "$ROOT_PART" ]]; then
+  log "loopXpN not visible — falling back to kpartx device-mapper"
+  kpartx -av "$LOOP_DEV"
+  KPARTX_USED=1
+  sleep 0.5
+  BOOT_PART="/dev/mapper/${LOOP_BASE}p1"
+  ROOT_PART="/dev/mapper/${LOOP_BASE}p2"
+fi
+
+# Final diagnostic dump if we still can't see them
+if [[ ! -b "$BOOT_PART" || ! -b "$ROOT_PART" ]]; then
+  log "DIAGNOSTIC: partition devices still missing"
+  ls -la /dev/loop* 2>&1 | head -10 || true
+  ls -la /dev/mapper 2>&1 | head -10 || true
+  losetup -l 2>&1 || true
+  parted -s "$LOOP_DEV" print 2>&1 || true
+  echo "ERROR: boot/root partitions not visible. Tried $BOOT_PART and $ROOT_PART." >&2
+  exit 3
+fi
+log "partitions visible: $BOOT_PART · $ROOT_PART"
 
 mkdir -p "$MNT_BOOT" "$MNT_ROOT"
 log "mounting $ROOT_PART → $MNT_ROOT"

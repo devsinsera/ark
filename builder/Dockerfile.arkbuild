@@ -23,6 +23,7 @@ RUN apt-get update \
       util-linux \
       mount \
       parted \
+      kpartx \
       coreutils \
       ca-certificates \
       qemu-user-static \
@@ -32,7 +33,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work
-COPY chroot-run.sh /usr/local/bin/chroot-run.sh
+COPY lib/chroot-run.sh /usr/local/bin/chroot-run.sh
 RUN chmod +x /usr/local/bin/chroot-run.sh
 
 ENTRYPOINT ["/usr/local/bin/chroot-run.sh"]
