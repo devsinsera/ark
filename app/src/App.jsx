@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import NetworkLandscape from './NetworkLandscape.jsx';
+import Fleet from './Fleet.jsx';
 import {
   // Nav
   Cpu, HardDrive, Layers, Boxes, Image as ImageIcon, ScrollText, Server,
@@ -71,7 +72,7 @@ const NAV_SECTIONS = [
   { id: 'builds',    label: 'Builds',    icon: HardDrive,  kind: 'stub',   stubText: 'No builds yet — generate a build-plan to get started.' },
   { id: 'manifests', label: 'Manifests', icon: Layers,     kind: 'list' },
   { id: 'presets',   label: 'Presets',   icon: Boxes,      kind: 'stub',   stubText: 'Presets — coming soon.' },
-  { id: 'fleet',     label: 'Fleet',     icon: Server,     kind: 'stub',   stubText: 'Fleet — coming soon (Phase 4).' },
+  { id: 'fleet',     label: 'Fleet',     icon: Server,     kind: 'active' },
   { id: 'images',    label: 'Images',    icon: ImageIcon,  kind: 'stub',   stubText: 'Image builder — coming soon (Phase 3).' },
   { id: 'logs',      label: 'Logs',      icon: ScrollText, kind: 'stub',   stubText: 'No build logs yet.' },
 ];
@@ -548,7 +549,8 @@ function CentreWorkspace(props) {
       {nav === 'devices'   && <DevicesView   {...props}/>}
       {nav === 'manifests' && <ManifestsView {...props}/>}
       {nav === 'network'   && <NetworkLandscape/>}
-      {nav !== 'devices' && nav !== 'manifests' && nav !== 'network' && <StubView nav={nav}/>}
+      {nav === 'fleet'     && <Fleet/>}
+      {nav !== 'devices' && nav !== 'manifests' && nav !== 'network' && nav !== 'fleet' && <StubView nav={nav}/>}
     </main>
   );
 }
