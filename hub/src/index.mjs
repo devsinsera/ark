@@ -7,7 +7,7 @@
 // Browser fetches http://localhost:7400/api/devices.
 
 import { createServer } from 'node:http';
-import { arpScan, mdnsBrowse, mergeSources } from './scan.mjs';
+import { arpScan, mdnsBrowse, mergeSources, wifiScan } from './scan.mjs';
 
 const PORT = Number(process.env.ARK_HUB_PORT || 7400);
 const SCAN_INTERVAL_MS = Number(process.env.ARK_HUB_SCAN_INTERVAL_MS || 5000);
@@ -19,6 +19,10 @@ const state = {
   devices: [],
   agents: new Map(),   // device_id -> last agent report
   scan_count: 0,
+  // Wi-Fi nearby scan is slow (5-10s on macOS). Cache aggressively;
+  // a manual /api/wifi/refresh call re-runs it.
+  wifi: { scanned_at: null, active: null, nearby: [] },
+  wifi_inflight: false,
 };
 
 async function runScan() {
@@ -114,6 +118,28 @@ const server = createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/scan') {
     await runScan();
     return json(res, { ok: true, scanned_at: state.scanned_at, device_count: state.devices.length });
+  }
+
+  // GET /api/wifi — return cached Wi-Fi scan (last result)
+  if (req.method === 'GET' && url.pathname === '/api/wifi') {
+    return json(res, state.wifi);
+  }
+
+  // POST /api/wifi/refresh — kick off a fresh Wi-Fi scan (slow; takes ~5-10s)
+  if (req.method === 'POST' && url.pathname === '/api/wifi/refresh') {
+    if (state.wifi_inflight) {
+      return json(res, { ok: false, error: 'A Wi-Fi scan is already running.', wifi: state.wifi }, 409);
+    }
+    state.wifi_inflight = true;
+    try {
+      const result = await wifiScan({ timeoutMs: 12000 });
+      if (result.ok) {
+        state.wifi = { scanned_at: result.scanned_at, active: result.active, nearby: result.nearby };
+      }
+      return json(res, { ok: result.ok, ...state.wifi, error: result.error || null });
+    } finally {
+      state.wifi_inflight = false;
+    }
   }
 
   // Default: tiny help page

@@ -188,3 +188,78 @@ export function mergeSources({ arp = [], mdns = { services: [], hosts: {} }, age
 function ipSortKey(ip) {
   return (ip || '').split('.').map(p => p.padStart(3, '0')).join('.');
 }
+
+// ── Wi-Fi nearby + active scan (Network Landscape Tab 1 + Tab 2) ────
+// macOS: `system_profiler SPAirPortDataType -json` returns both the
+// currently-connected network AND the surrounding visible SSIDs.
+// Linux: `nmcli -t -f SSID,SIGNAL,SECURITY,CHAN dev wifi list`.
+// Both are slow (3-10s) — call sparingly, not on every scan tick.
+export async function wifiScan({ timeoutMs = 12000 } = {}) {
+  try {
+    if (IS_MAC) return await wifiScanMac(timeoutMs);
+    return await wifiScanLinux(timeoutMs);
+  } catch (e) {
+    return { ok: false, error: e.message, nearby: [], active: null };
+  }
+}
+
+async function wifiScanMac(timeoutMs) {
+  const { stdout } = await sh('system_profiler SPAirPortDataType -json', { maxBuffer: 4 * 1024 * 1024, timeout: timeoutMs });
+  const data = JSON.parse(stdout);
+  const interfaces = data?.SPAirPortDataType?.[0]?.spairport_airport_interfaces || [];
+
+  // First interface is usually en0 (built-in WiFi). Take its data.
+  const en0 = interfaces[0] || {};
+  const currentRaw  = en0.spairport_current_network_information || null;
+  const nearbyRaw   = en0.spairport_airport_other_local_wireless_networks || [];
+
+  // Normalise the SSID record shape used by both nearby + active.
+  const norm = (r) => ({
+    ssid:        r._name || null,
+    channel:     parseChannel(r.spairport_network_channel),
+    phymode:     r.spairport_network_phymode || null,
+    rssi:        toInt(r.spairport_signal_noise || r.spairport_network_rssi),
+    noise:       toInt(r.spairport_signal_noise_noise),
+    security:    r.spairport_security_mode || r.spairport_network_security || 'unknown',
+    type:        r.spairport_network_type || 'infrastructure',
+    bssid:       r.spairport_network_bssid || null,
+  });
+
+  return {
+    ok: true,
+    scanned_at: new Date().toISOString(),
+    active:  currentRaw ? norm(currentRaw) : null,
+    nearby:  nearbyRaw.map(norm).sort((a, b) => (b.rssi || -1000) - (a.rssi || -1000)),
+  };
+}
+
+async function wifiScanLinux(timeoutMs) {
+  const { stdout } = await sh(
+    "nmcli -t -f SSID,SIGNAL,SECURITY,CHAN,BSSID dev wifi list",
+    { timeout: timeoutMs }
+  );
+  const nearby = stdout.trim().split('\n').filter(Boolean).map(line => {
+    const [ssid, signal, security, chan, bssid] = line.split(':');
+    return {
+      ssid: ssid || null,
+      rssi: signal ? -100 + Number(signal) : null,  // nmcli %, approximate dBm
+      security: security || 'unknown',
+      channel: chan ? Number(chan) : null,
+      bssid: bssid || null,
+      type: 'infrastructure',
+    };
+  });
+  return { ok: true, scanned_at: new Date().toISOString(), nearby, active: null };
+}
+
+function parseChannel(s) {
+  // macOS returns e.g. "100 (5GHz, 20MHz)" — just the number is enough.
+  if (!s) return null;
+  const m = String(s).match(/^(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+function toInt(v) {
+  if (v == null) return null;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : null;
+}
