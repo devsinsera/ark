@@ -7,7 +7,7 @@
 // Browser fetches http://localhost:7400/api/devices.
 
 import { createServer } from 'node:http';
-import { arpScan, mdnsBrowse, mergeSources, wifiScan } from './scan.mjs';
+import { arpScan, mdnsBrowse, mergeSources, wifiScan, reverseMdns } from './scan.mjs';
 
 const PORT = Number(process.env.ARK_HUB_PORT || 7400);
 const SCAN_INTERVAL_MS = Number(process.env.ARK_HUB_SCAN_INTERVAL_MS || 5000);
@@ -32,7 +32,19 @@ async function runScan() {
       mdnsBrowse({ timeoutMs: 4000 }),
     ]);
     const agents = [...state.agents.values()];
-    state.devices = mergeSources({ arp, mdns, agents });
+    const merged = mergeSources({ arp, mdns, agents });
+    // Best-effort: resolve hostnames for Pi-flagged devices first
+    // (most likely to have an mDNS name we care about), capped to 5
+    // lookups per tick so the scan stays under ~3s.
+    const targets = merged.filter(d => d.os === 'likely Pi' || !d.hostname).slice(0, 5);
+    await Promise.all(targets.map(async d => {
+      const host = await reverseMdns(d.ip, 1200);
+      if (host) {
+        d.hostname = host;
+        if (d.device_name === 'unknown') d.device_name = host.replace(/\.local\.?$/, '');
+      }
+    }));
+    state.devices = merged;
     state.scanned_at = new Date().toISOString();
     state.scan_count++;
   } catch (e) {

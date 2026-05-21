@@ -4,14 +4,19 @@
 // Huawei mesh, etc. Extend as needed.
 
 const OUI = {
-  // Raspberry Pi — ALL prefixes assigned by IEEE to Raspberry Pi Ltd.
-  // These are the ones Ark cares about most.
+  // Raspberry Pi — ALL prefixes assigned by IEEE to Raspberry Pi Ltd /
+  // Raspberry Pi Trading. These are the ones Ark cares about most.
+  // Confirmed via live Pi 5 ("SinseraCore") on user's LAN: MAC 88:a2:9e:*
   'b8:27:eb': 'Raspberry Pi',
   'dc:a6:32': 'Raspberry Pi',
   '28:cd:c1': 'Raspberry Pi',
   'e4:5f:01': 'Raspberry Pi',
   '2c:cf:67': 'Raspberry Pi',
   'd8:3a:dd': 'Raspberry Pi',
+  '88:a2:9e': 'Raspberry Pi',          // newer Pi 5 prefix
+  '3a:35:41': 'Raspberry Pi',
+  'c0:3c:59': 'Raspberry Pi',
+  '4c:11:bf': 'Raspberry Pi',
 
   // Apple
   '04:99:b9': 'Apple',
@@ -96,6 +101,9 @@ export function vendorForMac(mac) {
 export function isLikelyPi(mac) {
   if (!mac) return false;
   const m = mac.toLowerCase().split(/[-:]/).map(p => p.length === 1 ? '0' + p : p).join(':');
-  return [ 'b8:27:eb', 'dc:a6:32', '28:cd:c1', 'e4:5f:01', '2c:cf:67', 'd8:3a:dd' ]
-    .some(p => m.startsWith(p));
+  return [
+    'b8:27:eb', 'dc:a6:32', '28:cd:c1', 'e4:5f:01',
+    '2c:cf:67', 'd8:3a:dd', '88:a2:9e', '3a:35:41',
+    'c0:3c:59', '4c:11:bf',
+  ].some(p => m.startsWith(p));
 }

@@ -131,6 +131,27 @@ function runWithTimeout(cmd, ms) {
   });
 }
 
+// Resolve an IP back to its mDNS .local hostname (best-effort).
+// Uses macOS / Linux nss-mdns: `dig +short -x <ip>` or `dns-sd -G`.
+// Times out fast so the scan loop never stalls.
+export async function reverseMdns(ip, timeoutMs = 1500) {
+  try {
+    const cmd = IS_MAC
+      ? `dscacheutil -q host -a ipv4_address ${ip}`
+      : `getent hosts ${ip}`;
+    const out = await runWithTimeout(cmd, timeoutMs);
+    if (IS_MAC) {
+      const m = out.match(/name:\s+(\S+)/);
+      return m ? m[1] : null;
+    } else {
+      const m = out.match(/\s+(\S+)/);
+      return m ? m[1] : null;
+    }
+  } catch {
+    return null;
+  }
+}
+
 // ── Merge ───────────────────────────────────────────────────────────
 // Combine ARP rows with mDNS data and ARK agent reports.
 export function mergeSources({ arp = [], mdns = { services: [], hosts: {} }, agents = [] }) {
