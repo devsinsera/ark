@@ -92,15 +92,27 @@ function TabBar({ tab, setTab }) {
 // ── Devices tab (the spec'd Tab 3) ─────────────────────────────────
 function DevicesTab({ hubUrl }) {
   const [state, setState] = useState({ status: 'loading', devices: [], scanned_at: null, error: null });
+  const [healthByDevice, setHealthByDevice] = useState({});  // Phase 4.6
+  const [driftCount, setDriftCount]         = useState(0);   // Phase 4.5
   const [filter, setFilter] = useState('');
   const [busy,   setBusy]   = useState(false);
 
   const fetchDevices = useCallback(async () => {
     try {
-      const res = await fetch(`${hubUrl}/api/devices`, { cache: 'no-cache' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const [devRes, healthRes, driftRes] = await Promise.all([
+        fetch(`${hubUrl}/api/devices`,       { cache: 'no-cache' }),
+        fetch(`${hubUrl}/api/health/fleet`,  { cache: 'no-cache' }).catch(() => null),
+        fetch(`${hubUrl}/api/drift`,         { cache: 'no-cache' }).catch(() => null),
+      ]);
+      if (!devRes.ok) throw new Error(`HTTP ${devRes.status}`);
+      const data = await devRes.json();
+      const health = healthRes && healthRes.ok ? await healthRes.json() : { fleet: [] };
+      const drift  = driftRes  && driftRes.ok  ? await driftRes.json()  : { events: [] };
+      const hmap = {};
+      for (const f of health.fleet || []) hmap[f.device_id] = f.state;
       setState({ status: 'ok', devices: data.devices || [], scanned_at: data.scanned_at, count: data.device_count, error: null });
+      setHealthByDevice(hmap);
+      setDriftCount((drift.events || []).length);
     } catch (e) {
       setState(s => ({ ...s, status: 'error', error: e.message }));
     }
@@ -136,6 +148,17 @@ function DevicesTab({ hubUrl }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {driftCount > 0 && (
+        <a href={`${hubUrl}/api/drift`} target="_blank" rel="noreferrer" style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '10px 14px', textDecoration: 'none',
+          background: 'rgba(245,180,90,0.10)',
+          border: `1px solid ${COLORS.warning}`,
+          borderRadius: 8, color: COLORS.warning, fontSize: 13,
+        }}>
+          <AlertTriangle size={14}/> {driftCount} drift event{driftCount === 1 ? '' : 's'} unresolved · view JSON →
+        </a>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 200, position: 'relative' }}>
           <Search size={14} style={{ position: 'absolute', top: 11, left: 10, color: COLORS.textMuted }}/>
@@ -192,7 +215,7 @@ function DevicesTab({ hubUrl }) {
             {filtered.length === 0 && state.status === 'loading' && (
               <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', color: COLORS.textMuted }}>Loading…</td></tr>
             )}
-            {filtered.map(d => <DeviceRow key={d.id || (d.ip + d.mac)} d={d}/>)}
+            {filtered.map(d => <DeviceRow key={d.id || (d.ip + d.mac)} d={d} health={healthByDevice[d.mac || d.id || d.ip]}/>)}
           </tbody>
         </table>
       </div>
@@ -214,16 +237,24 @@ function Td({ children, mono = false, dim = false }) {
   }}>{children}</td>;
 }
 
-function DeviceRow({ d }) {
+function DeviceRow({ d, health }) {
   const isPi = d.os === 'likely Pi' || /Raspberry Pi/i.test(d.vendor || '');
   const hostnameDisplay = d.hostname || d.device_name || '—';
+  // Health-state → status-dot colour. Falls back to a neutral green
+  // for everything else (network discovery only — no agent telemetry).
+  const stateColour = {
+    healthy:  COLORS.success,
+    degraded: COLORS.warning,
+    offline:  COLORS.error,
+    unknown:  COLORS.textMuted,
+  }[health] || (isPi ? COLORS.accentBright : COLORS.success);
   return (
     <tr style={{ background: isPi ? 'rgba(6,182,212,0.04)' : 'transparent' }}>
       <Td>
-        <span style={{
+        <span title={health ? `health: ${health}` : 'network-discovered only'} style={{
           display: 'inline-block', width: 8, height: 8, borderRadius: 4,
-          background: isPi ? COLORS.accentBright : COLORS.success,
-          boxShadow: isPi ? `0 0 8px ${COLORS.accent}` : 'none',
+          background: stateColour,
+          boxShadow: isPi && !health ? `0 0 8px ${COLORS.accent}` : 'none',
         }}/>
       </Td>
       <Td mono>{d.ip}</Td>
@@ -236,6 +267,16 @@ function DeviceRow({ d }) {
             border: `1px solid ${COLORS.accentBorder}`, borderRadius: 4,
             textTransform: 'uppercase', letterSpacing: 0.5,
           }}>Pi</span>
+        )}
+        {health && health !== 'unknown' && (
+          <span style={{
+            marginLeft: 8, padding: '2px 6px', fontSize: 10,
+            background: health === 'healthy' ? 'rgba(34,197,94,0.15)'
+                       : health === 'degraded' ? 'rgba(245,180,90,0.15)'
+                       : 'rgba(239,111,92,0.15)',
+            color: stateColour, borderRadius: 4,
+            textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600,
+          }}>{health}</span>
         )}
       </Td>
       <Td mono dim>{d.mac || '—'}</Td>
