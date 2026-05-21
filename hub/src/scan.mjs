@@ -342,3 +342,71 @@ function toInt(v) {
   const n = parseInt(v, 10);
   return Number.isFinite(n) ? n : null;
 }
+
+// ── Current network identity ────────────────────────────────────────
+// Derive a stable network_id for the network the Hub is currently on.
+// Uses default gateway + ARP + (when available) active Wi-Fi SSID.
+//
+// Format:
+//   wifi:<ssid>:<gateway_mac>           — when on Wi-Fi
+//   ethernet:<subnet>:<gateway_mac>     — when on Ethernet only
+//   unknown:<gateway_ip>                — fallback
+//
+// Returns null if no default gateway can be found (rare).
+export async function detectCurrentNetwork({ activeWifi = null } = {}) {
+  // 1) gateway IP from `netstat -nr` (macOS) or `ip route` (Linux)
+  let gwIp = null, iface = null;
+  try {
+    if (IS_MAC) {
+      const { stdout } = await sh('netstat -nr -f inet | grep default | head -1');
+      const m = stdout.match(/^default\s+(\S+)\s+\S+\s+(\S+)/m);
+      if (m) { gwIp = m[1]; iface = m[2]; }
+    } else {
+      const { stdout } = await sh('ip route show default');
+      const m = stdout.match(/^default via (\S+) dev (\S+)/);
+      if (m) { gwIp = m[1]; iface = m[2]; }
+    }
+  } catch {}
+  if (!gwIp) return null;
+
+  // 2) gateway MAC from ARP table
+  let gwMac = null;
+  try {
+    const arp = await arpScan();
+    const row = arp.find(r => r.ip === gwIp);
+    if (row) gwMac = row.mac;
+  } catch {}
+
+  // 3) decide type. macOS uses `en0` for BOTH Wi-Fi and Ethernet
+  // depending on the hardware, so interface-name matching is unreliable.
+  // The authoritative signal is whether system_profiler returned a
+  // current Wi-Fi association — if activeWifi is non-null we're on
+  // Wi-Fi even when the SSID itself is "<redacted>" (which macOS does
+  // when Node doesn't have Location Services permission).
+  const isWifi = !!activeWifi;
+  const ssid   = isWifi ? (activeWifi.ssid || null) : null;
+  const type   = isWifi ? 'wifi' : (iface && /^(eth|en)/.test(iface) ? 'ethernet' : 'unknown');
+
+  // 4) subnet — best-effort: derive from gateway IP /24 (cheap default)
+  const subnetParts = gwIp.split('.');
+  const subnet = subnetParts.length === 4 ? `${subnetParts[0]}.${subnetParts[1]}.${subnetParts[2]}.0/24` : null;
+
+  // Build a stable id. When SSID is "<redacted>", fall back to the
+  // gateway MAC + subnet for uniqueness so multiple redacted networks
+  // don't collide into one row.
+  const ssidForId = ssid && ssid !== '<redacted>' ? ssid : (subnet || gwIp);
+  const idCore = isWifi ? ssidForId : (subnet || gwIp);
+  const network_id = `${type}:${idCore}:${gwMac || gwIp}`;
+
+  return {
+    network_id,
+    type,
+    ssid,
+    ssid_redacted: ssid === '<redacted>',
+    subnet,
+    gateway_ip:  gwIp,
+    gateway_mac: gwMac,
+    security:    isWifi ? (activeWifi.security || null) : null,
+    interface:   iface,
+  };
+}

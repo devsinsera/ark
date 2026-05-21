@@ -33,3 +33,8 @@ builds/*/install.log
 builds/*/install.plan.json
 builds/*/install.plan.sh
 builds/*/manifest.json
+
+# Locally-relocated RaspyJack source tree (moved out of builds/ to
+# dodge AV quarantine). Same reason as above — keep local.
+Jack/
+cant-phish-here/

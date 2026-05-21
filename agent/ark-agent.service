@@ -1,0 +1,26 @@
+[Unit]
+Description=Ark Agent — Pi telemetry reporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/ark-agent.py
+Restart=on-failure
+RestartSec=5
+User=root
+EnvironmentFile=/etc/ark-agent.env
+
+# Hardening — the agent only needs to read system metrics + POST to
+# the Hub. Lock everything else down.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadOnlyPaths=/
+
+[Install]
+WantedBy=multi-user.target
