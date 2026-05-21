@@ -18,3 +18,18 @@ Os/*.zip
 # macOS metadata
 .DS_Store
 *.log
+
+# Installer engine working dirs — staged source + plan artefacts +
+# backup tarballs. These can contain dual-use security tooling (e.g.
+# network/recon code) that AV products like Norton will quarantine.
+# Keep them local; the engine re-creates them deterministically from
+# a profile.json + source URL. We ALWAYS keep builds/<profile>/profile.json
+# (the build profile itself); only the engine's outputs are ignored.
+builds/*/src/
+builds/*/scripts/
+builds/*/config/
+builds/*/exports/
+builds/*/install.log
+builds/*/install.plan.json
+builds/*/install.plan.sh
+builds/*/manifest.json

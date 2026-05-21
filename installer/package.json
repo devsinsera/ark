@@ -1,0 +1,16 @@
+{
+  "name": "ark-installer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ARK-CORE Installer Engine — universal Pi build compiler. Ingests packages, detects requirements, produces a deterministic first-boot install plan.",
+  "bin": {
+    "ark-install": "./bin/ark-install.mjs"
+  },
+  "scripts": {
+    "install-engine": "node bin/ark-install.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
