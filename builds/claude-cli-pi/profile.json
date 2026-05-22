@@ -1,0 +1,57 @@
+{
+  "profile_id":   "claude-cli-pi",
+  "version":      1,
+  "category":     "raspberry-pi-devices",
+  "name":         "Claude CLI Pi",
+  "description":  "A Pi 5 that boots into a tmux session running Claude Code CLI. Headless; SSH in to talk to Claude. Designed as a personal AI scratch-pad / always-on agent host.",
+
+  "supported_hardware": [
+    "pi-5", "pi-5-4gb", "pi-5-8gb", "pi-5-16gb",
+    "pi-4-8gb"
+  ],
+
+  "default_role":   "service",
+  "default_boot":   "headless",
+  "default_os":     "pi-os-lite",
+  "default_code_package": null,
+
+  "base_packages": [
+    "git", "curl", "ca-certificates",
+    "tmux", "vim", "jq",
+    "build-essential"
+  ],
+
+  "optional_packages": {
+    "node_via_apt":   ["nodejs", "npm"],
+    "node_via_nvm":   []
+  },
+
+  "npm_packages_global": [
+    "@anthropic-ai/claude-code"
+  ],
+
+  "env_required": [
+    {
+      "name":  "ANTHROPIC_API_KEY",
+      "where": "/etc/claude-cli.env",
+      "kind":  "api-token",
+      "notes": "Stored in the Ark vault and baked into /etc/claude-cli.env at install time. Never logged."
+    }
+  ],
+
+  "services": {
+    "auto_start_on_boot": true,
+    "systemd_unit_name":  "ark-claude",
+    "user":               "claude",
+    "restart_policy":     "on-failure",
+    "exec_start":         "/usr/bin/tmux new-session -d -s claude -- /usr/local/bin/claude",
+    "description":        "Always-on tmux session running Claude Code CLI; SSH in then `tmux attach -t claude`"
+  },
+
+  "logs_dir":    "/ark/builds/claude-cli-pi/logs",
+  "install_dir": "/ark/builds/claude-cli-pi/code",
+
+  "post_install_message": "After flash + boot:\n  1) ssh claude@<pi>.local\n  2) tmux attach -t claude\n  3) you're inside Claude Code; Ctrl-b d to detach without killing it\n  4) ssh logout disconnects you; tmux session keeps running",
+
+  "authorization_notice": "Requires an ANTHROPIC_API_KEY billed to your Anthropic account. Approve in your Anthropic dashboard before flashing. Do not share API keys in chat logs or commit them to git."
+}

@@ -20,6 +20,7 @@ import { computeHealth } from './health.mjs';
 import { devicesCsv, networksCsv, deviceExport, fleetExport, importSnapshot } from './export.mjs';
 import { listBuilds, getBuild, listImages, tailFile, hubLogPath, buildLogPath } from './inventory.mjs';
 import { initFlash, JOB_STATES, NODE_CAPABILITIES } from './flash.mjs';
+import { initSecurity, ALERT_KINDS, HARDENING_CHECKS } from './security.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -43,6 +44,9 @@ initDrift(store.db);
 
 // Flash Node subsystem — nodes, image registry, job queue.
 const flash = initFlash(store.db);
+
+// Can't Phish Here — defensive security module.
+const security = initSecurity(store.db);
 
 // Pre-compute agent file metadata for the OTA endpoint. Re-checked on
 // each /api/agent/latest call so swapping the file picks up live.
@@ -116,6 +120,13 @@ async function runScan() {
     state.devices = merged;
     state.scanned_at = new Date().toISOString();
     state.scan_count++;
+
+    // Can't Phish Here — defensive detection on each scan tick.
+    try {
+      security.detect({ currentDevices: merged, store });
+    } catch (e) {
+      console.error('[hub] cph detect error:', e.message);
+    }
   } catch (e) {
     console.error('[hub] scan error:', e.message);
   }
@@ -321,6 +332,70 @@ const server = createServer(async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/api/manifests') {
     return json(res, { count: state.manifests.size, ids: [...state.manifests.keys()] });
+  }
+
+  // ── Can't Phish Here — defensive security module ────────────────
+  if (req.method === 'GET' && url.pathname === '/api/cph/overview') {
+    return json(res, {
+      alerts:   security.countAlerts(),
+      approved: security.listApproved().length,
+      checks:   HARDENING_CHECKS.length,
+      last_scan: state.scanned_at,
+      device_count: state.devices.length,
+    });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/cph/alerts') {
+    return json(res, {
+      alerts: security.listAlerts({
+        severity: url.searchParams.get('severity') || undefined,
+        kind:     url.searchParams.get('kind')     || undefined,
+        includeResolved: url.searchParams.get('include_resolved') === '1',
+        limit:    Number(url.searchParams.get('limit') || 200),
+      }),
+    });
+  }
+  const cphAckMatch = url.pathname.match(/^\/api\/cph\/alerts\/(\d+)\/ack$/);
+  if (req.method === 'POST' && cphAckMatch) {
+    return json(res, { ok: security.ackAlert(Number(cphAckMatch[1])) });
+  }
+  const cphResolveMatch = url.pathname.match(/^\/api\/cph\/alerts\/(\d+)\/resolve$/);
+  if (req.method === 'POST' && cphResolveMatch) {
+    return json(res, { ok: security.resolveAlert(Number(cphResolveMatch[1])) });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/cph/approved') {
+    return json(res, { hosts: security.listApproved() });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/cph/approved') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try { return json(res, { ok: true, host: security.approveHost(JSON.parse(body)) }); }
+      catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    });
+    return;
+  }
+  const cphRevokeMatch = url.pathname.match(/^\/api\/cph\/approved\/(\d+)$/);
+  if (req.method === 'DELETE' && cphRevokeMatch) {
+    return json(res, { ok: security.revokeApproval(Number(cphRevokeMatch[1])) });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/cph/checks') {
+    return json(res, { checks: HARDENING_CHECKS });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/cph/findings') {
+    const target = url.searchParams.get('target') || undefined;
+    return json(res, { findings: security.listFindings(target) });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/cph/findings') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try { return json(res, { ok: true, ...security.recordFinding(JSON.parse(body)) }); }
+      catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    });
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === '/api/cph/constants') {
+    return json(res, { alert_kinds: ALERT_KINDS, hardening_checks: HARDENING_CHECKS.map(c => c.id) });
   }
 
   // ── Flash Node subsystem ─────────────────────────────────────────
