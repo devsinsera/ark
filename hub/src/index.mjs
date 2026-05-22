@@ -400,6 +400,34 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/cph/constants') {
     return json(res, { alert_kinds: ALERT_KINDS, hardening_checks: HARDENING_CHECKS.map(c => c.id) });
   }
+  if (req.method === 'GET' && url.pathname === '/api/cph/webhooks') {
+    return json(res, { webhooks: security.listWebhooks() });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/cph/webhooks') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try { return json(res, { ok: true, ...security.addWebhook(JSON.parse(body)) }); }
+      catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    });
+    return;
+  }
+  const cphWebhookMatch = url.pathname.match(/^\/api\/cph\/webhooks\/(\d+)$/);
+  if (req.method === 'DELETE' && cphWebhookMatch) {
+    return json(res, { ok: security.deleteWebhook(Number(cphWebhookMatch[1])) });
+  }
+  const cphWebhookToggle = url.pathname.match(/^\/api\/cph\/webhooks\/(\d+)\/toggle$/);
+  if (req.method === 'POST' && cphWebhookToggle) {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try {
+        const r = JSON.parse(body || '{}');
+        return json(res, { ok: security.toggleWebhook(Number(cphWebhookToggle[1]), !!r.enabled) });
+      } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    });
+    return;
+  }
 
   // ── Flash Node subsystem ─────────────────────────────────────────
   if (req.method === 'POST' && url.pathname === '/api/flash/nodes/register') {
@@ -649,6 +677,57 @@ function json(res, body, status = 200) {
   res.end(JSON.stringify(body, null, 2));
 }
 
+// Flash Node dispatcher — periodically pushes queued jobs to their
+// target Flash Agent. Per the spec's v2 plan: the Hub doesn't wait
+// for the operator to call the Agent directly anymore. Fire-and-
+// forget; the Agent ACKs by transitioning the job's state via
+// /api/flash/jobs/<id>/update.
+async function dispatchQueuedFlashJobs() {
+  const queued = flash.listJobs({ state: 'queued', limit: 20 });
+  for (const job of queued) {
+    const node = flash.getNode(job.node_id);
+    if (!node) continue;
+    if (node.status === 'offline') continue;
+    if (!node.agent_url) continue;
+    const image = flash.getImage(job.image_id);
+    if (!image) {
+      flash.updateJob(job.job_id, { state: 'failed', error: `image not found: ${job.image_id}`, completed_at: new Date().toISOString() });
+      continue;
+    }
+    // Mark dispatched so we don't re-fire next tick
+    flash.updateJob(job.job_id, { state: 'preparing', started_at: new Date().toISOString() });
+    const payload = {
+      hub_job_id:       job.job_id,
+      sha256:           image.sha256,
+      target_disk_path: job.target_disk_path,
+      // Prefer image_url so the Agent fetches from the Hub. Otherwise
+      // hand it a path the Agent can read locally.
+      image_url:        `http://${getOwnHostHint()}:${PORT}/api/flash/images/${encodeURIComponent(image.image_id)}/download`,
+      allow_root_override: false,
+    };
+    try {
+      const r = await fetch(node.agent_url.replace(/\/+$/, '') + '/jobs', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) throw new Error(`agent returned ${r.status}`);
+    } catch (e) {
+      flash.updateJob(job.job_id, { state: 'failed', error: `dispatch failed: ${e.message}`, completed_at: new Date().toISOString() });
+      console.error(`[hub] flash dispatch ${job.job_id} -> ${node.agent_url} failed:`, e.message);
+    }
+  }
+}
+
+function getOwnHostHint() {
+  // Best-effort: when the Agent is on a Pi on the same LAN, the Hub's
+  // IP relative to the agent is the Mac's LAN IP. We assume the Hub
+  // gateway address is reachable; in practice this should be the
+  // primary outbound IP. The Agent can be configured to override via
+  // ARK_HUB_URL anyway.
+  return process.env.ARK_HUB_PUBLIC_HOST || '127.0.0.1';
+}
+
 server.listen(PORT, '127.0.0.1', async () => {
   console.log(`[hub] listening on http://localhost:${PORT}`);
 
@@ -679,6 +758,9 @@ server.listen(PORT, '127.0.0.1', async () => {
   setInterval(runScan, SCAN_INTERVAL_MS);
   // hourly prune to keep DB bounded
   setInterval(() => { try { store.prune(); } catch {} }, 3600 * 1000);
+  // Flash Node dispatcher — every 4 s, push any queued jobs to their
+  // target Agent. No-op when nothing is queued.
+  setInterval(() => { dispatchQueuedFlashJobs().catch(e => console.error('[hub] flash dispatcher:', e.message)); }, 4000);
 });
 
 process.on('SIGINT',  () => { console.log('\n[hub] shutting down'); store.close(); server.close(() => process.exit(0)); });

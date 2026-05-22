@@ -10,6 +10,18 @@
 // and DNSSpoof/ trees are NEVER invoked by this module.
 
 const DDL = `
+CREATE TABLE IF NOT EXISTS cph_webhooks (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  label         TEXT NOT NULL,
+  url           TEXT NOT NULL,
+  kind          TEXT NOT NULL DEFAULT 'generic',  -- 'slack' | 'discord' | 'generic'
+  min_severity  TEXT NOT NULL DEFAULT 'warn',     -- 'info' | 'warn' | 'critical'
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  created_at    TEXT NOT NULL,
+  last_fired_at TEXT,
+  last_status   TEXT
+);
+
 CREATE TABLE IF NOT EXISTS cph_approved_hosts (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   device_id     TEXT,                       -- normalised MAC if known
@@ -165,9 +177,9 @@ export function initSecurity(db) {
       if (!ALERT_KINDS.includes(alert.kind)) throw new Error(`unknown alert kind: ${alert.kind}`);
       if (!alert.subject) throw new Error('subject required');
       const sev = alert.severity || 'info';
-      // Build a stable alert_id so re-raises dedupe instead of stacking
       const stableId = alert.alert_id ||
         `${alert.kind}:${alert.device_id || 'no-device'}:${Buffer.from(alert.subject).toString('base64').slice(0, 12)}`;
+      let isNew = true;
       try {
         db.prepare(`
           INSERT INTO cph_alerts (alert_id, severity, kind, device_id, subject, detail_json, detected_at)
@@ -175,12 +187,39 @@ export function initSecurity(db) {
         `).run(stableId, sev, alert.kind, alert.device_id || null,
                alert.subject, alert.detail ? JSON.stringify(alert.detail) : null,
                new Date().toISOString());
-        return { ok: true, alert_id: stableId, new: true };
       } catch (e) {
-        // UNIQUE constraint → dedupe (alert already raised)
-        if (/UNIQUE/.test(e.message)) return { ok: true, alert_id: stableId, new: false };
-        throw e;
+        if (/UNIQUE/.test(e.message)) isNew = false;
+        else throw e;
       }
+      // Fire webhooks on NEW alerts only (dedupes naturally).
+      if (isNew) fireWebhooks(db, { severity: sev, kind: alert.kind, subject: alert.subject, detail: alert.detail, alert_id: stableId, detected_at: new Date().toISOString() });
+      return { ok: true, alert_id: stableId, new: isNew };
+    },
+
+    // ── Webhooks ────────────────────────────────────────────────
+    listWebhooks() {
+      return db.prepare(`SELECT * FROM cph_webhooks ORDER BY created_at DESC`).all();
+    },
+    addWebhook(w) {
+      if (!w.label) throw new Error('label required');
+      if (!w.url || !/^https?:\/\//i.test(w.url)) throw new Error('url must be http(s)://...');
+      const kind = (w.kind || 'generic').toLowerCase();
+      if (!['generic','slack','discord'].includes(kind)) throw new Error(`unknown webhook kind: ${kind}`);
+      const sev  = (w.min_severity || 'warn').toLowerCase();
+      if (!['info','warn','critical'].includes(sev)) throw new Error(`unknown severity: ${sev}`);
+      const r = db.prepare(`
+        INSERT INTO cph_webhooks (label, url, kind, min_severity, enabled, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(w.label, w.url, kind, sev, w.enabled === false ? 0 : 1, new Date().toISOString());
+      return { id: r.lastInsertRowid };
+    },
+    deleteWebhook(id) {
+      const r = db.prepare(`DELETE FROM cph_webhooks WHERE id = ?`).run(id);
+      return r.changes > 0;
+    },
+    toggleWebhook(id, enabled) {
+      const r = db.prepare(`UPDATE cph_webhooks SET enabled = ? WHERE id = ?`).run(enabled ? 1 : 0, id);
+      return r.changes > 0;
     },
     listAlerts({ severity, kind, includeResolved = false, limit = 200 } = {}) {
       let sql = `SELECT * FROM cph_alerts WHERE 1=1`;
@@ -310,6 +349,68 @@ export function initSecurity(db) {
       return { raised, count: raised.length };
     },
   };
+}
+
+// ── Webhook dispatch ────────────────────────────────────────────────
+const SEVERITY_RANK = { info: 0, warn: 1, critical: 2 };
+
+function fireWebhooks(db, alert) {
+  const subs = db.prepare(`SELECT * FROM cph_webhooks WHERE enabled = 1`).all();
+  if (!subs.length) return;
+  for (const w of subs) {
+    const wantRank = SEVERITY_RANK[w.min_severity] ?? 1;
+    const gotRank  = SEVERITY_RANK[alert.severity]  ?? 1;
+    if (gotRank < wantRank) continue;
+    postWebhook(db, w, alert).catch(() => {});  // fire-and-forget
+  }
+}
+
+async function postWebhook(db, webhook, alert) {
+  let body;
+  if (webhook.kind === 'slack') {
+    body = JSON.stringify({
+      text: `*[${alert.severity.toUpperCase()}] ${alert.kind}* — ${alert.subject}`,
+      attachments: [{
+        color: alert.severity === 'critical' ? '#EF6F5C' : alert.severity === 'warn' ? '#F5B45A' : '#7BB6D9',
+        fields: alert.detail ? Object.entries(alert.detail).map(([title, value]) => ({
+          title, value: String(value).slice(0, 200), short: true,
+        })) : [],
+        ts: Math.floor(new Date(alert.detected_at).getTime() / 1000),
+        footer: 'Ark · Can’t Phish Here',
+      }],
+    });
+  } else if (webhook.kind === 'discord') {
+    body = JSON.stringify({
+      embeds: [{
+        title: `[${alert.severity.toUpperCase()}] ${alert.kind}`,
+        description: alert.subject,
+        color: alert.severity === 'critical' ? 0xEF6F5C : alert.severity === 'warn' ? 0xF5B45A : 0x7BB6D9,
+        fields: alert.detail ? Object.entries(alert.detail).slice(0, 8).map(([name, value]) => ({
+          name, value: String(value).slice(0, 200), inline: true,
+        })) : [],
+        timestamp: alert.detected_at,
+        footer: { text: 'Ark · Can’t Phish Here' },
+      }],
+    });
+  } else {
+    body = JSON.stringify(alert);
+  }
+
+  let status = 'unknown';
+  try {
+    const res = await fetch(webhook.url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+    status = `${res.status}`;
+  } catch (e) {
+    status = `error: ${e.message?.slice(0, 80) || 'unknown'}`;
+  }
+  try {
+    db.prepare(`UPDATE cph_webhooks SET last_fired_at = ?, last_status = ? WHERE id = ?`)
+      .run(new Date().toISOString(), status, webhook.id);
+  } catch {}
 }
 
 // CIDR / exact-IP match. Pure JS, no external lib.

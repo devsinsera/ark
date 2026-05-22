@@ -135,18 +135,51 @@ function DevicesTab({ hubUrl }) {
     refresh();
   }
 
+  const unapproved = devs.filter(d => !isApproved(d) && d.mac);
+
+  async function approveAll() {
+    if (unapproved.length === 0) return;
+    if (!confirm(`Approve ${unapproved.length} devices currently on the LAN? You can revoke any of them later in Settings.`)) return;
+    for (const d of unapproved) {
+      await fetch(`${hubUrl}/api/cph/approved`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          device_id: d.mac, mac: d.mac,
+          label: d.device_name || d.hostname || d.mac,
+          notes: 'Bulk-approved from Devices view',
+        }),
+      });
+    }
+    refresh();
+  }
+
   return (
-    <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: 'hidden', background: COLORS.bgPanel }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: FONT_BODY, fontSize: 13 }}>
-        <thead>
-          <tr style={{ background: 'rgba(255,255,255,0.02)', color: COLORS.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-            <th style={th}>IP</th><th style={th}>Name</th><th style={th}>MAC</th><th style={th}>Vendor</th><th style={th}>Status</th><th style={th}></th>
-          </tr>
-        </thead>
-        <tbody>
-          {devs.map(d => {
-            const ok = isApproved(d);
-            return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {unapproved.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'rgba(6,182,212,0.06)', border: `1px solid ${COLORS.accentBorder}`, borderRadius: 8 }}>
+          <span style={{ fontSize: 13, color: COLORS.textSecondary }}>
+            {unapproved.length} unapproved device{unapproved.length === 1 ? '' : 's'} on the LAN. Auto-resolve their <code>new_device</code> alerts:
+          </span>
+          <button onClick={approveAll} style={{
+            padding: '6px 14px', background: COLORS.bgActive, color: COLORS.accentBright,
+            border: `1px solid ${COLORS.accentBorder}`, borderRadius: 6,
+            fontFamily: FONT_BODY, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
+          }}>
+            <Check size={12} style={{ verticalAlign: 'middle', marginRight: 4 }}/> Approve all
+          </button>
+        </div>
+      )}
+      <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: 'hidden', background: COLORS.bgPanel }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: FONT_BODY, fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: 'rgba(255,255,255,0.02)', color: COLORS.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              <th style={th}>IP</th><th style={th}>Name</th><th style={th}>MAC</th><th style={th}>Vendor</th><th style={th}>Status</th><th style={th}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {devs.map(d => {
+              const ok = isApproved(d);
+              return (
               <tr key={d.id || (d.ip + d.mac)}>
                 <td style={{ ...td, fontFamily: FONT_MONO }}>{d.ip}</td>
                 <td style={td}>{d.device_name || d.hostname || '—'}</td>
@@ -168,8 +201,9 @@ function DevicesTab({ hubUrl }) {
               </tr>
             );
           })}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -386,6 +420,7 @@ function SettingsTab({ hubUrl }) {
             )}
         </div>
       </section>
+      <WebhooksSection hubUrl={hubUrl}/>
       <section style={{ background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 14 }}>
         <h3 style={{ margin: '0 0 10px', fontFamily: FONT_HEADING, fontSize: 18, color: COLORS.textPrimary }}>Safety posture</h3>
         <ul style={{ margin: 0, paddingLeft: 18, color: COLORS.textSecondary, fontSize: 12, lineHeight: 1.8 }}>
@@ -396,6 +431,98 @@ function SettingsTab({ hubUrl }) {
         </ul>
       </section>
     </div>
+  );
+}
+
+function WebhooksSection({ hubUrl }) {
+  const [hooks, setHooks] = useState([]);
+  const [form,  setForm]  = useState({ label: '', url: '', kind: 'slack', min_severity: 'warn' });
+  const refresh = useCallback(() => fetch(`${hubUrl}/api/cph/webhooks`).then(r => r.json()).then(j => setHooks(j.webhooks || [])), [hubUrl]);
+  useEffect(() => { refresh(); }, [refresh]);
+
+  async function add() {
+    if (!form.label || !form.url) return;
+    const r = await fetch(`${hubUrl}/api/cph/webhooks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(form),
+    });
+    const j = await r.json();
+    if (!j.ok) { alert(j.error || 'failed'); return; }
+    setForm({ label: '', url: '', kind: 'slack', min_severity: 'warn' });
+    refresh();
+  }
+  async function remove(id) {
+    if (!confirm('Remove this webhook?')) return;
+    await fetch(`${hubUrl}/api/cph/webhooks/${id}`, { method: 'DELETE' });
+    refresh();
+  }
+  async function toggle(id, enabled) {
+    await fetch(`${hubUrl}/api/cph/webhooks/${id}/toggle`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    refresh();
+  }
+
+  return (
+    <section style={{ background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 14 }}>
+      <h3 style={{ margin: '0 0 10px', fontFamily: FONT_HEADING, fontSize: 18, color: COLORS.textPrimary }}>Webhooks</h3>
+      <p style={{ margin: '0 0 12px', fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>
+        POST alerts to Slack, Discord, or any HTTPS endpoint. Fires on alerts at or above the chosen severity.
+        Webhook bodies use the platform's native format (Slack attachments / Discord embeds / generic JSON).
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 110px 110px auto', gap: 8 }}>
+        <input placeholder="label (e.g. 'security-slack')"   value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} style={inp}/>
+        <input placeholder="https://hooks.slack.com/services/…" value={form.url}   onChange={e => setForm(f => ({ ...f, url: e.target.value }))}   style={inp}/>
+        <select value={form.kind} onChange={e => setForm(f => ({ ...f, kind: e.target.value }))} style={inp}>
+          <option value="slack">slack</option>
+          <option value="discord">discord</option>
+          <option value="generic">generic</option>
+        </select>
+        <select value={form.min_severity} onChange={e => setForm(f => ({ ...f, min_severity: e.target.value }))} style={inp}>
+          <option value="info">info+</option>
+          <option value="warn">warn+</option>
+          <option value="critical">critical only</option>
+        </select>
+        <button onClick={add} style={{ padding: '6px 14px', background: COLORS.bgActive, color: COLORS.accentBright, border: `1px solid ${COLORS.accentBorder}`, borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>
+          add
+        </button>
+      </div>
+      {hooks.length > 0 && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginTop: 12 }}>
+          <thead>
+            <tr style={{ color: COLORS.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              <th style={th}>Label</th><th style={th}>Kind</th><th style={th}>URL</th><th style={th}>Min severity</th>
+              <th style={th}>Last fired</th><th style={th}>Status</th><th style={th}>Enabled</th><th style={th}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {hooks.map(h => (
+              <tr key={h.id}>
+                <td style={td}>{h.label}</td>
+                <td style={td}><span style={{ padding: '2px 8px', fontSize: 10, borderRadius: 4, background: COLORS.bgActive, color: COLORS.accentBright, textTransform: 'uppercase', letterSpacing: 0.5 }}>{h.kind}</span></td>
+                <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 10, color: COLORS.textMuted, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.url}</td>
+                <td style={td}>{h.min_severity}</td>
+                <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 10, color: COLORS.textMuted }}>{h.last_fired_at ? h.last_fired_at.slice(11, 19) : 'never'}</td>
+                <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 10, color: h.last_status?.startsWith('2') ? COLORS.success : COLORS.textMuted }}>{h.last_status || '—'}</td>
+                <td style={td}>
+                  <label style={{ cursor: 'pointer' }}>
+                    <input type="checkbox" checked={!!h.enabled} onChange={e => toggle(h.id, e.target.checked)}/>
+                  </label>
+                </td>
+                <td style={td}>
+                  <button onClick={() => remove(h.id)} style={{ padding: '4px 10px', fontSize: 11, background: 'transparent', color: COLORS.error, border: `1px solid ${COLORS.border}`, borderRadius: 4, cursor: 'pointer' }}>
+                    <Trash2 size={10}/> remove
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }
 
