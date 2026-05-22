@@ -496,7 +496,116 @@ function Sidebar({ nav, setNav, count, onCollapse }) {
       })}
 
       <div style={{ flex: 1 }}/>
+      <HubUrlWidget/>
     </aside>
+  );
+}
+
+// Persistent Hub URL setting in the sidebar footer. Visible from
+// every view; changing it updates localStorage and every panel
+// re-reads on its next tick. Critical when running the Ark UI on a
+// different computer from the Hub — the default localhost:7400 is
+// only valid for the machine running the Hub itself.
+function HubUrlWidget() {
+  const [url, setUrl]     = useState(() => {
+    try { return (window.localStorage.getItem('ark.hubUrl') || 'http://localhost:7400').replace(/\/+$/, ''); }
+    catch { return 'http://localhost:7400'; }
+  });
+  const [reach, setReach] = useState('checking');
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(url);
+
+  // Probe the Hub on mount + every 8s so the dot reflects current state
+  useEffect(() => {
+    let cancelled = false;
+    const ping = async () => {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 2500);
+        const r = await fetch(url + '/api/health', { signal: ctrl.signal, cache: 'no-cache' });
+        clearTimeout(t);
+        if (!cancelled) setReach(r.ok ? 'ok' : 'down');
+      } catch {
+        if (!cancelled) setReach('down');
+      }
+    };
+    ping();
+    const t = setInterval(ping, 8000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [url]);
+
+  function save() {
+    const clean = draft.replace(/\/+$/, '');
+    try { window.localStorage.setItem('ark.hubUrl', clean); } catch {}
+    setUrl(clean);
+    setEditing(false);
+    // Force panels to re-read on next render — emit a storage event
+    // (some browsers don't fire one for same-tab writes).
+    try { window.dispatchEvent(new StorageEvent('storage', { key: 'ark.hubUrl', newValue: clean })); } catch {}
+  }
+
+  const dotColour = reach === 'ok' ? COLORS.success : reach === 'down' ? COLORS.error : COLORS.textMuted;
+  const dotTitle  = reach === 'ok' ? 'Hub reachable' : reach === 'down' ? 'Hub unreachable — change URL?' : 'checking…';
+
+  if (editing) {
+    return (
+      <div style={{
+        marginTop: 12, padding: 10,
+        background: 'rgba(255,255,255,0.04)',
+        border: `1px solid ${COLORS.border}`, borderRadius: 6,
+        display: 'flex', flexDirection: 'column', gap: 6,
+        fontFamily: FONT_MONO, fontSize: 11,
+      }}>
+        <div style={{ color: COLORS.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          Hub URL
+        </div>
+        <input
+          value={draft} onChange={e => setDraft(e.target.value)}
+          autoFocus onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
+          style={{
+            padding: '5px 8px', background: '#040608', color: COLORS.textPrimary,
+            border: `1px solid ${COLORS.border}`, borderRadius: 4,
+            fontFamily: FONT_MONO, fontSize: 11, outline: 'none',
+          }}
+          spellCheck={false}
+          placeholder="http://192.168.4.167:7400"
+        />
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={save} style={{ flex: 1, padding: '4px 8px', background: COLORS.bgActive, color: COLORS.accentBright, border: `1px solid ${COLORS.accentBorder}`, borderRadius: 4, fontSize: 11, cursor: 'pointer' }}>save</button>
+          <button onClick={() => setEditing(false)} style={{ flex: 1, padding: '4px 8px', background: 'transparent', color: COLORS.textMuted, border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11, cursor: 'pointer' }}>cancel</button>
+        </div>
+        <div style={{ color: COLORS.textMuted, fontSize: 10, lineHeight: 1.5 }}>
+          The Hub runs locally. Default <code>http://localhost:7400</code> works on the same machine. On another device,
+          point this at the host running the Hub — e.g. <code>http://192.168.4.167:7400</code>.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      onClick={() => { setDraft(url); setEditing(true); }}
+      title={`Hub: ${url} · ${dotTitle}`}
+      style={{
+        marginTop: 12, padding: '8px 10px', cursor: 'pointer',
+        background: 'rgba(255,255,255,0.025)',
+        border: `1px solid ${COLORS.border}`, borderRadius: 6,
+        display: 'flex', alignItems: 'center', gap: 8,
+      }}
+    >
+      <span style={{
+        display: 'inline-block', width: 8, height: 8, borderRadius: 4,
+        background: dotColour,
+        boxShadow: reach === 'down' ? `0 0 6px ${dotColour}` : 'none',
+        flexShrink: 0,
+      }}/>
+      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+        <div style={{ fontSize: 9, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Hub</div>
+        <div style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLORS.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {url.replace(/^https?:\/\//, '')}
+        </div>
+      </div>
+    </div>
   );
 }
 

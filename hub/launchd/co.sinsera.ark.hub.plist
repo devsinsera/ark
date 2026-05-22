@@ -24,6 +24,11 @@
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>ARK_HUB_PORT</key>
     <string>7400</string>
+    <!-- Bind to all interfaces so other devices on the LAN can reach
+         the Hub. Only set this on trusted networks. Switch back to
+         127.0.0.1 to lock down to local-only. -->
+    <key>ARK_HUB_BIND_HOST</key>
+    <string>0.0.0.0</string>
   </dict>
 
   <key>RunAtLoad</key>

@@ -27,8 +27,14 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 const PORT = Number(process.env.ARK_HUB_PORT || 7400);
 const SCAN_INTERVAL_MS = Number(process.env.ARK_HUB_SCAN_INTERVAL_MS || 5000);
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 const AGENT_FILE = path.join(REPO_ROOT, 'agent', 'ark-agent.py');
+// Bind host: 127.0.0.1 by default (localhost-only). Set
+// ARK_HUB_BIND_HOST=0.0.0.0 to expose to the LAN — required when
+// the browser running the Ark UI is on a DIFFERENT machine from the
+// one running the Hub. Anyone on the LAN can then reach the Hub,
+// so only enable this on networks you trust.
+const BIND_HOST = process.env.ARK_HUB_BIND_HOST || '127.0.0.1';
 
 // Persistent store (SQLite). Opens — and creates the file if it
 // doesn't exist — at construction time. Fatal if we can't reach it.
@@ -720,16 +726,34 @@ async function dispatchQueuedFlashJobs() {
 }
 
 function getOwnHostHint() {
-  // Best-effort: when the Agent is on a Pi on the same LAN, the Hub's
-  // IP relative to the agent is the Mac's LAN IP. We assume the Hub
-  // gateway address is reachable; in practice this should be the
-  // primary outbound IP. The Agent can be configured to override via
-  // ARK_HUB_URL anyway.
-  return process.env.ARK_HUB_PUBLIC_HOST || '127.0.0.1';
+  return process.env.ARK_HUB_PUBLIC_HOST || lanIpHint() || '127.0.0.1';
 }
 
-server.listen(PORT, '127.0.0.1', async () => {
-  console.log(`[hub] listening on http://localhost:${PORT}`);
+// Find this host's primary LAN IPv4. Best-effort — picks the first
+// non-loopback IPv4 the kernel has bound. Used for both startup logs
+// and the URL the Hub hands to Flash Agents so they can fetch images
+// back from the Hub.
+function lanIpHint() {
+  try {
+    const ifaces = require('node:os').networkInterfaces();
+    for (const name of Object.keys(ifaces)) {
+      for (const i of ifaces[name] || []) {
+        if (i.family === 'IPv4' && !i.internal) return i.address;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+server.listen(PORT, BIND_HOST, async () => {
+  if (BIND_HOST === '0.0.0.0') {
+    const lan = lanIpHint();
+    console.log(`[hub] listening on http://${lan || '0.0.0.0'}:${PORT} (LAN-reachable)`);
+    console.log(`[hub] other devices on the LAN should set their Hub URL to: http://${lan || '<your-mac-LAN-IP>'}:${PORT}`);
+  } else {
+    console.log(`[hub] listening on http://127.0.0.1:${PORT} (localhost only)`);
+    console.log(`[hub] to expose to the LAN: set ARK_HUB_BIND_HOST=0.0.0.0`);
+  }
 
   // Order matters: run the Wi-Fi scan BEFORE the first device scan so
   // detectCurrentNetwork can classify correctly from the very first
