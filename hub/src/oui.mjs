@@ -56,9 +56,14 @@ const OUI = {
   '04:cf:8c': 'Aqara (Lumi United)',
   '7c:49:eb': 'Aqara (Lumi United)',
 
-  // Huawei mesh / WiFi extenders
-  '48:e1:e9': 'Murata (commonly Huawei mesh)',
-  '48:e1:5c': 'Liteon (commonly mesh node)',
+  // Meross (HomeKit smart plugs, switches, garage doors, dimmers).
+  // Verified against this LAN: 48:e1:e9:*:5e:85 = Meross MOD150 dimmer
+  // ("MOD150-5e85" via _hap._tcp); 48:e1:e9:*:4c:bb = MSS210 plug;
+  // 48:e1:e9:*:b9:fa = MSG200 garage opener. The last 4 hex of the MAC
+  // match the trailing -XXXX in the HomeKit instance name 1:1.
+  '48:e1:e9': 'Meross',
+  '34:29:8f': 'Meross',
+  '48:e1:5c': 'Liteon (TV WiFi module)',
   'a4:6b:1f': 'Huawei',
 
   // ESP IoT chipsets — ESP32 / ESP8266
