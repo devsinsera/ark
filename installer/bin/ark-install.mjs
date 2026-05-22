@@ -103,17 +103,15 @@ async function cmdDetect({ _ }) {
   console.log(`[detect] manifest written → ${path.join(buildDir, 'manifest.json')}`);
 }
 
-async function cmdCompile({ _, profile: profileId }) {
+async function cmdCompile({ _, profile: profileId, venv }) {
   const buildName = _[1];
   if (!buildName) throw new Error('Build name required.');
   const buildDir  = path.join(BUILDS_ROOT, buildName);
   if (!existsSync(buildDir)) throw new Error(`No build at ${buildDir} — run ingest first.`);
 
-  // Re-detect so the manifest stays current (no stale data).
   console.log(`[compile] re-detecting ${buildDir}/src/`);
   const det = await detect({ buildDir });
 
-  // Optional profile (e.g. raspyjack)
   let profile = null;
   if (profileId) {
     const p = path.join(BUILDS_ROOT, profileId, 'profile.json');
@@ -122,7 +120,7 @@ async function cmdCompile({ _, profile: profileId }) {
     console.log(`[compile] using profile: ${profile.name} (${profile.profile_id})`);
   }
 
-  const out = await compile({ buildDir, detection: det, profile });
+  const out = await compile({ buildDir, detection: det, profile, useVenv: !!venv });
   console.log(`[compile] OK`);
   console.log(`   manifest → ${path.relative(ARK_ROOT, path.join(buildDir, 'manifest.json'))}`);
   console.log(`   plan     → ${path.relative(ARK_ROOT, out.plan_path)}`);

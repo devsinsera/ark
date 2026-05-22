@@ -7,9 +7,10 @@
 // Phase 4.7: exposes /api/export/* and /api/import/* endpoints.
 
 import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { readFile, stat, rename, mkdir, unlink } from 'node:fs/promises';
+import { existsSync, createReadStream, createWriteStream } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { arpScan, mdnsBrowse, mergeSources, wifiScan, detectCurrentNetwork } from './scan.mjs';
@@ -29,6 +30,10 @@ const PORT = Number(process.env.ARK_HUB_PORT || 7400);
 const SCAN_INTERVAL_MS = Number(process.env.ARK_HUB_SCAN_INTERVAL_MS || 5000);
 const VERSION = '0.3.1';
 const AGENT_FILE = path.join(REPO_ROOT, 'agent', 'ark-agent.py');
+// Content-addressable image store for Flash Node uploads. Files
+// named by their sha256 → automatic dedup of re-uploads.
+const FLASH_IMAGE_DIR = path.join(homedir(), '.ark', 'flash-images');
+await mkdir(FLASH_IMAGE_DIR, { recursive: true });
 // Bind host: 127.0.0.1 by default (localhost-only). Set
 // ARK_HUB_BIND_HOST=0.0.0.0 to expose to the LAN — required when
 // the browser running the Ark UI is on a DIFFERENT machine from the
@@ -226,6 +231,24 @@ const server = createServer(async (req, res) => {
           trust_state: 'trusted',
         });
         store.recordTelemetry(deviceId, r);
+
+        // CPH passive-monitor alerts come in via the regular agent
+        // report path with a 'cph_alert' field. Raise into the alert
+        // engine immediately so they surface in the UI without
+        // waiting for the next scan tick.
+        if (r.cph_alert && r.cph_alert.kind && r.cph_alert.subject) {
+          try {
+            security.raiseAlert({
+              kind:     r.cph_alert.kind,
+              severity: r.cph_alert.severity || 'warn',
+              device_id: r.mac || r.device_name,
+              subject:  r.cph_alert.subject,
+              detail:   r.cph_alert.detail || {},
+            });
+          } catch (e) {
+            console.error('[hub] cph_alert from agent rejected:', e.message);
+          }
+        }
 
         // Phase 4.5 — detect config drift against the device's manifest.
         const manifest = r.manifest_id ? state.manifests.get(r.manifest_id) : null;
@@ -523,6 +546,67 @@ const server = createServer(async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/api/flash/constants') {
     return json(res, { job_states: JOB_STATES, node_capabilities: NODE_CAPABILITIES });
+  }
+
+  // Image upload — accepts raw bytes. Filename via ?filename= query
+  // param (cosmetic only; stored content-addressable by sha256).
+  if (req.method === 'POST' && url.pathname === '/api/flash/images/upload') {
+    const filename = url.searchParams.get('filename') || 'upload.img';
+    const tmpPath = path.join(FLASH_IMAGE_DIR, '.tmp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+    const hash = createHash('sha256');
+    let size = 0;
+    const file = createWriteStream(tmpPath);
+    req.on('data', (chunk) => {
+      hash.update(chunk);
+      size += chunk.length;
+      file.write(chunk);
+    });
+    req.on('end', async () => {
+      file.end(async () => {
+        try {
+          const sha256 = hash.digest('hex');
+          const finalPath = path.join(FLASH_IMAGE_DIR, sha256 + '.img');
+          if (existsSync(finalPath)) {
+            await unlink(tmpPath);  // dedup
+          } else {
+            await rename(tmpPath, finalPath);
+          }
+          const img = flash.registerImage({
+            source_path: finalPath,
+            size_bytes:  size,
+            sha256,
+            compression: filename.endsWith('.xz') ? 'xz' : 'none',
+            build_name:  filename,
+          });
+          return json(res, { ok: true, image: img });
+        } catch (e) {
+          try { await unlink(tmpPath); } catch {}
+          return json(res, { ok: false, error: e.message }, 500);
+        }
+      });
+    });
+    req.on('error', async (e) => {
+      try { await unlink(tmpPath); } catch {}
+      return json(res, { ok: false, error: e.message }, 400);
+    });
+    return;
+  }
+
+  // Image download — streams the bytes the Flash Agent fetches
+  // when running a job. URL handed to the Agent by the dispatcher.
+  const flashImgDownloadMatch = url.pathname.match(/^\/api\/flash\/images\/([^/]+)\/download$/);
+  if (req.method === 'GET' && flashImgDownloadMatch) {
+    const id = decodeURIComponent(flashImgDownloadMatch[1]);
+    const img = flash.getImage(id);
+    if (!img) return json(res, { ok: false, error: 'image not found' }, 404);
+    if (!existsSync(img.source_path)) return json(res, { ok: false, error: 'image bytes missing' }, 404);
+    res.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'content-length': img.size_bytes,
+      'content-disposition': `attachment; filename="${path.basename(img.source_path)}"`,
+    });
+    createReadStream(img.source_path).pipe(res);
+    return;
   }
 
   // ── Inventory: builds / images / logs (Phase 2 + 3 stub fix-ups) ──

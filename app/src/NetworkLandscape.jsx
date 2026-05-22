@@ -609,11 +609,136 @@ function ExportRow({ hubUrl }) {
 }
 
 function GraphTab({ hubUrl }) {
+  const [data, setData] = useState({ networks: [], devices: [], status: 'loading' });
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [n, d] = await Promise.all([
+          fetch(`${hubUrl}/api/networks`).then(r => r.json()),
+          fetch(`${hubUrl}/api/devices`).then(r => r.json()),
+        ]);
+        if (cancelled) return;
+        setData({ networks: n.networks || [], devices: d.devices || [], status: 'ok' });
+      } catch {
+        if (!cancelled) setData(s => ({ ...s, status: 'error' }));
+      }
+    };
+    load();
+    const t = setInterval(load, 15000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [hubUrl]);
+
+  if (data.status === 'loading') return <div style={{ color: COLORS.textMuted }}>Loading…</div>;
+  if (data.status === 'error')   return <HubUnreachable hubUrl={hubUrl}/>;
+  if (data.networks.length === 0 && data.devices.length === 0) {
+    return <Placeholder title="Nothing to graph yet" body="Once the Hub has seen at least one network + one device, this view draws the topology."/>;
+  }
+
   return (
-    <Placeholder
-      title="Network ↔ Device topology"
-      body="Force-directed graph view — gated on multi-network data (need at least 2 networks observed) + Agent telemetry from at least one Pi reporting. The data is being collected; this view appears in Phase 4.4."
-    />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <p style={{ margin: 0, fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>
+        Networks as concentric rings; devices arranged around their current network. Pi-tagged devices highlighted in cyan;
+        Raspberry Pi vendors get the prominent ring. Hover any node for details. Pure SVG, no chart library.
+      </p>
+      <NetworkGraph networks={data.networks} devices={data.devices}/>
+    </div>
+  );
+}
+
+// Pure-SVG topology view. Each network is a labelled circle; its
+// member devices fan out on a circle around it. When multiple
+// networks exist they stack vertically. No physics simulation, no
+// dependencies; just laid out deterministically so refreshes don't
+// jitter.
+function NetworkGraph({ networks, devices }) {
+  // Group devices by current_network (we don't have per-device
+  // network IDs on the live device list, so for v1 we bucket all
+  // devices under the most-recently-seen network).
+  const W = 880, H = 560;
+  const cx = W / 2, cy = H / 2;
+  const netCount = Math.max(1, networks.length);
+  const ringRadius = Math.min(W, H) * 0.34;
+
+  const bucketCount = Math.min(netCount, 4);  // cap visual complexity
+  const visibleNets = networks.slice(0, bucketCount);
+
+  // Distribute devices around their network's ring
+  const groups = visibleNets.map((n, i) => {
+    const angle = (i / bucketCount) * Math.PI * 2 - Math.PI / 2;
+    const netX  = cx + Math.cos(angle) * (bucketCount > 1 ? ringRadius * 0.5 : 0);
+    const netY  = cy + Math.sin(angle) * (bucketCount > 1 ? ringRadius * 0.5 : 0);
+    const myDevs = (i === 0 ? devices : []);  // v1 — all devices in primary group
+    return { net: n, netX, netY, devices: myDevs };
+  });
+
+  return (
+    <div style={{
+      background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`,
+      borderRadius: 10, padding: 14, overflow: 'hidden',
+    }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
+        {/* Background grid */}
+        {[100, 200, 300].map(r => (
+          <circle key={r} cx={cx} cy={cy} r={r} fill="none" stroke={COLORS.border} strokeWidth={1} strokeDasharray="2,4" opacity={0.5}/>
+        ))}
+
+        {groups.map((g, gi) => {
+          const devCount = Math.max(1, g.devices.length);
+          const devR = ringRadius * 0.8;
+          return (
+            <g key={g.net.network_id || gi}>
+              {/* Device positions + lines to network */}
+              {g.devices.map((d, di) => {
+                const a = (di / devCount) * Math.PI * 2;
+                const dx = g.netX + Math.cos(a) * devR;
+                const dy = g.netY + Math.sin(a) * devR;
+                const isPi = d.os === 'likely Pi' || /Raspberry Pi/i.test(d.vendor || '');
+                const fill = isPi ? COLORS.accentBright : (d.vendor ? COLORS.accent : COLORS.textMuted);
+                const r = isPi ? 7 : 5;
+                const label = d.device_name || d.hostname || d.ip;
+                return (
+                  <g key={d.mac || d.ip || di}>
+                    <line x1={g.netX} y1={g.netY} x2={dx} y2={dy} stroke={COLORS.border} strokeWidth={1} opacity={0.4}/>
+                    <circle cx={dx} cy={dy} r={r} fill={fill} stroke="#0a0a0a" strokeWidth={1.5}>
+                      <title>{`${label}\n${d.ip || ''}\n${d.mac || ''}\n${d.vendor || 'unknown vendor'}`}</title>
+                    </circle>
+                    {(isPi || di % 3 === 0) && (
+                      <text x={dx} y={dy + r + 11} fill={COLORS.textMuted} fontSize={9} textAnchor="middle" fontFamily="ui-monospace, monospace">
+                        {(label || '').slice(0, 14)}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+
+              {/* Network node */}
+              <circle cx={g.netX} cy={g.netY} r={18} fill={g.net.type === 'wifi' ? COLORS.accentBright : COLORS.warning} stroke="#0a0a0a" strokeWidth={2}>
+                <title>{`${g.net.type}: ${g.net.ssid || g.net.subnet}\nGateway: ${g.net.gateway_ip}\nDevices seen: ${g.net.device_count || 0}`}</title>
+              </circle>
+              <text x={g.netX} y={g.netY + 4} fill="#0a0a0a" fontSize={10} fontWeight={700} textAnchor="middle">
+                {(g.net.type || '').slice(0, 3).toUpperCase()}
+              </text>
+              <text x={g.netX} y={g.netY + 36} fill={COLORS.textPrimary} fontSize={11} textAnchor="middle" fontFamily="ui-monospace, monospace">
+                {g.net.ssid || g.net.subnet || '—'}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Legend */}
+        <g transform={`translate(20 ${H - 80})`}>
+          <text x={0} y={0} fill={COLORS.textMuted} fontSize={10} textTransform="uppercase">LEGEND</text>
+          <circle cx={6}  cy={18} r={7} fill={COLORS.accentBright}/>
+          <text x={20} y={22} fill={COLORS.textSecondary} fontSize={11}>Raspberry Pi</text>
+          <circle cx={6}  cy={38} r={5} fill={COLORS.accent}/>
+          <text x={20} y={42} fill={COLORS.textSecondary} fontSize={11}>known vendor</text>
+          <circle cx={6}  cy={58} r={5} fill={COLORS.textMuted}/>
+          <text x={20} y={62} fill={COLORS.textSecondary} fontSize={11}>unknown / private MAC</text>
+        </g>
+      </svg>
+    </div>
   );
 }
 

@@ -26,7 +26,7 @@ export const STAGES = ['init', 'validate', 'prepare', 'install', 'configure', 'f
  * @param {string} [opts.targetArch]     — operator-chosen target arch (default: arm64)
  * @returns {Promise<{ manifest, plan, plan_path, script_path, log_path }>}
  */
-export async function compile({ buildDir, detection, profile, targetArch = 'arm64' }) {
+export async function compile({ buildDir, detection, profile, targetArch = 'arm64', useVenv = false }) {
   const log = openLog(buildDir);
   await log.write(`compile started @ ${new Date().toISOString()}`);
 
@@ -59,9 +59,17 @@ export async function compile({ buildDir, detection, profile, targetArch = 'arm6
   const steps = [];
 
   // PREPARE
-  steps.push({ stage: 'prepare', type: 'apt.install', packages: dedupe([...BASE_PACKAGES, ...manifest.dependencies.apt]) });
+  const aptPackages = dedupe([...BASE_PACKAGES, ...manifest.dependencies.apt]);
+  if (useVenv) aptPackages.push('python3-venv');
+  steps.push({ stage: 'prepare', type: 'apt.install', packages: aptPackages });
   if (manifest.dependencies.pip.length > 0) {
-    steps.push({ stage: 'prepare', type: 'pip.install', packages: manifest.dependencies.pip });
+    if (useVenv) {
+      const venvPath = `/ark/builds/${manifest.name}/venv`;
+      steps.push({ stage: 'prepare', type: 'venv.create', path: venvPath });
+      steps.push({ stage: 'prepare', type: 'pip.install', packages: manifest.dependencies.pip, venv: venvPath });
+    } else {
+      steps.push({ stage: 'prepare', type: 'pip.install', packages: manifest.dependencies.pip });
+    }
   }
 
   // INSTALL — runs the resolved entry point. If multiple, run only
@@ -198,7 +206,12 @@ function renderStep(s) {
     case 'apt.install':
       return `ark_run apt-get install -y ${s.packages.map(shellQuote).join(' ')}`;
     case 'pip.install':
+      if (s.venv) {
+        return `ark_run ${shellQuote(s.venv)}/bin/pip install ${s.packages.map(shellQuote).join(' ')}`;
+      }
       return `ark_run pip3 install --break-system-packages ${s.packages.map(shellQuote).join(' ')}`;
+    case 'venv.create':
+      return `ark_run python3 -m venv ${shellQuote(s.path)} && ark_run ${shellQuote(s.path)}/bin/pip install --upgrade pip`;
     case 'exec.bash':
       return `cd ${shellQuote(s.working_dir)} && chmod +x ${shellQuote(s.entry_point)} && ark_run bash ./${s.entry_point}`;
     case 'exec.python':

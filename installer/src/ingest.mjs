@@ -45,9 +45,17 @@ export async function detectInputType(source) {
  * Idempotent: re-running blows away the existing src/ and re-stages.
  * (We never silently merge — would produce non-deterministic builds.)
  */
-export async function ingest({ source, buildName, buildsRoot }) {
+export async function ingest({ source, buildName, buildsRoot, ref = null }) {
   if (!buildName) throw new Error('buildName is required');
   if (!source)    throw new Error('source is required');
+
+  // Accept "url@ref" shorthand so the operator can pin without
+  // changing the CLI signature: --as foo https://github.com/x/y@v1.2.3
+  if (!ref && /^https?:\/\/.+@[^/]+$/.test(source)) {
+    const atIdx = source.lastIndexOf('@');
+    ref = source.slice(atIdx + 1);
+    source = source.slice(0, atIdx);
+  }
 
   const inputType = await detectInputType(source);
   const buildDir  = path.resolve(buildsRoot, buildName);
@@ -62,22 +70,32 @@ export async function ingest({ source, buildName, buildsRoot }) {
   await mkdir(srcDir,                          { recursive: true });
 
   switch (inputType) {
-    case 'git':    await ingestGit(source, srcDir);    break;
-    case 'zip':    await ingestZip(source, srcDir);    break;
-    case 'bundle': await ingestBundle(source, srcDir); break;
-    case 'folder': await ingestFolder(source, srcDir); break;
-    case 'raw':    await ingestRaw(source, srcDir);    break;
+    case 'git':    await ingestGit(source, srcDir, ref); break;
+    case 'zip':    await ingestZip(source, srcDir);      break;
+    case 'bundle': await ingestBundle(source, srcDir);   break;
+    case 'folder': await ingestFolder(source, srcDir);   break;
+    case 'raw':    await ingestRaw(source, srcDir);      break;
     default: throw new Error(`Unknown input type: ${inputType}`);
   }
 
   const sourceResolved = await resolveSourceMetadata(inputType, source, srcDir);
+  if (ref) sourceResolved.ref = ref;
   return { build_dir: buildDir, src_dir: srcDir, input_type: inputType, source: sourceResolved };
 }
 
-async function ingestGit(url, dest) {
-  // shallow clone keeps things fast; users can deepen later if they need history
-  await sh(`git clone --depth 1 ${quote(url)} ${quote(dest)}`, { maxBuffer: 32 * 1024 * 1024 });
-  // strip .git so the staging tree is pure source
+async function ingestGit(url, dest, ref = null) {
+  // ref can be a branch name, tag, or full commit SHA. When pinned,
+  // we do a full clone (shallow doesn't accept arbitrary commits) so
+  // the checkout always resolves. Without a ref, --depth 1 keeps the
+  // clone fast.
+  if (ref) {
+    await sh(`git clone ${quote(url)} ${quote(dest)}`, { maxBuffer: 32 * 1024 * 1024 });
+    await sh(`git -C ${quote(dest)} checkout ${quote(ref)}`, { maxBuffer: 4 * 1024 * 1024 });
+  } else {
+    await sh(`git clone --depth 1 ${quote(url)} ${quote(dest)}`, { maxBuffer: 32 * 1024 * 1024 });
+  }
+  // strip .git so the staging tree is pure source + so we don't bake
+  // .git history into install plans
   await rm(path.join(dest, '.git'), { recursive: true, force: true });
 }
 

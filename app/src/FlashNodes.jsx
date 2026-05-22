@@ -19,6 +19,7 @@ function readHubUrl() {
 const TABS = [
   { id: 'nodes',  label: 'Nodes',   icon: Server   },
   { id: 'disks',  label: 'Storage', icon: HardDrive },
+  { id: 'images', label: 'Images',  icon: HardDrive },
   { id: 'jobs',   label: 'Jobs',    icon: Activity },
   { id: 'clone',  label: 'Clone / Capture', icon: Plus },
 ];
@@ -56,10 +57,11 @@ export default function FlashNodes() {
         })}
       </div>
 
-      {tab === 'nodes' && <NodesTab hubUrl={hubUrl} onPick={(id) => { setSelectedNode(id); setTab('disks'); }}/>}
-      {tab === 'disks' && <DisksTab hubUrl={hubUrl} nodeId={selectedNode} onPickNode={setSelectedNode}/>}
-      {tab === 'jobs'  && <JobsTab  hubUrl={hubUrl}/>}
-      {tab === 'clone' && <ClonePlaceholder/>}
+      {tab === 'nodes'  && <NodesTab hubUrl={hubUrl} onPick={(id) => { setSelectedNode(id); setTab('disks'); }}/>}
+      {tab === 'disks'  && <DisksTab hubUrl={hubUrl} nodeId={selectedNode} onPickNode={setSelectedNode}/>}
+      {tab === 'jobs'   && <JobsTab  hubUrl={hubUrl}/>}
+      {tab === 'images' && <ImagesTab hubUrl={hubUrl}/>}
+      {tab === 'clone'  && <ClonePlaceholder/>}
     </div>
   );
 }
@@ -203,6 +205,7 @@ function DiskTable({ disks, rootDisk }) {
 // ── Tab 3: Jobs ─────────────────────────────────────────────────
 function JobsTab({ hubUrl }) {
   const [state, setState] = useState({ status: 'loading', jobs: [], error: null });
+  const [nodes, setNodes] = useState([]);
   const refresh = useCallback(async () => {
     try {
       const r = await fetch(`${hubUrl}/api/flash/jobs`, { cache: 'no-cache' });
@@ -212,9 +215,14 @@ function JobsTab({ hubUrl }) {
     } catch (e) { setState(s => ({ ...s, status: 'error', error: e.message })); }
   }, [hubUrl]);
   useEffect(() => { refresh(); const t = setInterval(refresh, 4000); return () => clearInterval(t); }, [refresh]);
+  useEffect(() => {
+    fetch(`${hubUrl}/api/flash/nodes`).then(r => r.json()).then(j => setNodes(j.nodes || [])).catch(() => {});
+  }, [hubUrl]);
 
   if (state.status === 'error') return <Err msg={state.error} hubUrl={hubUrl}/>;
-  if (state.jobs.length === 0) return <Empty title="No flash jobs yet" body="Once you queue one from the device builder it'll appear here with live progress."/>;
+  if (state.jobs.length === 0) return <Empty title="No flash jobs yet" body="Once you queue one from the Images tab + a registered node it'll appear here with live progress."/>;
+
+  const nodeUrlById = Object.fromEntries(nodes.map(n => [n.node_id, n.agent_url]));
 
   return (
     <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: 'hidden', background: COLORS.bgPanel }}>
@@ -226,30 +234,63 @@ function JobsTab({ hubUrl }) {
           </tr>
         </thead>
         <tbody>
-          {state.jobs.map(j => <JobRow key={j.job_id} j={j}/>)}
+          {state.jobs.map(j => <JobRow key={j.job_id} j={j} agentUrl={nodeUrlById[j.node_id]}/>)}
         </tbody>
       </table>
     </div>
   );
 }
 
-function JobRow({ j }) {
-  const colour = stateColour(j.state);
+// Per-row WebSocket subscription — when a job is in an active state,
+// open a stream to the Agent and push progress updates without
+// waiting for the next 4s poll. Falls back silently to polling if
+// the WS can't connect (browser CORS, agent offline, mixed content).
+function useJobStream(j, agentUrl) {
+  const [live, setLive] = useState(null);
+  useEffect(() => {
+    if (!agentUrl) return;
+    const active = ['queued', 'preparing', 'writing', 'syncing', 'verifying', 'mount_test'].includes(j.state);
+    if (!active) return;
+    const wsUrl = agentUrl.replace(/^http/, 'ws') + `/jobs/${encodeURIComponent(j.job_id)}/stream`;
+    let ws;
+    try { ws = new WebSocket(wsUrl); } catch { return; }
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.heartbeat) return;
+        setLive(prev => ({ ...(prev || {}), ...msg }));
+      } catch {}
+    };
+    ws.onerror = () => { /* fall back to polling */ };
+    return () => { try { ws.close(); } catch {} };
+  }, [j.job_id, j.state, agentUrl]);
+  return live;
+}
+
+function JobRow({ j, agentUrl }) {
+  const live = useJobStream(j, agentUrl);
+  // Merge live updates over the polled snapshot — WS progress wins
+  // when fresher than the poll.
+  const merged = { ...j, ...(live || {}) };
+  const colour = stateColour(merged.state);
   return (
     <tr>
-      <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{j.job_id}</td>
-      <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{j.node_id}</td>
-      <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{j.image_id}</td>
-      <td style={{ ...td, fontFamily: FONT_MONO }}>{j.target_disk_path}</td>
-      <td style={td}><span style={{ padding: '2px 8px', fontSize: 11, borderRadius: 4, background: colour + '22', color: colour, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>{j.state}</span></td>
+      <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>
+        {merged.job_id}
+        {live && <span title="WebSocket stream" style={{ marginLeft: 4, color: COLORS.success }}>●</span>}
+      </td>
+      <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{merged.node_id}</td>
+      <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{merged.image_id}</td>
+      <td style={{ ...td, fontFamily: FONT_MONO }}>{merged.target_disk_path}</td>
+      <td style={td}><span style={{ padding: '2px 8px', fontSize: 11, borderRadius: 4, background: colour + '22', color: colour, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>{merged.state}</span></td>
       <td style={td}>
         <div style={{ width: 100, height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden' }}>
-          <div style={{ width: `${j.progress_pct || 0}%`, height: '100%', background: colour, transition: 'width 200ms ease' }}/>
+          <div style={{ width: `${merged.progress_pct || 0}%`, height: '100%', background: colour, transition: 'width 200ms ease' }}/>
         </div>
-        <span style={{ fontSize: 11, color: COLORS.textMuted, fontFamily: FONT_MONO, marginLeft: 6 }}>{j.progress_pct || 0}%</span>
+        <span style={{ fontSize: 11, color: COLORS.textMuted, fontFamily: FONT_MONO, marginLeft: 6 }}>{merged.progress_pct || 0}%</span>
       </td>
-      <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{j.write_speed_mbps ? `${j.write_speed_mbps} MB/s` : '—'}</td>
-      <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{j.eta_s ? `${j.eta_s}s` : '—'}</td>
+      <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{merged.write_speed_mbps ? `${merged.write_speed_mbps} MB/s` : '—'}</td>
+      <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{merged.eta_s ? `${merged.eta_s}s` : '—'}</td>
     </tr>
   );
 }
@@ -261,7 +302,204 @@ function stateColour(s) {
   return COLORS.accent;
 }
 
-// ── Tab 4: Clone / Capture (placeholder) ────────────────────────
+// ── Images tab: upload + register + flash ────────────────────────
+function ImagesTab({ hubUrl }) {
+  const [images, setImages] = useState([]);
+  const [nodes,  setNodes]  = useState([]);
+  const [uploading, setUploading] = useState(null);  // { name, pct, error? }
+  const [flashing, setFlashing] = useState(null);    // { image_id, node_id, target_disk_path }
+
+  const refresh = useCallback(async () => {
+    const [i, n] = await Promise.all([
+      fetch(`${hubUrl}/api/flash/images`).then(r => r.json()).catch(() => ({})),
+      fetch(`${hubUrl}/api/flash/nodes`).then(r => r.json()).catch(() => ({})),
+    ]);
+    setImages(i.images || []);
+    setNodes(n.nodes || []);
+  }, [hubUrl]);
+  useEffect(() => { refresh(); }, [refresh]);
+
+  async function onFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading({ name: file.name, pct: 0 });
+    // Stream the file via XHR so we get progress events. Hub accepts
+    // raw bytes; sha256 is computed server-side.
+    await new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${hubUrl}/api/flash/images/upload?filename=${encodeURIComponent(file.name)}`);
+      xhr.setRequestHeader('content-type', 'application/octet-stream');
+      xhr.upload.onprogress = (ev) => {
+        if (ev.lengthComputable) setUploading({ name: file.name, pct: Math.round((ev.loaded / ev.total) * 100) });
+      };
+      xhr.onload = () => {
+        setUploading(null);
+        e.target.value = '';
+        refresh();
+        resolve();
+      };
+      xhr.onerror = () => {
+        setUploading({ name: file.name, pct: 0, error: 'upload failed' });
+        resolve();
+      };
+      xhr.send(file);
+    });
+  }
+
+  async function enqueueFlash(image, node, targetDisk) {
+    const r = await fetch(`${hubUrl}/api/flash/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        image_id:         image.image_id,
+        node_id:          node.node_id,
+        target_disk_path: targetDisk,
+      }),
+    });
+    const j = await r.json();
+    if (!j.ok) { alert(j.error || 'failed'); return; }
+    setFlashing(null);
+    refresh();
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <section style={{ padding: 14, background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10 }}>
+        <h3 style={{ margin: '0 0 8px', fontFamily: FONT_HEADING, fontSize: 16, color: COLORS.textPrimary }}>Upload an image</h3>
+        <p style={{ margin: '0 0 10px', fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>
+          Drop a .img / .img.xz file. Stored content-addressable on the Hub (dedups by sha256). Once registered, any flash node can pull it via /api/flash/images/&lt;id&gt;/download.
+        </p>
+        <label style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          padding: '8px 14px',
+          background: COLORS.bgActive, color: COLORS.accentBright,
+          border: `1px solid ${COLORS.accentBorder}`, borderRadius: 6,
+          fontFamily: FONT_BODY, fontSize: 13, cursor: 'pointer',
+        }}>
+          <Plus size={14}/> Choose .img file
+          <input type="file" onChange={onFile} accept=".img,.img.xz,.iso" style={{ display: 'none' }} disabled={!!uploading && !uploading.error}/>
+        </label>
+        {uploading && (
+          <div style={{ marginTop: 10, fontSize: 12, color: uploading.error ? COLORS.error : COLORS.textSecondary }}>
+            {uploading.error
+              ? `✖ ${uploading.name}: ${uploading.error}`
+              : <>
+                  <div style={{ marginBottom: 4 }}>↑ {uploading.name} — {uploading.pct}%</div>
+                  <div style={{ width: '100%', height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{ width: `${uploading.pct}%`, height: '100%', background: COLORS.accent, transition: 'width 200ms' }}/>
+                  </div>
+                </>}
+          </div>
+        )}
+      </section>
+
+      <section style={{ padding: 14, background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10 }}>
+        <h3 style={{ margin: '0 0 8px', fontFamily: FONT_HEADING, fontSize: 16, color: COLORS.textPrimary }}>
+          Image registry · {images.length}
+        </h3>
+        {images.length === 0 ? (
+          <div style={{ color: COLORS.textMuted, fontSize: 12 }}>No images yet. Upload one above.</div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: COLORS.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                <th style={th}>ID</th><th style={th}>Source</th><th style={th}>Size</th><th style={th}>SHA256</th><th style={th}>Compression</th><th style={th}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {images.map(i => (
+                <tr key={i.image_id}>
+                  <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{i.image_id}</td>
+                  <td style={td}>{i.build_name || '—'}</td>
+                  <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{prettyBytes(i.size_bytes)}</td>
+                  <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 10, color: COLORS.textMuted }}>{i.sha256.slice(0, 12)}…</td>
+                  <td style={td}>{i.compression}</td>
+                  <td style={td}>
+                    <button onClick={() => setFlashing({ image: i, node_id: '', target_disk_path: '' })} disabled={nodes.length === 0} style={{
+                      padding: '4px 12px', fontSize: 11,
+                      background: nodes.length === 0 ? COLORS.bgPanel : COLORS.bgActive,
+                      color: nodes.length === 0 ? COLORS.textMuted : COLORS.accentBright,
+                      border: `1px solid ${COLORS.border}`, borderRadius: 4,
+                      cursor: nodes.length === 0 ? 'not-allowed' : 'pointer',
+                    }}>flash →</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      {flashing && <FlashDialog hubUrl={hubUrl} image={flashing.image} nodes={nodes} onClose={() => setFlashing(null)} onSubmit={(node, disk) => enqueueFlash(flashing.image, node, disk)}/>}
+    </div>
+  );
+}
+
+function FlashDialog({ hubUrl, image, nodes, onClose, onSubmit }) {
+  const [nodeId, setNodeId] = useState(nodes[0]?.node_id || '');
+  const [disks, setDisks] = useState([]);
+  const [diskPath, setDiskPath] = useState('');
+  const node = nodes.find(n => n.node_id === nodeId);
+
+  useEffect(() => {
+    if (!node) { setDisks([]); return; }
+    fetch(`${node.agent_url.replace(/\/+$/, '')}/disks`).then(r => r.json()).then(j => setDisks(j.disks || [])).catch(() => setDisks([]));
+  }, [node?.agent_url]);
+
+  const safe = disks.filter(d => d.safe_to_write);
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 1000,
+      background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 12,
+        width: '100%', maxWidth: 560, padding: '20px 22px', color: COLORS.textPrimary,
+      }}>
+        <h3 style={{ margin: '0 0 12px', fontFamily: FONT_HEADING, fontSize: 20 }}>Flash {image.build_name || image.image_id}</h3>
+        <div style={{ marginBottom: 12, padding: 10, background: 'rgba(0,0,0,0.3)', borderRadius: 6, fontFamily: FONT_MONO, fontSize: 11, color: COLORS.textMuted }}>
+          {prettyBytes(image.size_bytes)} · sha256 {image.sha256.slice(0, 16)}…
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <label style={{ fontSize: 11, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Flash node</label>
+          <select value={nodeId} onChange={e => setNodeId(e.target.value)} style={{ display: 'block', width: '100%', marginTop: 4, padding: '6px 10px', background: '#040608', color: COLORS.textPrimary, border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 13 }}>
+            {nodes.map(n => <option key={n.node_id} value={n.node_id}>{n.node_name} ({n.status})</option>)}
+          </select>
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <label style={{ fontSize: 11, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Target disk</label>
+          {safe.length === 0 ? (
+            <div style={{ marginTop: 4, fontSize: 12, color: COLORS.warning }}>
+              No safe-to-write disks attached to this node. Plug in a USB SD reader / SSD on the Pi.
+            </div>
+          ) : (
+            <select value={diskPath} onChange={e => setDiskPath(e.target.value)} style={{ display: 'block', width: '100%', marginTop: 4, padding: '6px 10px', background: '#040608', color: COLORS.textPrimary, border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 13, fontFamily: FONT_MONO }}>
+              <option value="">— pick a disk —</option>
+              {safe.map(d => <option key={d.path} value={d.path}>{d.path} · {d.type} · {prettyBytes(d.size)} · {[d.vendor, d.model].filter(Boolean).join(' ') || 'unlabeled'}</option>)}
+            </select>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+          <button onClick={onClose} style={{ padding: '8px 14px', background: 'transparent', border: `1px solid ${COLORS.border}`, color: COLORS.textSecondary, borderRadius: 8, fontSize: 13, cursor: 'pointer' }}>Cancel</button>
+          <button
+            onClick={() => onSubmit(node, diskPath)}
+            disabled={!node || !diskPath}
+            style={{ padding: '8px 14px', background: (!node || !diskPath) ? COLORS.bgPanel : COLORS.error, border: 'none', color: (!node || !diskPath) ? COLORS.textMuted : '#fff', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: (!node || !diskPath) ? 'not-allowed' : 'pointer' }}
+          >
+            ERASE & FLASH
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Tab 5: Clone / Capture (placeholder) ────────────────────────
 function ClonePlaceholder() {
   return (
     <div style={{

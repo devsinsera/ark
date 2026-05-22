@@ -200,10 +200,13 @@ async function detectHardware(files) {
 }
 
 // ── Architecture ─────────────────────────────────────────────────────
+// Default-permissive: pure-Python / shell builds work on every arch.
+// Narrow only when we find compiled artifacts (.so files) whose ELF
+// header pins them to a specific machine. ELF parsing is just the
+// first 20 bytes of the file, so this is fast even on big trees.
 async function detectArchitecture(files) {
-  // Most pure-Python / shell builds work on all three. We only narrow
-  // when we find evidence of compiled artifacts pinned to one arch.
   let armv6 = true, armv7 = true, arm64 = true;
+  const soFiles = [];
 
   for (const f of files) {
     const base = path.basename(f);
@@ -216,11 +219,41 @@ async function detectArchitecture(files) {
         }
       } catch {}
     }
-    // very weak signal but useful: precompiled .so files often
-    // bake in arch
-    if (base.endsWith('.so')) {
-      // we can't introspect ELF here without extra tooling; leave
-      // unchanged but flag for operator
+    if (base.endsWith('.so') || /\.so\.\d+/.test(base)) {
+      soFiles.push(f);
+    }
+  }
+
+  // Read ELF e_machine field from each .so. If ANY .so is arm64-only,
+  // drop armv6/v7 (they can't run it). If ANY .so is armv7, drop
+  // armv6. We can't run heterogeneous binaries from one package; the
+  // narrowest .so is the binding constraint.
+  if (soFiles.length > 0) {
+    const machines = new Set();
+    for (const f of soFiles.slice(0, 30)) {  // cap for big vendor trees
+      try {
+        const fh = await import('node:fs/promises');
+        const buf = Buffer.alloc(20);
+        const file = await fh.open(f, 'r');
+        try {
+          await file.read(buf, 0, 20, 0);
+          if (buf[0] !== 0x7f || buf.toString('ascii', 1, 4) !== 'ELF') continue;
+          const eiClass = buf[4];                 // 1=32-bit, 2=64-bit
+          // e_machine is little-endian uint16 at offset 18 (assumes
+          // ELFDATA2LSB which is the only relevant endian for arm).
+          const eMachine = buf.readUInt16LE(18);
+          if (eMachine === 40) machines.add(eiClass === 2 ? 'arm64' : 'armv7');  // EM_ARM (often armv7 on Pi 3/4 32-bit)
+          else if (eMachine === 183) machines.add('arm64');  // EM_AARCH64
+        } finally { await file.close(); }
+      } catch { /* unreadable .so — skip */ }
+    }
+    if (machines.size > 0) {
+      if (machines.has('arm64') && !machines.has('armv7')) {
+        armv6 = armv7 = false;  // only arm64 binaries present
+      } else if (machines.has('armv7') && !machines.has('arm64')) {
+        armv6 = false;  // armv7 binaries; armv6 incompatible
+      }
+      // mixed → keep permissive (operator likely has fat / multi-arch builds)
     }
   }
   return [armv6 && 'armv6', armv7 && 'armv7', arm64 && 'arm64'].filter(Boolean);
