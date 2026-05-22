@@ -23,7 +23,9 @@ const OUI = {
   '10:2c:b1': 'Apple',
   '3c:84:27': 'Apple',
   '14:14:7d': 'Apple',
-  '54:ef:44': 'Apple',
+  // 54:ef:44 was previously mis-attributed to Apple. IEEE has it
+  // registered to Lumi United Technology (Aqara's parent company) —
+  // covers Aqara Hubs, sensors, and the M100 Matter bridge.
   'c4:f7:c1': 'Apple',
   '88:66:5a': 'Apple',
   'a4:83:e7': 'Apple',
@@ -40,15 +42,24 @@ const OUI = {
   '00:25:9c': 'Cisco-Linksys',
   '74:da:da': 'D-Link',
   'ec:08:6b': 'TP-Link',
+  '98:5f:d3': 'TP-Link',
+  '50:c7:bf': 'TP-Link',
+  '14:eb:b6': 'TP-Link',
   '00:1f:33': 'Netgear',
   '10:da:43': 'Netgear',
   'b0:b9:8a': 'Netgear',
   '14:cc:20': 'TP-Link',
   '60:38:e0': 'Belkin',
 
+  // Aqara / Lumi smart-home (Zigbee hubs, sensors, M100 Matter bridge)
+  '54:ef:44': 'Aqara (Lumi United)',
+  '04:cf:8c': 'Aqara (Lumi United)',
+  '7c:49:eb': 'Aqara (Lumi United)',
+
   // Huawei mesh / WiFi extenders
   '48:e1:e9': 'Murata (commonly Huawei mesh)',
   '48:e1:5c': 'Liteon (commonly mesh node)',
+  'a4:6b:1f': 'Huawei',
 
   // ESP IoT chipsets — ESP32 / ESP8266
   '08:3a:8d': 'Espressif (ESP32/ESP8266 IoT)',

@@ -30,6 +30,8 @@ export async function arpScan() {
       if (!m) continue;
       if (m[2] === 'ff:ff:ff:ff:ff:ff') continue;     // broadcast
       if (m[2].includes('incomplete')) continue;
+      if (isMulticastIp(m[1])) continue;              // 224.0.0.0/4 etc.
+      if (isMulticastMac(m[2])) continue;             // 01:00:5e:* etc.
       const key = `${m[1]}|${m[2]}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -46,6 +48,8 @@ export async function arpScan() {
     for (const line of stdout.split('\n')) {
       const m = line.match(/^([0-9.]+) dev \S+ lladdr ([0-9a-f:]+)/i);
       if (!m) continue;
+      if (isMulticastIp(m[1])) continue;
+      if (isMulticastMac(m[2])) continue;
       const mac = normaliseMac(m[2]);
       rows.push({
         ip: m[1], mac, vendor: vendorForMac(mac),
@@ -54,6 +58,20 @@ export async function arpScan() {
     }
   }
   return rows;
+}
+
+// 224.0.0.0/4 is the IPv4 multicast range — used by mDNS (224.0.0.251),
+// LLMNR (224.0.0.252), SSDP (239.255.255.250), and a bunch of other
+// protocols. These are not real hosts; the ARP cache picks them up
+// because the kernel still answers mDNS queries through them.
+function isMulticastIp(ip) {
+  const first = parseInt((ip || '').split('.')[0], 10);
+  return first >= 224 && first <= 239;
+}
+// 01:00:5e:* is the IPv4 multicast MAC range; 33:33:* is IPv6 multicast.
+function isMulticastMac(mac) {
+  const m = mac.toLowerCase();
+  return m.startsWith('01:00:5e:') || m.startsWith('33:33:');
 }
 
 function normaliseMac(raw) {
