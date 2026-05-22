@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import NetworkLandscape from './NetworkLandscape.jsx';
 import Fleet from './Fleet.jsx';
+import Presets from './Presets.jsx';
+import Builds from './Builds.jsx';
+import Images from './Images.jsx';
+import Logs from './Logs.jsx';
 import {
   // Nav
   Cpu, HardDrive, Layers, Boxes, Image as ImageIcon, ScrollText, Server,
@@ -69,12 +73,12 @@ function writeJSON(key, value) {
 const NAV_SECTIONS = [
   { id: 'devices',   label: 'Devices',   icon: Cpu,        kind: 'active' },
   { id: 'network',   label: 'Network',   icon: Radar,      kind: 'active' },
-  { id: 'builds',    label: 'Builds',    icon: HardDrive,  kind: 'stub',   stubText: 'No builds yet — generate a build-plan to get started.' },
+  { id: 'builds',    label: 'Builds',    icon: HardDrive,  kind: 'active' },
   { id: 'manifests', label: 'Manifests', icon: Layers,     kind: 'list' },
-  { id: 'presets',   label: 'Presets',   icon: Boxes,      kind: 'stub',   stubText: 'Presets — coming soon.' },
+  { id: 'presets',   label: 'Presets',   icon: Boxes,      kind: 'active' },
   { id: 'fleet',     label: 'Fleet',     icon: Server,     kind: 'active' },
-  { id: 'images',    label: 'Images',    icon: ImageIcon,  kind: 'stub',   stubText: 'Image builder — coming soon (Phase 3).' },
-  { id: 'logs',      label: 'Logs',      icon: ScrollText, kind: 'stub',   stubText: 'No build logs yet.' },
+  { id: 'images',    label: 'Images',    icon: ImageIcon,  kind: 'active' },
+  { id: 'logs',      label: 'Logs',      icon: ScrollText, kind: 'active' },
 ];
 
 // ── Device-stack layer definition ──────────────────────────────────
@@ -550,7 +554,11 @@ function CentreWorkspace(props) {
       {nav === 'manifests' && <ManifestsView {...props}/>}
       {nav === 'network'   && <NetworkLandscape/>}
       {nav === 'fleet'     && <Fleet/>}
-      {nav !== 'devices' && nav !== 'manifests' && nav !== 'network' && nav !== 'fleet' && <StubView nav={nav}/>}
+      {nav === 'presets'   && <Presets/>}
+      {nav === 'builds'    && <Builds/>}
+      {nav === 'images'    && <Images/>}
+      {nav === 'logs'      && <Logs/>}
+      {!['devices','manifests','network','fleet','presets','builds','images','logs'].includes(nav) && <StubView nav={nav}/>}
     </main>
   );
 }
