@@ -18,6 +18,7 @@ import { openVault } from './vault.mjs';
 import { initDrift, detectConfigDrift, detectNetworkDrift, recordDriftEvents, listDrift, resolveDrift } from './drift.mjs';
 import { computeHealth } from './health.mjs';
 import { devicesCsv, networksCsv, deviceExport, fleetExport, importSnapshot } from './export.mjs';
+import { listBuilds, getBuild, listImages, tailFile, hubLogPath, buildLogPath } from './inventory.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -316,6 +317,27 @@ const server = createServer(async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/api/manifests') {
     return json(res, { count: state.manifests.size, ids: [...state.manifests.keys()] });
+  }
+
+  // ── Inventory: builds / images / logs (Phase 2 + 3 stub fix-ups) ──
+  if (req.method === 'GET' && url.pathname === '/api/builds') {
+    return json(res, { builds: await listBuilds() });
+  }
+  const buildMatch = url.pathname.match(/^\/api\/builds\/([^/]+)$/);
+  if (req.method === 'GET' && buildMatch) {
+    const b = await getBuild(decodeURIComponent(buildMatch[1]));
+    if (!b) return json(res, { ok: false, error: 'build not found' }, 404);
+    return json(res, b);
+  }
+  if (req.method === 'GET' && url.pathname === '/api/images') {
+    return json(res, await listImages());
+  }
+  if (req.method === 'GET' && url.pathname === '/api/logs/hub') {
+    return json(res, await tailFile(hubLogPath(), { maxBytes: 128 * 1024 }));
+  }
+  const buildLogMatch = url.pathname.match(/^\/api\/logs\/build\/([^/]+)$/);
+  if (req.method === 'GET' && buildLogMatch) {
+    return json(res, await tailFile(buildLogPath(decodeURIComponent(buildLogMatch[1])), { maxBytes: 128 * 1024 }));
   }
 
   // ── Health (Phase 4.6) ──

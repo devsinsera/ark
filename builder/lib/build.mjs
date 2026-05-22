@@ -34,7 +34,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BUILDER_ROOT = path.resolve(__dirname, '..');
 const IMAGE_TAG = 'ark-builder:0.1';
 
-export async function buildImage({ planPath, basePath, outDir, runner = 'docker', skipInstall = false }) {
+export async function buildImage({ planPath, basePath, outDir, runner = 'docker', skipInstall = false, compress = false }) {
   // ── 1. Validate inputs ──────────────────────────────────────────
   const errors = [];
   if (!planPath || !existsSync(planPath)) errors.push(`plan not found: ${planPath}`);
@@ -107,12 +107,38 @@ export async function buildImage({ planPath, basePath, outDir, runner = 'docker'
   const sha = await sha256File(outImg);
   await fs.writeFile(outSha, `${sha}  ${path.basename(outImg)}\n`);
 
+  // ── 7. Optional xz compression (Phase 3.1) ──────────────────────
+  // Matches the upstream DietPi tarball shape and typically saves
+  // ~70 % on raw .img sizes. We pipe through the SAME container so
+  // operators don't need xz installed on the host.
+  let outXz = null, shaXz = null;
+  if (compress) {
+    console.log('[builder] compressing output (xz -T 0 -9)… this can take a few minutes');
+    const compressOk = await runStreaming(runtime.cmd,
+      ['run', '--rm', '-v', `${path.resolve(outDir)}:/work/out`, '--entrypoint', '/bin/bash',
+       IMAGE_TAG, '-lc', 'xz -T 0 -9 -f -k /work/out/ark-built.img'],
+      outLog, { append: true }
+    );
+    if (!compressOk.ok) {
+      // Non-fatal — leave the raw .img and return what we have.
+      console.error('[builder] WARN: xz compression failed; raw .img is still good');
+    } else {
+      outXz  = outImg + '.xz';
+      if (existsSync(outXz)) {
+        shaXz = await sha256File(outXz);
+        await fs.writeFile(outXz + '.sha256', `${shaXz}  ${path.basename(outXz)}\n`);
+      }
+    }
+  }
+
   return {
     ok: true,
     out_img:  outImg,
     sha256:   sha,
     log_file: outLog,
     sha_file: outSha,
+    out_xz:   outXz,
+    sha256_xz: shaXz,
   };
 }
 

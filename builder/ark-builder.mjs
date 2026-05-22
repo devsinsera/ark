@@ -33,7 +33,7 @@ function usage() {
 
 Usage:
   ark-builder render --plan <plan.json> --out <dir>
-  ark-builder build  --plan <plan.json> --base <image.img> --out <dir> [--runner docker|podman] [--skip-install]
+  ark-builder build  --plan <plan.json> --base <image.img> --out <dir> [--runner docker|podman] [--skip-install] [--compress]
   ark-builder check
 
 Subcommands:
@@ -80,6 +80,7 @@ async function main() {
       outDir:      args.out,
       runner:      args.runner || 'docker',
       skipInstall: !!args['skip-install'],
+      compress:    !!args.compress,
     });
     if (!result.ok) {
       stderr.write(`✖ Build failed: ${result.error || 'unknown'}\n`);
@@ -89,6 +90,10 @@ async function main() {
     stdout.write(`\n✔ Image built\n`);
     stdout.write(`    image:   ${result.out_img}\n`);
     stdout.write(`    sha256:  ${result.sha256}\n`);
+    if (result.out_xz) {
+      stdout.write(`    xz:      ${result.out_xz}\n`);
+      stdout.write(`    xz-sha:  ${result.sha256_xz}\n`);
+    }
     stdout.write(`    log:     ${result.log_file}\n`);
     stdout.write(`\nFlash to an SD card: dd if=${result.out_img} of=/dev/diskN bs=4M status=progress\n`);
     exit(0);
