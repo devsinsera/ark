@@ -19,6 +19,7 @@ import { initDrift, detectConfigDrift, detectNetworkDrift, recordDriftEvents, li
 import { computeHealth } from './health.mjs';
 import { devicesCsv, networksCsv, deviceExport, fleetExport, importSnapshot } from './export.mjs';
 import { listBuilds, getBuild, listImages, tailFile, hubLogPath, buildLogPath } from './inventory.mjs';
+import { initFlash, JOB_STATES, NODE_CAPABILITIES } from './flash.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -39,6 +40,9 @@ console.log(`[hub] vault ready (key fingerprint ${vault.keyFingerprint()})`);
 
 // Drift event table — Phase 4.5 / Phase 5.2 multi-network drift.
 initDrift(store.db);
+
+// Flash Node subsystem — nodes, image registry, job queue.
+const flash = initFlash(store.db);
 
 // Pre-compute agent file metadata for the OTA endpoint. Re-checked on
 // each /api/agent/latest call so swapping the file picks up live.
@@ -317,6 +321,96 @@ const server = createServer(async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/api/manifests') {
     return json(res, { count: state.manifests.size, ids: [...state.manifests.keys()] });
+  }
+
+  // ── Flash Node subsystem ─────────────────────────────────────────
+  if (req.method === 'POST' && url.pathname === '/api/flash/nodes/register') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try {
+        const reg = JSON.parse(body);
+        const node = flash.registerNode(reg);
+        return json(res, { ok: true, node });
+      } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    });
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === '/api/flash/nodes') {
+    return json(res, { nodes: flash.listNodes() });
+  }
+  const flashNodeHeartbeat = url.pathname.match(/^\/api\/flash\/nodes\/([^/]+)\/heartbeat$/);
+  if (req.method === 'POST' && flashNodeHeartbeat) {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try {
+        const r = JSON.parse(body || '{}');
+        const ok = flash.heartbeatNode(decodeURIComponent(flashNodeHeartbeat[1]), r.status);
+        return json(res, { ok });
+      } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    });
+    return;
+  }
+  if (req.method === 'POST' && url.pathname === '/api/flash/images') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try {
+        const img = flash.registerImage(JSON.parse(body));
+        return json(res, { ok: true, image: img });
+      } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    });
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === '/api/flash/images') {
+    return json(res, { images: flash.listImages() });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/flash/jobs') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try {
+        const job = flash.enqueueJob(JSON.parse(body));
+        return json(res, { ok: true, job });
+      } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    });
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === '/api/flash/jobs') {
+    return json(res, {
+      jobs: flash.listJobs({
+        nodeId: url.searchParams.get('node_id') || undefined,
+        state:  url.searchParams.get('state')   || undefined,
+        limit:  Number(url.searchParams.get('limit') || 50),
+      }),
+    });
+  }
+  const flashJobMatch = url.pathname.match(/^\/api\/flash\/jobs\/([^/]+)$/);
+  if (req.method === 'GET' && flashJobMatch) {
+    const j = flash.getJob(decodeURIComponent(flashJobMatch[1]));
+    if (!j) return json(res, { ok: false, error: 'job not found' }, 404);
+    return json(res, j);
+  }
+  const flashJobUpdate = url.pathname.match(/^\/api\/flash\/jobs\/([^/]+)\/update$/);
+  if (req.method === 'POST' && flashJobUpdate) {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try {
+        const updated = flash.updateJob(decodeURIComponent(flashJobUpdate[1]), JSON.parse(body));
+        return json(res, { ok: true, job: updated });
+      } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    });
+    return;
+  }
+  const flashJobCancel = url.pathname.match(/^\/api\/flash\/jobs\/([^/]+)\/cancel$/);
+  if (req.method === 'POST' && flashJobCancel) {
+    const ok = flash.cancelJob(decodeURIComponent(flashJobCancel[1]));
+    return json(res, { ok });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/flash/constants') {
+    return json(res, { job_states: JOB_STATES, node_capabilities: NODE_CAPABILITIES });
   }
 
   // ── Inventory: builds / images / logs (Phase 2 + 3 stub fix-ups) ──
