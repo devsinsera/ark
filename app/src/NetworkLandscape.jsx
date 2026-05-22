@@ -148,17 +148,7 @@ function DevicesTab({ hubUrl }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {driftCount > 0 && (
-        <a href={`${hubUrl}/api/drift`} target="_blank" rel="noreferrer" style={{
-          display: 'flex', alignItems: 'center', gap: 10,
-          padding: '10px 14px', textDecoration: 'none',
-          background: 'rgba(245,180,90,0.10)',
-          border: `1px solid ${COLORS.warning}`,
-          borderRadius: 8, color: COLORS.warning, fontSize: 13,
-        }}>
-          <AlertTriangle size={14}/> {driftCount} drift event{driftCount === 1 ? '' : 's'} unresolved · view JSON →
-        </a>
-      )}
+      {driftCount > 0 && <DriftBanner hubUrl={hubUrl} count={driftCount}/>}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 200, position: 'relative' }}>
           <Search size={14} style={{ position: 'absolute', top: 11, left: 10, color: COLORS.textMuted }}/>
@@ -459,6 +449,110 @@ function ActiveTab({ hubUrl }) {
     </div>
   );
 }
+
+function DriftBanner({ hubUrl, count }) {
+  const [open, setOpen] = useState(false);
+  const [events, setEvents] = useState([]);
+
+  const fetchEvents = useCallback(async () => {
+    const r = await fetch(`${hubUrl}/api/drift`, { cache: 'no-cache' });
+    const j = await r.json();
+    setEvents(j.events || []);
+  }, [hubUrl]);
+
+  useEffect(() => { if (open) fetchEvents(); }, [open, fetchEvents]);
+
+  async function resolve(id) {
+    await fetch(`${hubUrl}/api/drift/${id}/resolve`, { method: 'POST' });
+    fetchEvents();
+  }
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)} style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '10px 14px', textAlign: 'left', width: '100%',
+        background: 'rgba(245,180,90,0.10)',
+        border: `1px solid ${COLORS.warning}`,
+        borderRadius: 8, color: COLORS.warning, fontSize: 13,
+        cursor: 'pointer',
+      }}>
+        <AlertTriangle size={14}/> {count} drift event{count === 1 ? '' : 's'} unresolved · click to inspect
+      </button>
+
+      {open && (
+        <div onClick={() => setOpen(false)} style={{
+          position: 'fixed', inset: 0, zIndex: 1000,
+          background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+        }}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`,
+            borderRadius: 12, width: '100%', maxWidth: 880, maxHeight: '85vh',
+            overflow: 'auto', color: COLORS.textPrimary, padding: '20px 22px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
+              <h3 style={{ margin: 0, fontFamily: FONT_HEADING, fontSize: 20 }}>Drift events</h3>
+              <button onClick={() => setOpen(false)} aria-label="Close" style={{ background: 'transparent', border: 'none', color: COLORS.textMuted, fontSize: 22, cursor: 'pointer', lineHeight: 1 }}>×</button>
+            </div>
+            <p style={{ margin: '0 0 14px', fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>
+              An Ark Agent reported state that differs from the device's manifest, or the device appeared on a
+              new network. Each event has a stable id so re-detections dedupe automatically.
+            </p>
+            {events.length === 0 ? (
+              <div style={{ color: COLORS.textMuted }}>No unresolved events.</div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: FONT_BODY }}>
+                <thead>
+                  <tr style={{ color: COLORS.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    <th style={driftTh}>Kind</th><th style={driftTh}>Device</th><th style={driftTh}>Field</th>
+                    <th style={driftTh}>Expected</th><th style={driftTh}>Actual</th><th style={driftTh}>When</th><th style={driftTh}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {events.map(e => (
+                    <tr key={e.id}>
+                      <td style={driftTd}><span style={{ color: kindColour(e.kind), fontFamily: FONT_MONO, fontSize: 11 }}>{e.kind}</span></td>
+                      <td style={{ ...driftTd, fontFamily: FONT_MONO, fontSize: 11, color: COLORS.textMuted }}>{e.device_id}</td>
+                      <td style={{ ...driftTd, fontFamily: FONT_MONO, fontSize: 11 }}>{e.field || '—'}</td>
+                      <td style={{ ...driftTd, fontFamily: FONT_MONO, fontSize: 11 }}>{truncate(e.expected, 30)}</td>
+                      <td style={{ ...driftTd, fontFamily: FONT_MONO, fontSize: 11 }}>{truncate(e.actual, 30)}</td>
+                      <td style={{ ...driftTd, fontFamily: FONT_MONO, fontSize: 10, color: COLORS.textMuted }}>{(e.detected_at || '').slice(11, 19)}</td>
+                      <td style={driftTd}>
+                        <button onClick={() => resolve(e.id)} style={{
+                          padding: '3px 10px', fontSize: 11, background: 'transparent',
+                          color: COLORS.accent, border: `1px solid ${COLORS.border}`, borderRadius: 4, cursor: 'pointer',
+                        }}>resolve</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+              <a href={`${hubUrl}/api/drift`} target="_blank" rel="noreferrer" style={{ padding: '8px 14px', background: 'transparent', border: `1px solid ${COLORS.border}`, borderRadius: 8, color: COLORS.accent, fontSize: 13, textDecoration: 'none' }}>
+                Open raw JSON
+              </a>
+              <button onClick={() => setOpen(false)} style={{ padding: '8px 14px', background: COLORS.accent, border: 'none', borderRadius: 8, color: '#0a0a0a', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+const driftTh = { textAlign: 'left', padding: '6px 8px', borderBottom: `1px solid ${COLORS.border}` };
+const driftTd = { padding: '6px 8px', borderBottom: `1px solid ${COLORS.border}`, color: COLORS.textPrimary };
+function kindColour(k) {
+  return k === 'network' ? COLORS.warning
+       : k === 'service' || k === 'kiosk_url' || k === 'packages' ? COLORS.error
+       : k === 'manifest_missing' ? COLORS.textMuted
+       : COLORS.accent;
+}
+function truncate(s, n) { if (!s) return '—'; const str = String(s); return str.length > n ? str.slice(0, n-1) + '…' : str; }
 
 function RedactionHint() {
   return (

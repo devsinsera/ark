@@ -7,12 +7,13 @@ import Images from './Images.jsx';
 import Logs from './Logs.jsx';
 import FlashNodes from './FlashNodes.jsx';
 import CantPhishHere from './CantPhishHere.jsx';
+import Vault from './Vault.jsx';
 import {
   // Nav
   Cpu, HardDrive, Layers, Boxes, Image as ImageIcon, ScrollText, Server,
   Radar,
   // Layers
-  Shield, Wifi, Monitor, Settings, Activity,
+  Shield, Wifi, Monitor, Settings, Activity, KeyRound,
   // Actions
   Plus, Copy as CopyIcon, Trash2, Download, Save, Upload,
   // State
@@ -81,6 +82,7 @@ const NAV_SECTIONS = [
   { id: 'fleet',     label: 'Fleet',     icon: Server,     kind: 'active' },
   { id: 'flash',     label: 'Flash Nodes', icon: Zap,      kind: 'active' },
   { id: 'security',  label: "Can't Phish Here", icon: Shield, kind: 'active' },
+  { id: 'vault',     label: 'Vault',     icon: KeyRound,   kind: 'active' },
   { id: 'images',    label: 'Images',    icon: ImageIcon,  kind: 'active' },
   { id: 'logs',      label: 'Logs',      icon: ScrollText, kind: 'active' },
 ];
@@ -224,6 +226,25 @@ export default function App() {
 
   // ── persistence side-effects ────────────────────────────────────
   useEffect(() => { saveManifests(manifests); }, [manifests]);
+
+  // Push manifests to the Hub so the drift detector can compare Agent
+  // telemetry against them. Best-effort — if the Hub is unreachable
+  // the UI keeps working from localStorage. Debounced so a rapid
+  // edit-typing session doesn't spam the endpoint.
+  useEffect(() => {
+    const url = (() => { try { return (window.localStorage.getItem('ark.hubUrl') || 'http://localhost:7400').replace(/\/+$/, ''); } catch { return 'http://localhost:7400'; } })();
+    const handle = setTimeout(() => {
+      for (const m of Object.values(manifests)) {
+        if (!m || !m.id) continue;
+        fetch(`${url}/api/manifests/register`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(m),
+        }).catch(() => { /* offline — fine, retry on next change */ });
+      }
+    }, 800);
+    return () => clearTimeout(handle);
+  }, [manifests]);
   useEffect(() => { if (activeId) saveActiveId(activeId); }, [activeId]);
   useEffect(() => { writeJSON(UI_NAV_KEY, nav); },                 [nav]);
   useEffect(() => { writeJSON(UI_LAYERS_KEY, openLayers); },        [openLayers]);
@@ -564,7 +585,8 @@ function CentreWorkspace(props) {
       {nav === 'logs'      && <Logs/>}
       {nav === 'flash'     && <FlashNodes/>}
       {nav === 'security'  && <CantPhishHere/>}
-      {!['devices','manifests','network','fleet','presets','builds','images','logs','flash','security'].includes(nav) && <StubView nav={nav}/>}
+      {nav === 'vault'     && <Vault/>}
+      {!['devices','manifests','network','fleet','presets','builds','images','logs','flash','security','vault'].includes(nav) && <StubView nav={nav}/>}
     </main>
   );
 }
