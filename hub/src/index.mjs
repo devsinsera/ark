@@ -117,13 +117,16 @@ async function runScan() {
       }
     }
 
+    const previousDevices = state.devices;
     state.devices = merged;
     state.scanned_at = new Date().toISOString();
     state.scan_count++;
 
     // Can't Phish Here — defensive detection on each scan tick.
+    // Pass previousDevices so MAC-change detection has something to
+    // compare against.
     try {
-      security.detect({ currentDevices: merged, store });
+      security.detect({ currentDevices: merged, previousDevices, store });
     } catch (e) {
       console.error('[hub] cph detect error:', e.message);
     }

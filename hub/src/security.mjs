@@ -228,12 +228,13 @@ export function initSecurity(db) {
 
     // ── The detector: compares current scan to past sightings and
     //    raises alerts. Called by the Hub each scan tick.
-    detect({ currentDevices, store }) {
+    detect({ currentDevices, previousDevices = [], store }) {
       const raised = [];
+
+      // 1) new_device: unapproved devices on the LAN
       for (const d of currentDevices) {
-        const approved = this.isApproved(d);
-        if (!approved) {
-          // New / unapproved device
+        const approval = this.isApproved(d);
+        if (!approval) {
           if (!d.mac) continue;  // skip ephemeral entries without a MAC
           const result = this.raiseAlert({
             kind: 'new_device',
@@ -245,12 +246,37 @@ export function initSecurity(db) {
           if (result.new) raised.push(result);
         }
       }
-      // Check approved hosts for offline / IP change
+
+      // 2) mac_change: same hostname (or .local name) now reports a
+      //    different MAC than last tick. Common cause: iOS Private
+      //    Wi-Fi Address re-roll; less common: spoofing. Flag at warn.
+      if (previousDevices.length > 0) {
+        for (const cur of currentDevices) {
+          if (!cur.mac || !cur.hostname) continue;
+          const prev = previousDevices.find(p => p.hostname === cur.hostname && p.mac);
+          if (prev && prev.mac.toLowerCase() !== cur.mac.toLowerCase()) {
+            const r = this.raiseAlert({
+              kind: 'mac_change',
+              severity: 'warn',
+              device_id: cur.mac,
+              subject: `MAC change on ${cur.hostname}: ${prev.mac} → ${cur.mac}`,
+              detail: { hostname: cur.hostname, ip: cur.ip, previous_mac: prev.mac, current_mac: cur.mac },
+            });
+            if (r.new) raised.push(r);
+          }
+        }
+      }
+
+      // 3) ip_change: an approved device's IP shifted. From recent
+      //    sightings — only fires if the device has appeared on at
+      //    least two different IPs in the last few scans.
       const approved = this.listApproved();
       for (const a of approved) {
         if (!a.device_id) continue;
         const dev = store.getDevice(a.device_id);
         if (!dev) continue;
+
+        // device_offline check (kept from v1)
         const lastSeenMs = dev.last_seen ? new Date(dev.last_seen).getTime() : 0;
         const ageS = (Date.now() - lastSeenMs) / 1000;
         if (ageS > 300) {  // 5 min
@@ -263,7 +289,24 @@ export function initSecurity(db) {
           });
           if (r.new) raised.push(r);
         }
+
+        // ip_change check
+        const sightings = store.listDeviceSightings(a.device_id, 3);
+        if (sightings.length >= 2) {
+          const distinctIps = [...new Set(sightings.map(s => s.ip).filter(Boolean))];
+          if (distinctIps.length >= 2 && sightings[0].ip !== sightings[1].ip) {
+            const r = this.raiseAlert({
+              kind: 'ip_change',
+              severity: 'info',
+              device_id: a.device_id,
+              subject: `${a.label} moved IP: ${sightings[1].ip} → ${sightings[0].ip}`,
+              detail: { previous_ip: sightings[1].ip, current_ip: sightings[0].ip, sightings_seen: distinctIps },
+            });
+            if (r.new) raised.push(r);
+          }
+        }
       }
+
       return { raised, count: raised.length };
     },
   };
