@@ -21,7 +21,8 @@ import { computeHealth } from './health.mjs';
 import { devicesCsv, networksCsv, deviceExport, fleetExport, importSnapshot } from './export.mjs';
 import { listBuilds, getBuild, listImages, tailFile, hubLogPath, buildLogPath } from './inventory.mjs';
 import { initFlash, JOB_STATES, NODE_CAPABILITIES } from './flash.mjs';
-import { initSecurity, ALERT_KINDS, HARDENING_CHECKS } from './security.mjs';
+import { initSecurity, ALERT_KINDS, HARDENING_CHECKS, classifyCheckOutput } from './security.mjs';
+import { initRunner } from './runner.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -58,6 +59,9 @@ const flash = initFlash(store.db);
 
 // Can't Phish Here — defensive security module.
 const security = initSecurity(store.db);
+
+// SSH Runner — operator-managed hosts + remote command execution.
+const runner = initRunner(store.db);
 
 // Pre-compute agent file metadata for the OTA endpoint. Re-checked on
 // each /api/agent/latest call so swapping the file picks up live.
@@ -454,6 +458,80 @@ const server = createServer(async (req, res) => {
         const r = JSON.parse(body || '{}');
         return json(res, { ok: security.toggleWebhook(Number(cphWebhookToggle[1]), !!r.enabled) });
       } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    });
+    return;
+  }
+
+  // ── SSH Runner — managed hosts + remote exec ─────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/runner/hosts') {
+    return json(res, { hosts: runner.listHosts() });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/runner/hosts') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try { return json(res, { ok: true, ...runner.addHost(JSON.parse(body)) }); }
+      catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    });
+    return;
+  }
+  const runnerHostMatch = url.pathname.match(/^\/api\/runner\/hosts\/(\d+)$/);
+  if (req.method === 'DELETE' && runnerHostMatch) {
+    return json(res, { ok: runner.deleteHost(Number(runnerHostMatch[1])) });
+  }
+  const runnerTestMatch = url.pathname.match(/^\/api\/runner\/hosts\/(\d+)\/test$/);
+  if (req.method === 'POST' && runnerTestMatch) {
+    try { return json(res, await runner.test(Number(runnerTestMatch[1]))); }
+    catch (e) { return json(res, { ok: false, error: e.message }, 500); }
+    return;
+  }
+  const runnerExecMatch = url.pathname.match(/^\/api\/runner\/hosts\/(\d+)\/exec$/);
+  if (req.method === 'POST' && runnerExecMatch) {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', async () => {
+      try {
+        const { command, reason, timeoutMs } = JSON.parse(body);
+        const r = await runner.exec(Number(runnerExecMatch[1]), command, { reason, timeoutMs });
+        return json(res, r);
+      } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    });
+    return;
+  }
+  const runnerLogMatch = url.pathname.match(/^\/api\/runner\/hosts\/(\d+)\/log$/);
+  if (req.method === 'GET' && runnerLogMatch) {
+    return json(res, { log: runner.listLog(Number(runnerLogMatch[1]), 50) });
+  }
+
+  // CPH hardening check — run a single check against a managed host
+  // via the SSH runner; classify result; record a finding.
+  if (req.method === 'POST' && url.pathname === '/api/cph/hardening/run') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', async () => {
+      try {
+        const { host_id, check_id } = JSON.parse(body);
+        const check = HARDENING_CHECKS.find(c => c.id === check_id);
+        if (!check)         return json(res, { ok: false, error: `unknown check_id: ${check_id}` }, 400);
+        if (!check.probe)   return json(res, { ok: false, error: `check has no automated probe: ${check_id}` }, 400);
+        const host = runner.getHost(host_id);
+        if (!host)          return json(res, { ok: false, error: 'host not found' }, 404);
+
+        const exec = await runner.exec(host_id, check.probe, { reason: 'hardening' });
+        const passOrFail = classifyCheckOutput(check, exec.stdout);
+        const ok = passOrFail === true;
+        security.recordFinding({
+          target_label:   host.label,
+          check_id:       check.id,
+          ok,
+          severity:       check.severity,
+          observation:    (exec.stdout || '').trim().slice(0, 500),
+          recommendation: ok ? null : check.how_to_fix,
+        });
+        return json(res, { ok: true, check_id, passed: ok, observation: (exec.stdout || '').trim().slice(0, 500), exec });
+      } catch (e) {
+        return json(res, { ok: false, error: e.message }, 500);
+      }
     });
     return;
   }

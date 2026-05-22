@@ -72,6 +72,10 @@ export const ALERT_KINDS = [
   'unusual_traffic',         // (reserved — needs Pi-side daemon)
 ];
 
+// Each check now declares a probe (the actual shell command the SSH
+// Runner executes on the host) and a `pass_when` predicate that
+// classifies the captured stdout into ok / fail. Runner.run_check
+// uses these.
 export const HARDENING_CHECKS = [
   {
     id: 'ssh.password-auth-disabled',
@@ -80,6 +84,8 @@ export const HARDENING_CHECKS = [
     rationale: 'Password auth invites brute-force. Use SSH keys only.',
     how_to_check: 'sshd_config: PasswordAuthentication no',
     how_to_fix:   'sudo sed -i "s/^#?PasswordAuthentication.*/PasswordAuthentication no/" /etc/ssh/sshd_config && sudo systemctl restart ssh',
+    probe: "sudo sshd -T 2>/dev/null | grep -i '^passwordauthentication'",
+    pass_when: { contains_ci: 'passwordauthentication no' },
   },
   {
     id: 'ssh.root-login-disabled',
@@ -88,6 +94,8 @@ export const HARDENING_CHECKS = [
     rationale: 'Root over SSH is a high-value target. Login as a user, then sudo.',
     how_to_check: 'sshd_config: PermitRootLogin no',
     how_to_fix:   'sudo sed -i "s/^#?PermitRootLogin.*/PermitRootLogin no/" /etc/ssh/sshd_config && sudo systemctl restart ssh',
+    probe: "sudo sshd -T 2>/dev/null | grep -i '^permitrootlogin'",
+    pass_when: { contains_ci: 'permitrootlogin no' },
   },
   {
     id: 'ssh.protocol-2-only',
@@ -96,6 +104,8 @@ export const HARDENING_CHECKS = [
     rationale: 'SSH-1 has well-known weaknesses. Always use Protocol 2.',
     how_to_check: 'sshd -T 2>/dev/null | grep -i protocol',
     how_to_fix:   'Default on modern OpenSSH; explicit Protocol 1 lines should be removed.',
+    probe: "sudo sshd -T 2>/dev/null | grep -i '^protocol' || echo 'protocol 2 (implicit)'",
+    pass_when: { not_contains_ci: 'protocol 1' },
   },
   {
     id: 'os.packages-up-to-date',
@@ -104,6 +114,8 @@ export const HARDENING_CHECKS = [
     rationale: 'Unpatched systems accumulate known vulns.',
     how_to_check: 'apt list --upgradable 2>/dev/null | wc -l',
     how_to_fix:   'sudo apt update && sudo apt upgrade -y',
+    probe: "apt list --upgradable 2>/dev/null | grep -v '^Listing' | wc -l",
+    pass_when: { numeric_lt: 1 },
   },
   {
     id: 'fw.ufw-enabled',
@@ -112,6 +124,8 @@ export const HARDENING_CHECKS = [
     rationale: 'Default-deny outbound + inbound = smaller attack surface.',
     how_to_check: 'sudo ufw status | head -1',
     how_to_fix:   'sudo apt install ufw && sudo ufw default deny incoming && sudo ufw allow 22 && sudo ufw enable',
+    probe: "sudo ufw status 2>/dev/null | head -1",
+    pass_when: { contains_ci: 'status: active' },
   },
   {
     id: 'cred.no-default-router-password',
@@ -138,6 +152,30 @@ export const HARDENING_CHECKS = [
     how_to_fix:   'Renew via certbot / Let\'s Encrypt or your CA.',
   },
 ];
+
+// Classify a check's probe output against its pass_when rule.
+// Returns true (ok) / false (fail) / null (no rule defined).
+export function classifyCheckOutput(check, stdout) {
+  if (!check?.pass_when || stdout == null) return null;
+  const out = String(stdout).trim();
+  const rule = check.pass_when;
+  if (rule.contains)     return out.includes(rule.contains);
+  if (rule.contains_ci)  return out.toLowerCase().includes(String(rule.contains_ci).toLowerCase());
+  if (rule.not_contains) return !out.includes(rule.not_contains);
+  if (rule.not_contains_ci) return !out.toLowerCase().includes(String(rule.not_contains_ci).toLowerCase());
+  if (rule.equals)       return out === rule.equals;
+  if (rule.equals_ci)    return out.toLowerCase() === String(rule.equals_ci).toLowerCase();
+  if (rule.matches)      return new RegExp(rule.matches).test(out);
+  if (rule.numeric_lt != null) {
+    const n = Number(out.split('\n')[0]);
+    return Number.isFinite(n) && n < rule.numeric_lt;
+  }
+  if (rule.numeric_gt != null) {
+    const n = Number(out.split('\n')[0]);
+    return Number.isFinite(n) && n > rule.numeric_gt;
+  }
+  return null;
+}
 
 // ── Public API ─────────────────────────────────────────────────────
 export function initSecurity(db) {

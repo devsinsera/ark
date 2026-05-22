@@ -8,6 +8,7 @@ import Logs from './Logs.jsx';
 import FlashNodes from './FlashNodes.jsx';
 import CantPhishHere from './CantPhishHere.jsx';
 import Vault from './Vault.jsx';
+import Runner from './Runner.jsx';
 import {
   // Nav
   Cpu, HardDrive, Layers, Boxes, Image as ImageIcon, ScrollText, Server,
@@ -83,6 +84,7 @@ const NAV_SECTIONS = [
   { id: 'flash',     label: 'Flash Nodes', icon: Zap,      kind: 'active' },
   { id: 'security',  label: "Can't Phish Here", icon: Shield, kind: 'active' },
   { id: 'vault',     label: 'Vault',     icon: KeyRound,   kind: 'active' },
+  { id: 'runner',    label: 'SSH Runner', icon: Terminal,  kind: 'active' },
   { id: 'images',    label: 'Images',    icon: ImageIcon,  kind: 'active' },
   { id: 'logs',      label: 'Logs',      icon: ScrollText, kind: 'active' },
 ];
@@ -695,7 +697,8 @@ function CentreWorkspace(props) {
       {nav === 'flash'     && <FlashNodes/>}
       {nav === 'security'  && <CantPhishHere/>}
       {nav === 'vault'     && <Vault/>}
-      {!['devices','manifests','network','fleet','presets','builds','images','logs','flash','security','vault'].includes(nav) && <StubView nav={nav}/>}
+      {nav === 'runner'    && <Runner/>}
+      {!['devices','manifests','network','fleet','presets','builds','images','logs','flash','security','vault','runner'].includes(nav) && <StubView nav={nav}/>}
     </main>
   );
 }
