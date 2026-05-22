@@ -6,6 +6,7 @@ import Builds from './Builds.jsx';
 import Images from './Images.jsx';
 import Logs from './Logs.jsx';
 import FlashNodes from './FlashNodes.jsx';
+import CantPhishHere from './CantPhishHere.jsx';
 import {
   // Nav
   Cpu, HardDrive, Layers, Boxes, Image as ImageIcon, ScrollText, Server,
@@ -79,6 +80,7 @@ const NAV_SECTIONS = [
   { id: 'presets',   label: 'Presets',   icon: Boxes,      kind: 'active' },
   { id: 'fleet',     label: 'Fleet',     icon: Server,     kind: 'active' },
   { id: 'flash',     label: 'Flash Nodes', icon: Zap,      kind: 'active' },
+  { id: 'security',  label: "Can't Phish Here", icon: Shield, kind: 'active' },
   { id: 'images',    label: 'Images',    icon: ImageIcon,  kind: 'active' },
   { id: 'logs',      label: 'Logs',      icon: ScrollText, kind: 'active' },
 ];
@@ -561,7 +563,8 @@ function CentreWorkspace(props) {
       {nav === 'images'    && <Images/>}
       {nav === 'logs'      && <Logs/>}
       {nav === 'flash'     && <FlashNodes/>}
-      {!['devices','manifests','network','fleet','presets','builds','images','logs','flash'].includes(nav) && <StubView nav={nav}/>}
+      {nav === 'security'  && <CantPhishHere/>}
+      {!['devices','manifests','network','fleet','presets','builds','images','logs','flash','security'].includes(nav) && <StubView nav={nav}/>}
     </main>
   );
 }
