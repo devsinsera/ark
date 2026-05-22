@@ -155,33 +155,77 @@ Exports respect this even when "include sensitive fields" is checked
 
 ---
 
-## Roll-up roadmap
+## Roll-up roadmap (current as of 2026-05-22)
 
 ```
 PHASE 1     manifest + config + browser UI + Hub MVP + Builder render
             ✅ DONE 2026-05-21
 
-PHASE 2     PRESETS — hardware + purpose + OS stack
-            🚧 spec ready, build later
+PHASE 2     PRESETS — hardware × purpose × OS composable stack
+            ✅ DONE 2026-05-22
 
 PHASE 3     IMAGE BUILDER — chroot + apt + image export
-            🚧 spec ready; needs Linux + qemu-user-static
+            ✅ DONE 2026-05-22 (verified end-to-end via Colima
+            arm64 container + DietPi base; markers survived)
+   3.1 ✅   xz compression of output (--compress flag)
+   3.2      GPG signing of output
+   3.3      Image-size shrinking via resize2fs
+   3.4      Commit-SHA pinning in profiles
+   3.5      Per-build pip venv (no --break-system-packages)
+   3.6      ELF-based arch detection
+   3.7      GitHub Actions runner
 
 PHASE 4     NETWORK LANDSCAPE + FLEET
    4.1 ✅   Hub MVP (ARP scan + Wi-Fi scan + REST API)
-   4.2     Agent on Pi
-   4.3     SQLite persistence (FIRST persistent state in Ark)
-   4.4     Network Landscape UI (4 tabs) + Network/Device DB
-   4.5     Drift detection
-   4.6     Health score computation
-   4.7     Export (CSV / JSON bundle / single device / fleet snapshot)
-   4.8     Import + restore
+   4.2 🟡   Agent on Pi  (code shipped; untested vs real Pi)
+   4.3 ✅   SQLite persistence (~/.ark/ark-hub.db)
+   4.4 ✅   Network Landscape UI (Devices / Wi-Fi / Networks live;
+            Graph tab still placeholder)
+   4.5 ✅   Drift detection (manifest_missing / os / service /
+            kiosk_url / packages / network)
+   4.6 ✅   Health score (heartbeat / cpu_temp / uptime / mem /
+            disk / network consistency)
+   4.7 ✅   Export (CSV / JSON bundle / single device / fleet snapshot)
+   4.8 ✅   Import (POST /api/import/snapshot)
 
-PHASE 5     Discovery + drift across multiple networks; encrypted
-            credential vault; OTA agent updates
+PHASE 5     Discovery + drift across multiple networks
+   5.1 ✅   Encrypted credential vault (AES-256-GCM)
+   5.2 ✅   Multi-network drift detection (sightings-based)
+   5.3 ✅   OTA agent self-update (opt-in via ARK_AGENT_OTA=1)
+
+PHASE 6     FLASH NODE — network imaging appliance
+   6.1 ✅   Hub-side flash subsystem (nodes / images / jobs)
+   6.2 ✅   Pi-side Flash Agent (FastAPI; untested vs real Pi)
+   6.3 ✅   UI: 4-tab Flash Nodes panel
+   6.4      Hub → Agent dispatcher (manual push for v1)
+   6.5      Browser-side WebSocket subscription to job stream
+   6.6      Image upload UI from the laptop
+   6.7      Tab 4 (Clone / Capture) source-side reads
+
+PHASE 7     SECURITY — Can't Phish Here
+   7.1 ✅   Alert engine + approved-host registry + 8 hardening checks
+   7.2 ✅   UI: 6-view defensive panel
+   7.3      Pi-side passive monitor (tcpdump + journalctl tail)
+   7.4      Webhook / email surface for alerts
+   7.5      MAC / IP / port change diff logic
+   7.6      Scheduled hardening runs
+
+PHASE 8     UI POLISH + LAST-MILE
+   ✅       Collapsible left + right panes
+   ✅       Vault UI panel
+   ✅       Drift detail modal (replaces raw-JSON click)
+   ✅       Manifest registration UI → Hub
+        🚧  Tab 4 Graph view in Network Landscape
+        🚧  File-upload control for ZIP / folder / bundle
+        🚧  SSH runner for online-Pi updates
+
+GATED ON A FLASHED Pi (physical-world)
+        🟡  Phase 4.2 end-to-end validation
+        🟡  Phase 5.3 OTA validation
+        🟡  Phase 6.2 Flash Agent validation
+        🟡  Phase 7.3 passive-monitor validation
 ```
 
-Today's realistic next move: flash a card with the existing
-DietPi image + a `dietpi.txt` exported from the UI, boot the Pi,
-see what the Hub now reports about a real Ark-style first boot.
-That's the only thing that turns the spec into evidence.
+The single remaining bottleneck is **flashing a card and booting
+SinseraCore**. Once one Pi reports telemetry, the four 🟡 entries
+flip to ✅ together. Scheduled for tomorrow morning (2026-05-23).

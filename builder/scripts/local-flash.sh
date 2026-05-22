@@ -25,6 +25,17 @@ fi
 IMG_SIZE=$(stat -f%z "$IMG" 2>/dev/null || stat -c%s "$IMG")
 IMG_SIZE_MB=$((IMG_SIZE / 1024 / 1024))
 
+# xz-compressed image support — decompress on the fly via process
+# substitution so we don't have to materialise the .img on disk.
+DD_INPUT="$IMG"
+DD_INPUT_DESC="$IMG ($IMG_SIZE_MB MB compressed)"
+if [[ "$IMG" == *.xz ]]; then
+  if ! command -v xz >/dev/null 2>&1; then
+    echo "✖ xz not installed. brew install xz" >&2; exit 1
+  fi
+  echo "(input is .xz — will decompress in stream; uncompressed size unknown until write completes)"
+fi
+
 OS_KIND="$(uname -s)"
 
 case "$OS_KIND" in
@@ -100,8 +111,12 @@ flash_macos() {
   diskutil unmountDisk "$DEV"
 
   echo "→ writing (may take several minutes; no output until done unless you press Ctrl-T)"
-  # Use raw device + 4M block size for speed
-  sudo dd if="$img" of="$RDEV" bs=4m status=progress conv=fsync
+  # Use raw device + 4M block size for speed. xz inputs stream-decompress.
+  if [[ "$img" == *.xz ]]; then
+    xz -dc "$img" | sudo dd of="$RDEV" bs=4m status=progress conv=fsync
+  else
+    sudo dd if="$img" of="$RDEV" bs=4m status=progress conv=fsync
+  fi
   sync
 
   echo "→ ejecting $DEV"
@@ -149,10 +164,18 @@ flash_linux() {
   done
 
   echo "→ writing"
-  if command -v bmaptool >/dev/null 2>&1; then
-    sudo bmaptool copy --nobmap "$img" "$DEV"
+  if [[ "$img" == *.xz ]]; then
+    if command -v bmaptool >/dev/null 2>&1; then
+      sudo bmaptool copy --nobmap "$img" "$DEV"
+    else
+      xz -dc "$img" | sudo dd of="$DEV" bs=4M status=progress conv=fsync
+    fi
   else
-    sudo dd if="$img" of="$DEV" bs=4M status=progress conv=fsync
+    if command -v bmaptool >/dev/null 2>&1; then
+      sudo bmaptool copy --nobmap "$img" "$DEV"
+    else
+      sudo dd if="$img" of="$DEV" bs=4M status=progress conv=fsync
+    fi
   fi
   sync
   echo "✓ Done. Eject and insert into the Pi."
