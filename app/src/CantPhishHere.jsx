@@ -311,10 +311,11 @@ function HardeningTab({ hubUrl }) {
   }, [hubUrl]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <SchedulesSection hubUrl={hubUrl} checks={checks}/>
       <p style={{ margin: 0, color: COLORS.textMuted, fontSize: 12, fontFamily: FONT_BODY, lineHeight: 1.6 }}>
-        Manual checklist. Each item links to a non-invasive shell command you can run on your own systems.
-        Ark does NOT auto-run these — they're recommendations, not actions.
+        Below: full check catalogue with the shell commands. Schedule any check above to run automatically against
+        a managed host via the SSH Runner; checks without an automated <code>probe</code> field stay manual.
       </p>
       {checks.map(c => (
         <div key={c.id} style={{ padding: 14, background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 8 }}>
@@ -338,6 +339,135 @@ function HardeningTab({ hubUrl }) {
     </div>
   );
 }
+// Hardening scheduler section — Phase 7.6 UI.
+// Lists scheduled checks (host × check × interval) and lets the
+// operator add / remove / toggle them. The Hub's scheduler tick
+// fires due checks every minute.
+function SchedulesSection({ hubUrl, checks }) {
+  const [schedules, setSchedules] = useState([]);
+  const [hosts,     setHosts]     = useState([]);
+  const [form, setForm] = useState({ host_id: '', check_id: '', interval_hours: 24 });
+
+  const refresh = useCallback(async () => {
+    const [s, h] = await Promise.all([
+      fetch(`${hubUrl}/api/cph/scheduled`).then(r => r.json()).catch(() => ({})),
+      fetch(`${hubUrl}/api/runner/hosts`).then(r => r.json()).catch(() => ({})),
+    ]);
+    setSchedules(s.schedules || []);
+    setHosts(h.hosts || []);
+  }, [hubUrl]);
+  useEffect(() => { refresh(); const t = setInterval(refresh, 30000); return () => clearInterval(t); }, [refresh]);
+
+  // Only checks that have an automated probe can be scheduled
+  const probedChecks = useMemo(() => checks.filter(c => c.probe), [checks]);
+
+  async function add() {
+    if (!form.host_id || !form.check_id) return;
+    await fetch(`${hubUrl}/api/cph/scheduled`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...form, host_id: Number(form.host_id), interval_hours: Number(form.interval_hours) }),
+    });
+    setForm({ host_id: '', check_id: '', interval_hours: 24 });
+    refresh();
+  }
+  async function remove(id) {
+    await fetch(`${hubUrl}/api/cph/scheduled/${id}`, { method: 'DELETE' });
+    refresh();
+  }
+  async function toggle(id, enabled) {
+    await fetch(`${hubUrl}/api/cph/scheduled/${id}/toggle`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    refresh();
+  }
+
+  return (
+    <section style={{ padding: 14, background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10 }}>
+      <h3 style={{ margin: '0 0 8px', fontFamily: FONT_HEADING, fontSize: 18, color: COLORS.textPrimary }}>
+        Scheduled checks
+      </h3>
+      <p style={{ margin: '0 0 12px', fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>
+        Run an automated probe against a managed host every N hours. Findings land in the Logs tab; if a check that
+        previously passed now fails, a <code>service_change</code> alert is raised. Requires the host to be registered
+        in the SSH Runner.
+      </p>
+
+      {hosts.length === 0 ? (
+        <div style={{ padding: 14, background: 'rgba(245,180,90,0.06)', border: `1px solid ${COLORS.warning}`, borderRadius: 6, color: COLORS.warning, fontSize: 12 }}>
+          No SSH Runner hosts registered yet. Open the <strong>SSH Runner</strong> nav, add at least one host, then come back here.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 2fr 110px auto', gap: 8 }}>
+            <select value={form.host_id} onChange={e => setForm(f => ({ ...f, host_id: e.target.value }))} style={inp}>
+              <option value="">— host —</option>
+              {hosts.map(h => <option key={h.id} value={h.id}>{h.label} ({h.ssh_target})</option>)}
+            </select>
+            <select value={form.check_id} onChange={e => setForm(f => ({ ...f, check_id: e.target.value }))} style={inp}>
+              <option value="">— check —</option>
+              {probedChecks.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+            <input type="number" value={form.interval_hours} onChange={e => setForm(f => ({ ...f, interval_hours: e.target.value }))} style={{ ...inp, fontFamily: FONT_MONO }} placeholder="hours"/>
+            <button onClick={add} disabled={!form.host_id || !form.check_id} style={{
+              padding: '6px 14px',
+              background: (!form.host_id || !form.check_id) ? COLORS.bgPanel : COLORS.bgActive,
+              color: (!form.host_id || !form.check_id) ? COLORS.textMuted : COLORS.accentBright,
+              border: `1px solid ${COLORS.accentBorder}`, borderRadius: 6, fontSize: 12,
+              cursor: (!form.host_id || !form.check_id) ? 'not-allowed' : 'pointer',
+            }}>schedule</button>
+          </div>
+
+          {schedules.length > 0 && (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginTop: 14 }}>
+              <thead>
+                <tr style={{ color: COLORS.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  <th style={th}>Host</th><th style={th}>Check</th>
+                  <th style={th}>Every</th><th style={th}>Last run</th>
+                  <th style={th}>Last result</th><th style={th}>Next due</th>
+                  <th style={th}>On</th><th style={th}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {schedules.map(s => (
+                  <tr key={s.id}>
+                    <td style={td}>{s.host_label}</td>
+                    <td style={td}>{s.check_label}</td>
+                    <td style={{ ...td, fontFamily: FONT_MONO }}>{s.interval_hours}h</td>
+                    <td style={{ ...td, fontFamily: FONT_MONO, color: COLORS.textMuted }}>
+                      {s.last_run_at ? s.last_run_at.slice(0, 16).replace('T', ' ') : 'never'}
+                    </td>
+                    <td style={td}>
+                      {s.last_passed == null
+                        ? <span style={{ color: COLORS.textMuted }}>—</span>
+                        : <span style={{
+                            padding: '2px 8px', fontSize: 11, borderRadius: 4, fontWeight: 600,
+                            background: s.last_passed ? 'rgba(34,197,94,0.15)' : 'rgba(239,111,92,0.15)',
+                            color:      s.last_passed ? COLORS.success : COLORS.error,
+                          }}>{s.last_passed ? 'PASS' : 'FAIL'}</span>}
+                    </td>
+                    <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 10, color: COLORS.textMuted }}>
+                      {s.next_due ? s.next_due.slice(0, 16).replace('T', ' ') : '—'}
+                    </td>
+                    <td style={td}>
+                      <input type="checkbox" checked={!!s.enabled} onChange={e => toggle(s.id, e.target.checked)}/>
+                    </td>
+                    <td style={td}>
+                      <button onClick={() => remove(s.id)} style={{ padding: '4px 10px', fontSize: 11, background: 'transparent', color: COLORS.error, border: `1px solid ${COLORS.border}`, borderRadius: 4, cursor: 'pointer' }}>
+                        <Trash2 size={10}/> remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function CodeBlock({ label, code }) {
   return (
     <div style={{ marginTop: 6 }}>

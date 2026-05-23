@@ -135,6 +135,32 @@ export function initRunner(db) {
       return { ok: r.ok && matched, exit_code: r.exit_code, stdout: r.stdout, stderr: r.stderr };
     },
 
+    // ── File push (scp) — Phase 8 ───────────────────────────────
+    // Push a local file to a managed host via scp. The Hub host
+    // must have scp installed (default on macOS / Linux). Uses the
+    // same -o / -i flags as exec(). Returns { ok, exit_code,
+    // stderr, duration_ms }.
+    async pushFile(hostId, localPath, remotePath, { timeoutMs = 120000 } = {}) {
+      if (!existsSync(localPath)) throw new Error(`local file not found: ${localPath}`);
+      const host = this.getHost(hostId);
+      if (!host) throw new Error(`unknown host_id: ${hostId}`);
+      const t0 = Date.now();
+      const args = ['-o', 'BatchMode=yes',
+                    '-o', 'ConnectTimeout=10',
+                    '-o', 'StrictHostKeyChecking=accept-new',
+                    '-P', String(host.ssh_port || 22)];
+      if (host.identity_file) { args.push('-i', host.identity_file); }
+      args.push(localPath, `${host.ssh_target.split(':')[0]}:${remotePath}`);
+      const result = await runSpawn('scp', args, timeoutMs);
+      const dur = Date.now() - t0;
+      db.prepare(`
+        INSERT INTO runner_log (host_id, command, exit_code, stdout_tail, stderr_tail, duration_ms, ran_at, reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'push')
+      `).run(hostId, `scp ${localPath} -> ${remotePath}`, result.code,
+             result.stdout.slice(-2048), result.stderr.slice(-2048), dur, new Date().toISOString());
+      return { ok: result.code === 0, exit_code: result.code, stderr: result.stderr, duration_ms: dur };
+    },
+
     // ── Log access ─────────────────────────────────────────────
     listLog(hostId, limit = 50) {
       return db.prepare(`

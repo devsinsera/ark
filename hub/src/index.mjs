@@ -23,6 +23,7 @@ import { listBuilds, getBuild, listImages, tailFile, hubLogPath, buildLogPath } 
 import { initFlash, JOB_STATES, NODE_CAPABILITIES } from './flash.mjs';
 import { initSecurity, ALERT_KINDS, HARDENING_CHECKS, classifyCheckOutput } from './security.mjs';
 import { initRunner } from './runner.mjs';
+import { initScheduler } from './scheduler.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -62,6 +63,10 @@ const security = initSecurity(store.db);
 
 // SSH Runner — operator-managed hosts + remote command execution.
 const runner = initRunner(store.db);
+
+// Hardening scheduler — Phase 7.6. Runs operator-declared checks
+// against operator-declared hosts on an interval, recording findings.
+const scheduler = initScheduler(store.db, { runner, security });
 
 // Pre-compute agent file metadata for the OTA endpoint. Re-checked on
 // each /api/agent/latest call so swapping the file picks up live.
@@ -501,6 +506,59 @@ const server = createServer(async (req, res) => {
   const runnerLogMatch = url.pathname.match(/^\/api\/runner\/hosts\/(\d+)\/log$/);
   if (req.method === 'GET' && runnerLogMatch) {
     return json(res, { log: runner.listLog(Number(runnerLogMatch[1]), 50) });
+  }
+
+  // CPH scheduled checks — Phase 7.6
+  if (req.method === 'GET' && url.pathname === '/api/cph/scheduled') {
+    return json(res, { schedules: scheduler.list() });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/cph/scheduled') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try { return json(res, { ok: true, ...scheduler.add(JSON.parse(body)) }); }
+      catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    });
+    return;
+  }
+  const schedDel = url.pathname.match(/^\/api\/cph\/scheduled\/(\d+)$/);
+  if (req.method === 'DELETE' && schedDel) {
+    return json(res, { ok: scheduler.delete(Number(schedDel[1])) });
+  }
+  const schedToggle = url.pathname.match(/^\/api\/cph\/scheduled\/(\d+)\/toggle$/);
+  if (req.method === 'POST' && schedToggle) {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try {
+        const r = JSON.parse(body || '{}');
+        return json(res, { ok: scheduler.toggle(Number(schedToggle[1]), !!r.enabled) });
+      } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    });
+    return;
+  }
+
+  // Online-Pi update — Phase 8. scp the install.plan.sh to a managed
+  // host and execute it. Doesn't re-flash; mutates the running OS.
+  if (req.method === 'POST' && url.pathname === '/api/runner/online-update') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', async () => {
+      try {
+        const { host_id, build_name } = JSON.parse(body);
+        if (!host_id || !build_name) throw new Error('host_id and build_name required');
+        const planPath = path.join(REPO_ROOT, 'builds', build_name, 'install.plan.sh');
+        if (!existsSync(planPath)) throw new Error(`install.plan.sh not found for build: ${build_name}`);
+        const remoteTmp = `/tmp/ark-online-update-${Date.now()}.sh`;
+        const pushed = await runner.pushFile(host_id, planPath, remoteTmp);
+        if (!pushed.ok) return json(res, { ok: false, step: 'scp', ...pushed }, 500);
+        const ran = await runner.exec(host_id, `chmod +x ${remoteTmp} && sudo bash ${remoteTmp} && rm -f ${remoteTmp}`, {
+          reason: 'online-update', timeoutMs: 600000,
+        });
+        return json(res, { ok: ran.ok, step: 'exec', ...ran });
+      } catch (e) { return json(res, { ok: false, error: e.message }, 500); }
+    });
+    return;
   }
 
   // CPH hardening check — run a single check against a managed host
@@ -947,6 +1005,9 @@ server.listen(PORT, BIND_HOST, async () => {
   // Flash Node dispatcher — every 4 s, push any queued jobs to their
   // target Agent. No-op when nothing is queued.
   setInterval(() => { dispatchQueuedFlashJobs().catch(e => console.error('[hub] flash dispatcher:', e.message)); }, 4000);
+  // Hardening cron — every 60s, run any scheduled checks that are
+  // due. Per-check failures are isolated.
+  setInterval(() => { scheduler.tick().catch(e => console.error('[hub] scheduler:', e.message)); }, 60 * 1000);
 });
 
 process.on('SIGINT',  () => { console.log('\n[hub] shutting down'); store.close(); server.close(() => process.exit(0)); });
