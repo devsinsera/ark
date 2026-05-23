@@ -33,7 +33,9 @@ function usage() {
 
 Usage:
   ark-builder render --plan <plan.json> --out <dir>
-  ark-builder build  --plan <plan.json> --base <image.img> --out <dir> [--runner docker|podman] [--skip-install] [--compress]
+  ark-builder build  --plan <plan.json> --base <image.img> --out <dir>
+                     [--runner docker|podman] [--skip-install]
+                     [--compress] [--shrink] [--sign] [--sign-key FPR]
   ark-builder check
 
 Subcommands:
@@ -81,6 +83,9 @@ async function main() {
       runner:      args.runner || 'docker',
       skipInstall: !!args['skip-install'],
       compress:    !!args.compress,
+      sign:        !!args.sign,
+      signKey:     args['sign-key'] || null,
+      shrink:      !!args.shrink,
     });
     if (!result.ok) {
       stderr.write(`✖ Build failed: ${result.error || 'unknown'}\n`);
@@ -90,9 +95,13 @@ async function main() {
     stdout.write(`\n✔ Image built\n`);
     stdout.write(`    image:   ${result.out_img}\n`);
     stdout.write(`    sha256:  ${result.sha256}\n`);
+    if (result.shrunk) stdout.write(`    shrunk:  via resize2fs -M\n`);
     if (result.out_xz) {
       stdout.write(`    xz:      ${result.out_xz}\n`);
       stdout.write(`    xz-sha:  ${result.sha256_xz}\n`);
+    }
+    if (result.signatures && result.signatures.length) {
+      for (const s of result.signatures) stdout.write(`    sig:     ${s}\n`);
     }
     stdout.write(`    log:     ${result.log_file}\n`);
     stdout.write(`\nFlash to an SD card: dd if=${result.out_img} of=/dev/diskN bs=4M status=progress\n`);

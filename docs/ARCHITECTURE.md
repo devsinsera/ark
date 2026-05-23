@@ -168,12 +168,12 @@ PHASE 3     IMAGE BUILDER — chroot + apt + image export
             ✅ DONE 2026-05-22 (verified end-to-end via Colima
             arm64 container + DietPi base; markers survived)
    3.1 ✅   xz compression of output (--compress flag)
-   3.2      GPG signing of output
-   3.3      Image-size shrinking via resize2fs
-   3.4      Commit-SHA pinning in profiles
-   3.5      Per-build pip venv (no --break-system-packages)
-   3.6      ELF-based arch detection
-   3.7      GitHub Actions runner
+   3.2 ✅   GPG signing of output (--sign / --sign-key FPR)
+   3.3 ✅   Image-size shrinking via resize2fs (--shrink)
+   3.4 ✅   Commit-SHA pinning in profiles (ref / url@ref)
+   3.5 ✅   Per-build pip venv (--venv flag)
+   3.6 ✅   ELF-based arch detection
+   3.7 ✅   GitHub Actions runner (.github/workflows/build-image.yml)
 
 PHASE 4     NETWORK LANDSCAPE + FLEET
    4.1 ✅   Hub MVP (ARP scan + Wi-Fi scan + REST API)
@@ -195,29 +195,30 @@ PHASE 5     Discovery + drift across multiple networks
 
 PHASE 6     FLASH NODE — network imaging appliance
    6.1 ✅   Hub-side flash subsystem (nodes / images / jobs)
-   6.2 ✅   Pi-side Flash Agent (FastAPI; untested vs real Pi)
-   6.3 ✅   UI: 4-tab Flash Nodes panel
-   6.4      Hub → Agent dispatcher (manual push for v1)
-   6.5      Browser-side WebSocket subscription to job stream
-   6.6      Image upload UI from the laptop
-   6.7      Tab 4 (Clone / Capture) source-side reads
+   6.2 🟡   Pi-side Flash Agent (FastAPI; untested vs real Pi)
+   6.3 ✅   UI: 5-tab Flash Nodes panel
+   6.4 ✅   Hub → Agent dispatcher (auto-push every 4 s)
+   6.5 ✅   Browser-side WebSocket subscription to job stream
+   6.6 ✅   Image upload UI from the laptop
+   6.7 ✅   Clone / Capture source-side reads
 
 PHASE 7     SECURITY — Can't Phish Here
    7.1 ✅   Alert engine + approved-host registry + 8 hardening checks
    7.2 ✅   UI: 6-view defensive panel
-   7.3      Pi-side passive monitor (tcpdump + journalctl tail)
-   7.4      Webhook / email surface for alerts
-   7.5      MAC / IP / port change diff logic
-   7.6      Scheduled hardening runs
+   7.3 🟡   Pi-side passive monitor (journalctl tail; untested vs Pi)
+   7.4 ✅   Webhook / email surface for alerts (slack/discord/generic)
+   7.5 ✅   MAC / IP / port change diff logic
+   7.6 ✅   Scheduled hardening runs (per-host cron via SSH Runner)
 
 PHASE 8     UI POLISH + LAST-MILE
    ✅       Collapsible left + right panes
    ✅       Vault UI panel
    ✅       Drift detail modal (replaces raw-JSON click)
    ✅       Manifest registration UI → Hub
-        🚧  Tab 4 Graph view in Network Landscape
-        🚧  File-upload control for ZIP / folder / bundle
-        🚧  SSH runner for online-Pi updates
+   ✅       Tab 4 Graph view in Network Landscape
+   ✅       SSH runner subsystem + UI
+   ✅       Online-Pi update (scp install.plan.sh + exec)
+        🚧  File-upload control for ZIP / folder / bundle in installer
 
 GATED ON A FLASHED Pi (physical-world)
         🟡  Phase 4.2 end-to-end validation
@@ -228,4 +229,4 @@ GATED ON A FLASHED Pi (physical-world)
 
 The single remaining bottleneck is **flashing a card and booting
 SinseraCore**. Once one Pi reports telemetry, the four 🟡 entries
-flip to ✅ together. Scheduled for tomorrow morning (2026-05-23).
+flip to ✅ together.

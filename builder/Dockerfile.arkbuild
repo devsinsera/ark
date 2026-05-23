@@ -24,6 +24,7 @@ RUN apt-get update \
       mount \
       parted \
       kpartx \
+      e2fsprogs \
       coreutils \
       ca-certificates \
       qemu-user-static \
@@ -33,7 +34,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work
-COPY lib/chroot-run.sh /usr/local/bin/chroot-run.sh
-RUN chmod +x /usr/local/bin/chroot-run.sh
+COPY lib/chroot-run.sh    /usr/local/bin/chroot-run.sh
+COPY lib/shrink-image.sh  /usr/local/bin/shrink-image.sh
+RUN chmod +x /usr/local/bin/chroot-run.sh /usr/local/bin/shrink-image.sh
 
 ENTRYPOINT ["/usr/local/bin/chroot-run.sh"]

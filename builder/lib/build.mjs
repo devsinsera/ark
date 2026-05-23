@@ -34,7 +34,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BUILDER_ROOT = path.resolve(__dirname, '..');
 const IMAGE_TAG = 'ark-builder:0.1';
 
-export async function buildImage({ planPath, basePath, outDir, runner = 'docker', skipInstall = false, compress = false }) {
+export async function buildImage({ planPath, basePath, outDir, runner = 'docker', skipInstall = false, compress = false, sign = false, signKey = null, shrink = false }) {
   // ── 1. Validate inputs ──────────────────────────────────────────
   const errors = [];
   if (!planPath || !existsSync(planPath)) errors.push(`plan not found: ${planPath}`);
@@ -107,10 +107,31 @@ export async function buildImage({ planPath, basePath, outDir, runner = 'docker'
   const sha = await sha256File(outImg);
   await fs.writeFile(outSha, `${sha}  ${path.basename(outImg)}\n`);
 
-  // ── 7. Optional xz compression (Phase 3.1) ──────────────────────
-  // Matches the upstream DietPi tarball shape and typically saves
-  // ~70 % on raw .img sizes. We pipe through the SAME container so
-  // operators don't need xz installed on the host.
+  // ── 7. Optional image shrinking (Phase 3.3) ─────────────────────
+  // Runs resize2fs -M on the rootfs partition then truncates the
+  // .img to the new size. Saves ~3-5 GB on stock DietPi (default
+  // partition is sized for a 16 GB card; only ~1 GB is used).
+  // Runs in the same container with the chroot tools so the
+  // operator doesn't need partprobe / resize2fs locally.
+  if (shrink) {
+    console.log('[builder] shrinking image (resize2fs -M + truncate)… this can take a few minutes');
+    const shrinkOk = await runStreaming(runtime.cmd,
+      ['run', '--rm', '--privileged',
+       '-v', `${path.resolve(outDir)}:/work/out`,
+       '--entrypoint', '/bin/bash', IMAGE_TAG, '-lc',
+       'shrink-image.sh /work/out/ark-built.img'],
+      outLog, { append: true }
+    );
+    if (!shrinkOk.ok) {
+      console.error('[builder] WARN: shrink failed; original .img is still good');
+    } else {
+      // sha changed after shrink — re-hash and rewrite the sidecar
+      const newSha = await sha256File(outImg);
+      await fs.writeFile(outSha, `${newSha}  ${path.basename(outImg)}\n`);
+    }
+  }
+
+  // ── 8. Optional xz compression (Phase 3.1) ──────────────────────
   let outXz = null, shaXz = null;
   if (compress) {
     console.log('[builder] compressing output (xz -T 0 -9)… this can take a few minutes');
@@ -120,7 +141,6 @@ export async function buildImage({ planPath, basePath, outDir, runner = 'docker'
       outLog, { append: true }
     );
     if (!compressOk.ok) {
-      // Non-fatal — leave the raw .img and return what we have.
       console.error('[builder] WARN: xz compression failed; raw .img is still good');
     } else {
       outXz  = outImg + '.xz';
@@ -131,14 +151,39 @@ export async function buildImage({ planPath, basePath, outDir, runner = 'docker'
     }
   }
 
+  // ── 9. Optional GPG signing (Phase 3.2) ─────────────────────────
+  // Operator opts in via --sign. We don't manage keys ourselves —
+  // gpg uses the operator's existing keyring on the host. signKey
+  // optionally pins a specific key fingerprint (passed via --local-
+  // user). Outputs detached .asc files next to each artefact.
+  let signedFiles = [];
+  if (sign) {
+    const hasGpg = await hasCommand('gpg');
+    if (!hasGpg) {
+      console.error('[builder] WARN: --sign requested but gpg not on PATH; skipping');
+    } else {
+      const targets = [outImg];
+      if (outXz) targets.push(outXz);
+      for (const f of targets) {
+        const args = ['--batch', '--yes', '--armor', '--detach-sign'];
+        if (signKey) args.push('--local-user', signKey);
+        args.push(f);
+        const ok = await runStreaming('gpg', args, outLog, { append: true });
+        if (ok.ok && existsSync(f + '.asc')) signedFiles.push(f + '.asc');
+      }
+    }
+  }
+
   return {
     ok: true,
-    out_img:  outImg,
-    sha256:   sha,
-    log_file: outLog,
-    sha_file: outSha,
-    out_xz:   outXz,
-    sha256_xz: shaXz,
+    out_img:    outImg,
+    sha256:     sha,
+    log_file:   outLog,
+    sha_file:   outSha,
+    out_xz:     outXz,
+    sha256_xz:  shaXz,
+    signatures: signedFiles,
+    shrunk:     !!shrink,
   };
 }
 

@@ -499,18 +499,169 @@ function FlashDialog({ hubUrl, image, nodes, onClose, onSubmit }) {
   );
 }
 
-// ── Tab 5: Clone / Capture (placeholder) ────────────────────────
+// ── Tab 5: Clone / Capture — Phase 6.7 ────────────────────────
 function ClonePlaceholder() {
+  return <CloneCaptureTab/>;
+}
+
+function CloneCaptureTab() {
+  const hubUrl = readHubUrl();
+  const [nodes, setNodes] = useState([]);
+  const [nodeId, setNodeId] = useState('');
+  const [disks, setDisks] = useState([]);
+  const [src,   setSrc]   = useState('');
+  const [label, setLabel] = useState('');
+  const [compress, setCompress] = useState(true);
+  const [busy,  setBusy]  = useState(false);
+  const [active, setActive] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    fetch(`${hubUrl}/api/flash/nodes`).then(r => r.json()).then(j => setNodes(j.nodes || [])).catch(() => {});
+  }, [hubUrl]);
+
+  const node = nodes.find(n => n.node_id === nodeId);
+
+  useEffect(() => {
+    if (!node) { setDisks([]); return; }
+    fetch(`${node.agent_url.replace(/\/+$/, '')}/disks`)
+      .then(r => r.json()).then(j => setDisks(j.disks || []))
+      .catch(() => setDisks([]));
+  }, [node?.agent_url]);
+
+  // Poll the active capture job for progress
+  useEffect(() => {
+    if (!active || !node) return;
+    const t = setInterval(async () => {
+      try {
+        const r = await fetch(`${node.agent_url.replace(/\/+$/, '')}/jobs/${active.job_id}`);
+        if (r.ok) {
+          const j = await r.json();
+          setActive(j);
+          if (['completed', 'failed'].includes(j.state)) clearInterval(t);
+        }
+      } catch {}
+    }, 2000);
+    return () => clearInterval(t);
+  }, [active?.job_id, node?.agent_url]);
+
+  async function startCapture() {
+    if (!node || !src) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await fetch(`${node.agent_url.replace(/\/+$/, '')}/captures`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ source_disk_path: src, label: label || null, compress, upload_to_hub: true }),
+      });
+      const j = await r.json();
+      if (r.ok) setActive(j);
+      else setError(j.detail || JSON.stringify(j));
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
+
+  if (nodes.length === 0) {
+    return <Empty title="No flash nodes registered" body="Register a Flash Agent first (Nodes tab). Capture runs on the agent."/>;
+  }
+
   return (
-    <div style={{
-      padding: 28, background: COLORS.bgPanel,
-      border: `1px dashed ${COLORS.border}`, borderRadius: 10,
-      display: 'flex', flexDirection: 'column', gap: 8,
-    }}>
-      <h3 style={{ margin: 0, fontFamily: FONT_HEADING, fontSize: 20, color: COLORS.textSecondary }}>Clone / Capture</h3>
-      <p style={{ margin: 0, color: COLORS.textMuted, fontSize: 13, lineHeight: 1.6 }}>
-        SD → image, SSD → image, and live-Pi golden-image capture all flow through the Flash Agent. The agent code is staged; UI for source-side reads lands when the first node validates.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <p style={{ margin: 0, fontSize: 13, color: COLORS.textMuted, lineHeight: 1.6 }}>
+        Read an attached SD card / USB drive on the flash node and produce a golden image. Output is
+        compressed (.img.gz) by default and auto-uploaded to the Hub's image registry. Refuses to
+        capture from the node's own running root disk.
       </p>
+
+      <section style={{ padding: 14, background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label style={{ fontSize: 11, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Flash node</label>
+            <select value={nodeId} onChange={e => { setNodeId(e.target.value); setSrc(''); }} style={{ ...inp, marginTop: 4 }}>
+              <option value="">— pick a node —</option>
+              {nodes.map(n => <option key={n.node_id} value={n.node_id}>{n.node_name} ({n.status})</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Source disk</label>
+            <select value={src} onChange={e => setSrc(e.target.value)} disabled={!node} style={{ ...inp, marginTop: 4, fontFamily: FONT_MONO }}>
+              <option value="">— pick a disk —</option>
+              {disks.filter(d => !d.is_root_disk).map(d => (
+                <option key={d.path} value={d.path}>
+                  {d.path} · {d.type} · {prettyBytes(d.size)} · {[d.vendor, d.model].filter(Boolean).join(' ') || 'unlabelled'}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Image label (optional)</label>
+            <input value={label} onChange={e => setLabel(e.target.value)} style={{ ...inp, marginTop: 4, fontFamily: FONT_MONO }} placeholder="e.g. sinseracore-golden"/>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: COLORS.textSecondary, cursor: 'pointer' }}>
+              <input type="checkbox" checked={compress} onChange={e => setCompress(e.target.checked)}/>
+              Compress (.img.gz) — usually 3-5× smaller
+            </label>
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+          <button onClick={startCapture} disabled={!node || !src || busy} style={{
+            padding: '8px 18px',
+            background: (!node || !src || busy) ? COLORS.bgPanel : COLORS.bgActive,
+            color: (!node || !src || busy) ? COLORS.textMuted : COLORS.accentBright,
+            border: `1px solid ${COLORS.accentBorder}`, borderRadius: 8, fontSize: 13, fontWeight: 600,
+            cursor: (!node || !src || busy) ? 'not-allowed' : 'pointer',
+          }}>
+            {busy ? 'starting…' : 'Start capture'}
+          </button>
+        </div>
+        {error && (
+          <div style={{ marginTop: 10, padding: 10, background: 'rgba(239,111,92,0.08)', border: `1px solid ${COLORS.error}`, borderRadius: 6, color: COLORS.error, fontSize: 12 }}>
+            ✖ {error}
+          </div>
+        )}
+      </section>
+
+      {active && (
+        <section style={{ padding: 14, background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10 }}>
+          <h3 style={{ margin: '0 0 10px', fontFamily: FONT_HEADING, fontSize: 16, color: COLORS.textPrimary }}>Capture in progress</h3>
+          <div style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLORS.textMuted, marginBottom: 8 }}>
+            {active.job_id} · {active.source_disk_path} → {active.dest_path}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+            <span style={{
+              padding: '2px 8px', fontSize: 11, borderRadius: 4,
+              background: stateColour(active.state) + '22', color: stateColour(active.state),
+              textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600,
+            }}>{active.state}</span>
+            <span style={{ fontSize: 12, color: COLORS.textMuted, fontFamily: FONT_MONO }}>
+              read {prettyBytes(active.bytes_read || 0)} of {prettyBytes(active.source_size_bytes || 0)} ·
+              wrote {prettyBytes(active.bytes_written || 0)}
+            </span>
+          </div>
+          <div style={{ width: '100%', height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{ width: `${active.progress_pct || 0}%`, height: '100%', background: stateColour(active.state), transition: 'width 300ms ease' }}/>
+          </div>
+          {active.upload_pct != null && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 }}>Upload to Hub</div>
+              <div style={{ width: '100%', height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{ width: `${active.upload_pct}%`, height: '100%', background: COLORS.accent, transition: 'width 300ms ease' }}/>
+              </div>
+            </div>
+          )}
+          {active.error && (
+            <div style={{ marginTop: 10, padding: 10, background: 'rgba(239,111,92,0.08)', border: `1px solid ${COLORS.error}`, borderRadius: 6, color: COLORS.error, fontSize: 12 }}>
+              ✖ {active.error}
+            </div>
+          )}
+          {active.state === 'completed' && (
+            <div style={{ marginTop: 10, fontSize: 12, color: COLORS.success }}>
+              ✓ Capture complete. {active.sha256 && <>sha256 <code style={{ fontFamily: FONT_MONO }}>{active.sha256.slice(0, 16)}…</code></>} —
+              image now registered. Flash it back from the Images tab.
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

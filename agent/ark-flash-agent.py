@@ -443,6 +443,14 @@ class JobRequest(BaseModel):
     allow_root_override: bool = False
 
 
+class CaptureRequest(BaseModel):
+    hub_job_id:        Optional[str] = None
+    source_disk_path:  str                       # /dev/sda etc.
+    label:             Optional[str] = None      # human name; defaults to host-yyyy-mm-dd
+    compress:          bool = True               # pipe through gzip
+    upload_to_hub:     bool = True               # POST to Hub's /api/flash/images/upload
+
+
 @app.get("/healthz")
 def healthz():
     return {
@@ -518,6 +526,168 @@ def cancel_job(job_id: str):
         return j
     j["state"] = "cancelled"; j["completed_at"] = time.time()
     return j
+
+
+@app.post("/captures")
+async def create_capture(req: CaptureRequest, bg: BackgroundTasks):
+    """Phase 6.7 — read a source disk and produce a golden image.
+
+    Pipeline: dd if=<src> bs=4M -> optional gzip -> /var/lib/ark-flash/
+    captures/<label>.img(.gz). If upload_to_hub is true, the file is
+    then POSTed to the Hub's /api/flash/images/upload endpoint and
+    appears in the image registry; otherwise stays local.
+    """
+    # Safety: source must exist, be a block device, and not be the
+    # root disk (capturing from the running OS = bad time).
+    if not Path(req.source_disk_path).exists():
+        raise HTTPException(404, f"source not found: {req.source_disk_path}")
+    rd = _root_disk()
+    if req.source_disk_path == rd:
+        raise HTTPException(403, f"refusing to capture from the running root disk {rd}")
+    captures_dir = Path("/var/lib/ark-flash/captures")
+    captures_dir.mkdir(parents=True, exist_ok=True)
+
+    label = req.label or f"{NODE_NAME}-{time.strftime('%Y%m%d-%H%M%S')}"
+    label = re.sub(r"[^a-zA-Z0-9._-]", "_", label)
+    suffix = ".img.gz" if req.compress else ".img"
+    dest = captures_dir / f"{label}{suffix}"
+
+    job_id = "cap_" + uuid.uuid4().hex[:12]
+    JOBS[job_id] = {
+        "job_id": job_id, "hub_job_id": req.hub_job_id,
+        "kind": "capture",
+        "source_disk_path": req.source_disk_path,
+        "dest_path": str(dest), "compress": req.compress,
+        "upload_to_hub": req.upload_to_hub,
+        "state": "queued", "progress_pct": 0, "bytes_read": 0,
+        "created_at": time.time(),
+    }
+    bg.add_task(run_capture, job_id)
+    return JOBS[job_id]
+
+
+async def run_capture(job_id: str) -> None:
+    j = JOBS[job_id]
+    src = j["source_disk_path"]
+    dest = j["dest_path"]
+    j["started_at"] = time.time()
+    try:
+        # Probe source size for progress reporting
+        size = _block_device_size(src)
+        j["source_size_bytes"] = size
+
+        _push_progress(job_id, {"state": "preparing"})
+        # Use dd with conv=noerror,sync so a bad sector doesn't kill
+        # the whole read; gzip on the fly when compress=True. Status
+        # progress is parsed from dd's stderr (SIGUSR1) but we get
+        # cheap-enough estimation by tailing the dest file size.
+        _push_progress(job_id, {"state": "reading"})
+
+        if j["compress"]:
+            # dd ... | gzip -c > dest.img.gz
+            cmd = f"dd if='{src}' bs=4M conv=noerror,sync status=progress 2>>/tmp/ark-capture-{job_id}.log | gzip -c > '{dest}'"
+        else:
+            cmd = f"dd if='{src}' of='{dest}' bs=4M conv=noerror,sync status=progress 2>>/tmp/ark-capture-{job_id}.log"
+
+        proc = await asyncio.create_subprocess_shell(
+            cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        # Poll dest file size for progress every 2s
+        async def poll_progress():
+            while proc.returncode is None:
+                await asyncio.sleep(2)
+                try:
+                    written = Path(dest).stat().st_size
+                    if size > 0:
+                        # When compressing, the dest is smaller than the
+                        # source. We can't know the final compressed
+                        # size, so we report "bytes_read" estimated from
+                        # gzip's typical 3-5x ratio if compressed, or
+                        # equal otherwise.
+                        if j["compress"]:
+                            # rough estimate: assume ~50% compression for
+                            # mostly-empty Pi card; clamp at 100%.
+                            est_read = min(size, written * 3)
+                        else:
+                            est_read = written
+                        pct = min(100, int(est_read / size * 100))
+                        _push_progress(job_id, {
+                            "progress_pct": pct,
+                            "bytes_read": est_read,
+                            "bytes_written": written,
+                        })
+                except Exception:
+                    pass
+
+        poller = asyncio.create_task(poll_progress())
+        rc = await proc.wait()
+        poller.cancel()
+        try: await poller
+        except asyncio.CancelledError: pass
+
+        if rc != 0:
+            stderr_text = (await proc.stderr.read()).decode(errors="ignore")
+            raise RuntimeError(f"dd exited {rc}: {stderr_text[-512:]}")
+
+        _push_progress(job_id, {"state": "syncing"})
+        subprocess.run(["sync"], check=False)
+
+        # Compute sha256 of the final file
+        _push_progress(job_id, {"state": "hashing"})
+        sha = await _sha256_file_async(dest, lambda p: _push_progress(job_id, {"hash_pct": p}))
+        j["sha256"] = sha
+        final_size = Path(dest).stat().st_size
+        j["bytes_written"] = final_size
+
+        # Optionally push to the Hub
+        if j["upload_to_hub"] and HUB_URL:
+            _push_progress(job_id, {"state": "uploading"})
+            await _upload_capture_to_hub(dest, job_id)
+
+        _push_progress(job_id, {"state": "completed", "completed_at": time.time(), "progress_pct": 100})
+    except Exception as e:
+        _push_progress(job_id, {"state": "failed", "error": str(e), "completed_at": time.time()})
+
+
+async def _upload_capture_to_hub(local_path: Path, job_id: str) -> None:
+    """Stream the captured file to the Hub's image upload endpoint.
+    Returns the {image_id, sha256} the Hub assigns."""
+    import http.client
+    from urllib.parse import urlparse, quote
+
+    url = urlparse(HUB_URL + f"/api/flash/images/upload?filename={quote(local_path.name)}")
+    conn_cls = http.client.HTTPSConnection if url.scheme == 'https' else http.client.HTTPConnection
+    conn = conn_cls(url.hostname, url.port)
+    try:
+        size = local_path.stat().st_size
+        conn.putrequest("POST", url.path + ("?" + url.query if url.query else ""))
+        conn.putheader("Content-Length", str(size))
+        conn.putheader("Content-Type", "application/octet-stream")
+        conn.endheaders()
+        with local_path.open("rb") as f:
+            sent = 0
+            while True:
+                chunk = f.read(4 * 1024 * 1024)
+                if not chunk: break
+                conn.send(chunk)
+                sent += len(chunk)
+                _push_progress(job_id, {"upload_pct": int(sent / size * 100)})
+        resp = conn.getresponse()
+        body = resp.read().decode(errors="ignore")
+        if resp.status >= 300:
+            raise RuntimeError(f"hub upload failed: {resp.status} {body[:200]}")
+    finally:
+        conn.close()
+
+
+def _block_device_size(path: str) -> int:
+    """Return the size of a block device in bytes."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            return f.tell()
+    except Exception:
+        return 0
 
 
 @app.websocket("/jobs/{job_id}/stream")
