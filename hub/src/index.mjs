@@ -20,6 +20,7 @@ import { initDrift, detectConfigDrift, detectNetworkDrift, recordDriftEvents, li
 import { computeHealth } from './health.mjs';
 import { devicesCsv, networksCsv, deviceExport, fleetExport, importSnapshot } from './export.mjs';
 import { listBuilds, getBuild, listImages, tailFile, hubLogPath, buildLogPath } from './inventory.mjs';
+import { runEngine, listProfiles, stageZipFromRequest, safeBuildName } from './installer.mjs';
 import { initFlash, JOB_STATES, NODE_CAPABILITIES } from './flash.mjs';
 import { initSecurity, ALERT_KINDS, HARDENING_CHECKS, classifyCheckOutput } from './security.mjs';
 import { initRunner } from './runner.mjs';
@@ -742,6 +743,42 @@ const server = createServer(async (req, res) => {
       'content-disposition': `attachment; filename="${path.basename(img.source_path)}"`,
     });
     createReadStream(img.source_path).pipe(res);
+    return;
+  }
+
+  // ── Installer engine — browser surface for what was CLI-only ──
+  if (req.method === 'GET' && url.pathname === '/api/installer/profiles') {
+    return json(res, { profiles: await listProfiles() });
+  }
+  // Upload a ZIP to stage. Returns the path the next call uses.
+  if (req.method === 'POST' && url.pathname === '/api/installer/upload-zip') {
+    const buildName = url.searchParams.get('build_name') || 'upload';
+    try {
+      const dest = await stageZipFromRequest(req, buildName);
+      const size = await stat(dest).then(s => s.size);
+      return json(res, { ok: true, path: dest, size_bytes: size });
+    } catch (e) {
+      return json(res, { ok: false, error: e.message }, 400);
+    }
+  }
+  // Drive the full pipeline: ingest -> detect -> compile.
+  if (req.method === 'POST' && url.pathname === '/api/installer/run') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', async () => {
+      try {
+        const r = JSON.parse(body);
+        const out = await runEngine({
+          source:     r.source,
+          buildName:  r.build_name,
+          profileId:  r.profile_id || null,
+          useVenv:    !!r.use_venv,
+        });
+        return json(res, { ok: true, ...out });
+      } catch (e) {
+        return json(res, { ok: false, error: e.message }, 400);
+      }
+    });
     return;
   }
 

@@ -218,7 +218,7 @@ PHASE 8     UI POLISH + LAST-MILE
    ✅       Tab 4 Graph view in Network Landscape
    ✅       SSH runner subsystem + UI
    ✅       Online-Pi update (scp install.plan.sh + exec)
-        🚧  File-upload control for ZIP / folder / bundle in installer
+   ✅       Installer browser surface (git URL + ZIP upload + folder)
 
 GATED ON A FLASHED Pi (physical-world)
         🟡  Phase 4.2 end-to-end validation
