@@ -119,7 +119,20 @@ export function initFlash(db) {
 
     // ── Images ───────────────────────────────────────────────────
     registerImage(img) {
-      const id = img.image_id || newId('img');
+      // Dedupe rule: a given source_path resolves to ONE image_id
+      // forever. Re-registering the same path with new bytes (rebuilt
+      // .img with a different sha) updates the existing row in place
+      // instead of creating a parallel ghost entry that points at the
+      // same file.
+      //
+      // Caller-supplied image_id still wins if given, so the upload
+      // endpoint's "store at /flash-images/<sha>.img" content-
+      // addressable scheme keeps working.
+      let id = img.image_id;
+      if (!id) {
+        const existing = db.prepare(`SELECT image_id FROM flash_images WHERE source_path = ?`).get(img.source_path);
+        id = existing?.image_id || newId('img');
+      }
       const now = new Date().toISOString();
       db.prepare(`
         INSERT INTO flash_images (image_id, source_path, manifest_id, build_name,
