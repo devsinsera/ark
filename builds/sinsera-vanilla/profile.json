@@ -1,0 +1,28 @@
+{
+  "profile_id":   "sinsera-vanilla",
+  "version":      1,
+  "category":     "raspberry-pi-devices",
+  "name":         "Sinsera Vanilla DietPi",
+  "description":  "Plain DietPi with your personal info pre-configured: hostname SinseraCore, timezone Australia/Sydney, locale en_AU, SSH enabled, your ed25519 public key in /root/.ssh/authorized_keys. WiFi credentials = placeholder (one line to edit on the SD before flashing). No auto-launch — boots to normal console login.",
+
+  "supported_hardware": ["pi-5-4gb", "pi-5-8gb", "pi-5-16gb", "pi-4-4gb", "pi-4-8gb"],
+
+  "default_role":   "service",
+  "default_boot":   "headless",
+  "default_os":     "dietpi",
+
+  "preconfigured": {
+    "hostname":     "SinseraCore",
+    "country":      "AU",
+    "timezone":     "Australia/Sydney",
+    "locale":       "en_AU.UTF-8",
+    "keyboard":     "au",
+    "ssh_server":   "openssh",
+    "ssh_root_pubkey": "ed25519 (bake from ~/.ssh/id_ed25519.pub on build host)",
+    "autostart":    "console (normal login)",
+    "wifi_ssid":    "PLACEHOLDER — edit /boot/dietpi.txt after flashing",
+    "wifi_key":     "PLACEHOLDER — edit /boot/dietpi.txt after flashing"
+  },
+
+  "post_install_message": "After flashing: 1) Open the SD card on your Mac, find /boot/dietpi.txt. 2) Edit AUTO_SETUP_NET_WIFI_SSID and AUTO_SETUP_NET_WIFI_KEY with your real WiFi credentials. 3) Save + eject. 4) Insert into Pi, power on. After ~60 s first boot, SSH in: `ssh root@SinseraCore.local` (key-based, no password needed)."
+}
