@@ -90,38 +90,223 @@ function NodesTab({ hubUrl, onPick }) {
   }
 
   if (state.status === 'error') return <Err msg={state.error} hubUrl={hubUrl}/>;
-  if (state.nodes.length === 0) return <Empty title="No flash nodes registered yet" body={
-    <>Install on a Pi: <code style={{ fontFamily: FONT_MONO }}>sudo HUB_URL={hubUrl} bash agent/install-flash-agent.sh</code>. Once it starts, it auto-registers.</>
-  }/>;
 
   return (
-    <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: 'hidden', background: COLORS.bgPanel }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: FONT_BODY, fontSize: 13 }}>
-        <thead>
-          <tr style={{ background: 'rgba(255,255,255,0.02)', color: COLORS.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-            <th style={th}>Name</th><th style={th}>Status</th><th style={th}>Model</th><th style={th}>Capabilities</th><th style={th}>Agent URL</th><th style={th}>Last seen</th><th style={th}></th>
-          </tr>
-        </thead>
-        <tbody>
-          {state.nodes.map(n => (
-            <tr key={n.node_id} style={{ cursor: 'pointer' }} onClick={() => onPick(n.node_id)}>
-              <td style={td}>{n.node_name} <span style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLORS.textMuted }}>{n.node_id}</span></td>
-              <td style={td}><StatusBadge status={n.status}/></td>
-              <td style={td}>{n.hardware_model || '—'}</td>
-              <td style={td}>{(n.capabilities || []).join(', ') || '—'}</td>
-              <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{n.agent_url}</td>
-              <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11, color: COLORS.textMuted }}>{humanAge(new Date(n.last_seen).getTime())}</td>
-              <td style={td} onClick={(e) => e.stopPropagation()}>
-                <button onClick={() => removeNode(n.node_id)} title="Remove from registry" style={{
-                  padding: '4px 10px', fontSize: 11, background: 'transparent',
-                  color: COLORS.error, border: `1px solid ${COLORS.border}`, borderRadius: 4, cursor: 'pointer',
-                }}><Trash2 size={10}/></button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <NodeSetupGuide hubUrl={hubUrl} hasNodes={state.nodes.length > 0}/>
+      {state.nodes.length > 0 && (
+        <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: 'hidden', background: COLORS.bgPanel }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: FONT_BODY, fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: 'rgba(255,255,255,0.02)', color: COLORS.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                <th style={th}>Name</th><th style={th}>Status</th><th style={th}>Model</th><th style={th}>Capabilities</th><th style={th}>Agent URL</th><th style={th}>Last seen</th><th style={th}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {state.nodes.map(n => (
+                <tr key={n.node_id} style={{ cursor: 'pointer' }} onClick={() => onPick(n.node_id)}>
+                  <td style={td}>{n.node_name} <span style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLORS.textMuted }}>{n.node_id}</span></td>
+                  <td style={td}><StatusBadge status={n.status}/></td>
+                  <td style={td}>{n.hardware_model || '—'}</td>
+                  <td style={td}>{(n.capabilities || []).join(', ') || '—'}</td>
+                  <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{n.agent_url}</td>
+                  <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11, color: COLORS.textMuted }}>{humanAge(new Date(n.last_seen).getTime())}</td>
+                  <td style={td} onClick={(e) => e.stopPropagation()}>
+                    <button onClick={() => removeNode(n.node_id)} title="Remove from registry" style={{
+                      padding: '4px 10px', fontSize: 11, background: 'transparent',
+                      color: COLORS.error, border: `1px solid ${COLORS.border}`, borderRadius: 4, cursor: 'pointer',
+                    }}><Trash2 size={10}/></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
+  );
+}
+
+// Step-by-step Flash Node setup guide. Shown expanded when no nodes
+// are registered yet; shown collapsed (with a "Show setup guide"
+// toggle) once at least one is connected. Each step has the exact
+// command + expected output so an operator can verify without
+// guessing.
+function NodeSetupGuide({ hubUrl, hasNodes }) {
+  const [open, setOpen] = useState(!hasNodes);
+  useEffect(() => { setOpen(!hasNodes); }, [hasNodes]);
+
+  const hubHost = hubUrl.replace(/^https?:\/\//, '').replace(/:.*$/, '');
+  // If the operator's still pointing at localhost we tell them
+  // that's not what the Pi should hit
+  const isLocal = hubHost === 'localhost' || hubHost === '127.0.0.1';
+  const hubLanWarning = isLocal ? (
+    <div style={{ marginTop: 8, padding: 10, background: 'rgba(245,180,90,0.08)', border: `1px solid ${COLORS.warning}`, borderRadius: 6, color: COLORS.warning, fontSize: 12, lineHeight: 1.6 }}>
+      <strong>⚠ Heads-up:</strong> your Hub URL is <code>{hubUrl}</code>. The Pi needs an URL it can reach from its own network —
+      use your Mac's LAN IP instead (e.g. <code>http://192.168.5.80:7400</code>). Change the URL in the sidebar footer.
+    </div>
+  ) : null;
+
+  return (
+    <section style={{ background: COLORS.bgPanel, border: `1px solid ${hasNodes ? COLORS.border : COLORS.accentBorder}`, borderRadius: 10, overflow: 'hidden' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%', padding: '12px 16px', textAlign: 'left',
+          background: 'transparent', border: 'none', cursor: 'pointer',
+          color: hasNodes ? COLORS.textSecondary : COLORS.accentBright,
+          display: 'flex', alignItems: 'center', gap: 10,
+          fontFamily: FONT_HEADING, fontSize: 16,
+        }}
+      >
+        <span style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 120ms ease', display: 'inline-block', fontSize: 12 }}>▶</span>
+        {hasNodes ? 'Set up another Flash Node' : 'Set up your first Flash Node'}
+        <span style={{ flex: 1 }}/>
+        <span style={{ fontSize: 11, color: COLORS.textMuted, fontFamily: FONT_BODY }}>5 steps · ~10 min</span>
+      </button>
+
+      {open && (
+        <div style={{ padding: '0 16px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {hubLanWarning}
+
+          <p style={{ margin: 0, color: COLORS.textMuted, fontSize: 13, lineHeight: 1.7 }}>
+            A Flash Node is a Pi (usually a Pi 5 with a USB SD reader plugged in) that writes images to SD cards on
+            command from the Hub. The Pi runs a lightweight FastAPI agent that registers itself with this Hub and waits for jobs.
+          </p>
+
+          <SetupStep
+            num={1}
+            title="Flash a base OS onto an SD card and boot the Pi"
+            body={<>
+              The simplest path: flash <strong>Sinsera Vanilla</strong> (DietPi with your SSH key + locale + hostname pre-baked).
+              Download from the <strong>Images</strong> tab next to it, or grab the file at
+              <code style={{ display: 'block', marginTop: 4, padding: 6, background: '#040608', borderRadius: 4, fontFamily: FONT_MONO, fontSize: 11 }}>
+                ~/Dev-Sinsera/Ark/builds/sinsera-vanilla/out/ark-built.img.xz
+              </code>
+              Edit <code>/boot/dietpi.txt</code> on the SD before booting to add your Wi-Fi creds.
+              Insert the SD, plug in <strong>HDMI + power + USB SD reader</strong>, and wait ~60 s for first boot.
+            </>}
+          />
+
+          <SetupStep
+            num={2}
+            title="SSH into the Pi from this Mac"
+            body={<>
+              The vanilla image has SSH key auth pre-baked, so this should work without a password:
+              <Cmd>{`ssh root@SinseraCore.local`}</Cmd>
+              If <code>.local</code> doesn't resolve, find the Pi's IP in the <strong>Network</strong> tab and use that
+              instead (e.g. <code>ssh root@192.168.5.123</code>). First connection asks you to accept the host key —
+              type <code>yes</code>.
+            </>}
+          />
+
+          <SetupStep
+            num={3}
+            title="Pull the Ark agent installer onto the Pi"
+            body={<>
+              The Flash Agent (~400 lines of Python + a systemd unit) lives in the Ark repo. Quickest path is
+              clone the repo onto the Pi:
+              <Cmd>{`apt-get update && apt-get install -y --no-install-recommends git
+git clone --depth=1 https://github.com/devsinsera/ark.git /opt/ark`}</Cmd>
+              (Or scp the <code>agent/</code> folder from your Mac if the Pi can't reach GitHub directly.)
+            </>}
+          />
+
+          <SetupStep
+            num={4}
+            title="Install + start the Flash Agent"
+            body={<>
+              On the Pi:
+              <Cmd>{`cd /opt/ark
+sudo HUB_URL=http://${hubHost}:7400 bash agent/install-flash-agent.sh`}</Cmd>
+              The installer does <strong>apt-installs FastAPI + uvicorn deps</strong>, drops the agent at
+              <code> /opt/ark-flash/ark-flash-agent.py</code>, writes a systemd unit (<code>ark-flash-agent.service</code>),
+              and starts it. Total time ~2 min. Expected last line: <code>✓ ark-flash-agent listening on :7410</code>.
+            </>}
+          />
+
+          <SetupStep
+            num={5}
+            title="Verify the Pi appears in this list"
+            body={<>
+              The agent registers itself with your Hub on startup and heartbeats every 30 s. Refresh this page or
+              run on your Mac:
+              <Cmd>{`curl -sS ${hubUrl}/api/flash/nodes`}</Cmd>
+              Once it shows up, plug a USB SD reader into the Pi and switch to the <strong>Storage</strong> tab to see
+              attached disks. Plug a fresh SD card into that reader and the <strong>Images</strong> tab's
+              <code> flash → </code> button can target it.
+            </>}
+          />
+
+          <details>
+            <summary style={{ cursor: 'pointer', fontSize: 12, color: COLORS.textMuted, padding: '6px 0' }}>
+              Troubleshooting
+            </summary>
+            <ul style={{ margin: '4px 0 0 18px', fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.8 }}>
+              <li><strong>"Permission denied (publickey)"</strong> on step 2 — the SSH key in the image is your Mac's
+                  <code> ~/.ssh/id_ed25519.pub</code> at build time. If you've regenerated since, re-run the
+                  vanilla build and reflash.</li>
+              <li><strong>Step 4 fails with "Could not resolve host"</strong> — Pi has no internet. Check
+                  <code> /boot/dietpi.txt</code> WiFi creds; or plug in Ethernet.</li>
+              <li><strong>Agent installs OK but doesn't appear in the list</strong> — the agent can't reach the Hub. Confirm:
+                  (a) sidebar HUB tile dot is green; (b) <code>HUB_URL</code> in <code>/etc/ark-flash-agent.env</code> points
+                  at the Mac's LAN IP, not <code>localhost</code>; (c) <code>journalctl -u ark-flash-agent -f</code> shows
+                  what's happening.</li>
+              <li><strong>Agent is "offline" in the table</strong> — heartbeat hasn't landed in {'>'}60 s. Usually transient;
+                  if persistent, <code>systemctl restart ark-flash-agent</code> on the Pi.</li>
+              <li><strong>Storage tab shows no disks</strong> — plug a USB SD reader into the Pi (not the SD slot the Pi
+                  is booting from). The Storage tab reads <code>lsblk</code> live from the agent — refresh after plugging in.</li>
+            </ul>
+          </details>
+
+          <details>
+            <summary style={{ cursor: 'pointer', fontSize: 12, color: COLORS.textMuted, padding: '6px 0' }}>
+              What does the agent do behind the scenes?
+            </summary>
+            <ul style={{ margin: '4px 0 0 18px', fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.8 }}>
+              <li>FastAPI HTTP service on port <code>7410</code>. Endpoints: <code>/healthz</code>, <code>/disks</code>,
+                  <code> /jobs</code>, <code>/jobs/&lt;id&gt;/stream</code> (WebSocket), <code>/captures</code>.</li>
+              <li>Heartbeats this Hub every 30 s so the registry shows live status.</li>
+              <li>When a flash job arrives: verifies image sha256, refuses if target disk isn't safe (mounted / read-only / root disk),
+                  writes via <code>bmaptool</code> when available else chunked <code>dd</code>, sample-verifies, ro mount-tests, reports completion.</li>
+              <li>Hardened systemd unit: <code>NoNewPrivileges</code>, <code>ProtectSystem=strict</code>, <code>ProtectHome</code>,
+                  <code> PrivateTmp</code>, <code>ReadOnlyPaths=/</code>.</li>
+              <li>NEVER reads or transmits SSH keys, WiFi passwords, or any credential — explicit deny list.</li>
+            </ul>
+          </details>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SetupStep({ num, title, body }) {
+  return (
+    <div style={{ display: 'flex', gap: 12 }}>
+      <div style={{
+        flexShrink: 0, width: 28, height: 28, borderRadius: 14,
+        background: COLORS.bgActive, color: COLORS.accentBright,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: FONT_HEADING, fontSize: 14, fontWeight: 600,
+        border: `1px solid ${COLORS.accentBorder}`,
+      }}>{num}</div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontFamily: FONT_BODY, fontSize: 14, fontWeight: 600, color: COLORS.textPrimary, marginBottom: 4 }}>{title}</div>
+        <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.7 }}>{body}</div>
+      </div>
+    </div>
+  );
+}
+
+function Cmd({ children }) {
+  return (
+    <pre style={{
+      margin: '6px 0', padding: '10px 12px',
+      background: '#040608', color: COLORS.textPrimary,
+      border: `1px solid ${COLORS.border}`, borderRadius: 6,
+      fontFamily: FONT_MONO, fontSize: 12, lineHeight: 1.55,
+      overflow: 'auto',
+    }}>{children}</pre>
   );
 }
 
