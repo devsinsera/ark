@@ -5,7 +5,7 @@
 // against unapproved hosts. Recommendations only.
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { Shield, AlertTriangle, Check, X, Plus, Trash2, Activity, Settings as SettingsIcon, ScrollText } from 'lucide-react';
+import { Shield, AlertTriangle, Check, X, Plus, Trash2, Activity, Settings as SettingsIcon, ScrollText, Crosshair, Play } from 'lucide-react';
 import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO } from './lib/theme.js';
 
 const HUB_KEY = 'ark.hubUrl';
@@ -21,6 +21,7 @@ const VIEWS = [
   { id: 'alerts',    label: 'Alerts',    icon: AlertTriangle },
   { id: 'logs',      label: 'Logs',      icon: ScrollText },
   { id: 'hardening', label: 'Hardening', icon: Check },
+  { id: 'raspyjack', label: 'RaspyJack', icon: Crosshair },
   { id: 'settings',  label: 'Settings',  icon: SettingsIcon },
 ];
 
@@ -65,6 +66,7 @@ export default function CantPhishHere() {
       {view === 'alerts'    && <AlertsTab hubUrl={hubUrl}/>}
       {view === 'logs'      && <LogsTab hubUrl={hubUrl}/>}
       {view === 'hardening' && <HardeningTab hubUrl={hubUrl}/>}
+      {view === 'raspyjack' && <RaspyJackTab hubUrl={hubUrl}/>}
       {view === 'settings'  && <SettingsTab hubUrl={hubUrl}/>}
     </div>
   );
@@ -477,6 +479,213 @@ function CodeBlock({ label, code }) {
         background: 'rgba(0,0,0,0.4)', border: `1px solid ${COLORS.border}`,
         borderRadius: 4, color: COLORS.textPrimary, overflow: 'auto',
       }}>{code}</pre>
+    </div>
+  );
+}
+
+// ── RaspyJack — defensive recon toolkit, driven via SSH Runner ──
+// Hardcoded catalogue of NON-OFFENSIVE RaspyJack scripts. Each entry
+// is the path to a script in /opt/raspyjack/ on a Pi that's been
+// flashed with the sinsera-raspyjack profile. The Ark Hub never
+// invokes anything from payloads/wifi/ , payloads/credentials/ ,
+// DNSSpoof/ or Responder/ — those aren't here.
+const RASPYJACK_TOOLS = [
+  {
+    id:      'mdns',
+    label:   'mDNS service discovery',
+    kind:    'passive',
+    risk:    'safe',
+    desc:    'Browse the LAN for advertised services (HomeKit, AirPlay, Matter, _arkagent, _ssh, _http, _printer, _smb …). Pure listener — sends nothing.',
+    command: 'cd /opt/raspyjack && timeout 30 python3 payloads/reconnaissance/mdns_scanner.py 2>&1 | head -200',
+  },
+  {
+    id:      'arp',
+    label:   'ARP table snapshot',
+    kind:    'passive',
+    risk:    'safe',
+    desc:    'Read the host\'s current ARP table. No probes sent — just the kernel\'s view of who answered recently.',
+    command: 'cd /opt/raspyjack && timeout 15 python3 payloads/reconnaissance/arp_scan_stealth.py 2>&1 | head -200',
+  },
+  {
+    id:      'cert',
+    label:   'TLS cert audit (approved hosts only)',
+    kind:    'active-but-light',
+    risk:    'low',
+    desc:    'For each approved host that exposes 443, fetch the cert and report expiry + cipher. One TLS handshake per host. Run only against hosts in your Can\'t Phish Here approved list.',
+    command: 'cd /opt/raspyjack && timeout 30 python3 payloads/reconnaissance/cert_scanner.py 2>&1 | head -200',
+  },
+  {
+    id:      'cctv',
+    label:   'IP camera inventory',
+    kind:    'active-but-light',
+    risk:    'low',
+    desc:    'Probe common CCTV ports (80 / 554 / 8080 / 8443) on the LAN to find IP cameras. Defensive inventory — don\'t aim this at someone else\'s network.',
+    command: 'cd /opt/raspyjack && timeout 45 python3 payloads/reconnaissance/cctv_scanner.py 2>&1 | head -200',
+  },
+  {
+    id:      'bt',
+    label:   'Bluetooth Classic scan',
+    kind:    'passive',
+    risk:    'safe',
+    desc:    'BR/EDR discovery in range. Reports MAC + name + class. Local-radio only.',
+    command: 'cd /opt/raspyjack && timeout 30 python3 payloads/reconnaissance/bt_scan_classic.py 2>&1 | head -200',
+  },
+  {
+    id:      'i2c',
+    label:   'I²C bus scan (hardware-local)',
+    kind:    'local-hardware',
+    risk:    'safe',
+    desc:    'Probe attached I²C devices (PiSugar, OLED, sensors). Useful for confirming HAT hardware. Never touches the network.',
+    command: 'cd /opt/raspyjack && timeout 10 python3 payloads/hardware/i2c_scanner.py 2>&1 | head -100',
+  },
+];
+
+const RISK_COLOUR = {
+  safe:                COLORS.success,
+  low:                 COLORS.warning,
+  'local-hardware':    COLORS.accent,
+  'active-but-light':  COLORS.warning,
+  passive:             COLORS.success,
+};
+
+function RaspyJackTab({ hubUrl }) {
+  const [hosts, setHosts]   = useState([]);
+  const [hostId, setHostId] = useState('');
+  const [running, setRunning] = useState(null);     // tool.id while running
+  const [result, setResult]   = useState(null);     // { tool, exec } most recent
+  const [hostsError, setHostsError] = useState(null);
+
+  const refreshHosts = useCallback(async () => {
+    try {
+      const r = await fetch(`${hubUrl}/api/runner/hosts`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      setHosts(j.hosts || []);
+      setHostsError(null);
+      if (!hostId && (j.hosts || []).length === 1) setHostId(j.hosts[0].id);
+    } catch (e) { setHostsError(e.message); }
+  }, [hubUrl, hostId]);
+  useEffect(() => { refreshHosts(); const t = setInterval(refreshHosts, 15000); return () => clearInterval(t); }, [refreshHosts]);
+
+  async function run(tool) {
+    if (!hostId) { alert('Pick a host first.'); return; }
+    setRunning(tool.id);
+    setResult(null);
+    try {
+      const r = await fetch(`${hubUrl}/api/runner/hosts/${hostId}/exec`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ command: tool.command, reason: 'raspyjack', timeoutMs: 60000 }),
+      });
+      const j = await r.json();
+      setResult({ tool, exec: j });
+    } catch (e) {
+      setResult({ tool, exec: { ok: false, exit_code: -1, stdout: '', stderr: e.message, duration_ms: 0 } });
+    } finally { setRunning(null); }
+  }
+
+  const selected = hosts.find(h => String(h.id) === String(hostId));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ padding: 12, background: 'rgba(6,182,212,0.06)', border: `1px solid ${COLORS.accentBorder}`, borderRadius: 8, fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.7 }}>
+        <strong style={{ color: COLORS.accentBright }}>Defensive recon only.</strong> These scripts ship as part of the
+        sinsera-raspyjack image. Ark refuses to dispatch anything from <code>payloads/wifi/</code>,
+        <code> payloads/credentials/</code>, <code>DNSSpoof/</code>, or <code>Responder/</code> — those trees are
+        excluded from the image we ship and aren't represented here. Run ONLY against hardware + networks you own.
+      </div>
+
+      {hostsError && (
+        <div style={{ padding: 12, background: 'rgba(245,180,90,0.08)', border: `1px solid ${COLORS.warning}`, borderRadius: 8, color: COLORS.warning, fontSize: 12 }}>
+          Hub unreachable: {hostsError}. Open the SSH Runner nav to set up at least one managed host first.
+        </div>
+      )}
+
+      {hosts.length === 0 ? (
+        <div style={{ padding: 22, background: COLORS.bgPanel, border: `1px dashed ${COLORS.border}`, borderRadius: 10 }}>
+          <h3 style={{ margin: '0 0 6px', fontFamily: FONT_HEADING, fontSize: 16, color: COLORS.textPrimary }}>No managed hosts</h3>
+          <p style={{ margin: 0, color: COLORS.textMuted, fontSize: 13, lineHeight: 1.7 }}>
+            RaspyJack runs <em>on a Pi you've flashed with the sinsera-raspyjack image</em>; Ark dispatches the scripts via
+            the SSH Runner. Open the <strong>SSH Runner</strong> nav, register that Pi
+            (e.g. <code>pi@RaspyJack.local</code>), then come back here.
+          </p>
+        </div>
+      ) : (
+        <>
+          <section style={{ padding: 12, background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10 }}>
+            <label style={{ fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Run on host</label>
+            <select value={hostId} onChange={e => setHostId(e.target.value)} style={{ ...inp, marginTop: 4, maxWidth: 480 }}>
+              <option value="">— pick a host —</option>
+              {hosts.map(h => <option key={h.id} value={h.id}>{h.label} ({h.ssh_target})</option>)}
+            </select>
+            {selected && (
+              <div style={{ marginTop: 6, fontSize: 11, color: COLORS.textMuted, fontFamily: FONT_MONO }}>
+                last reached: {selected.last_reached_at ? selected.last_reached_at.slice(11, 19) : 'never'} · status: {selected.last_status || 'unknown'}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <h3 style={{ margin: '0 0 10px', fontFamily: FONT_HEADING, fontSize: 18, color: COLORS.textPrimary }}>
+              Available scripts
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
+              {RASPYJACK_TOOLS.map(t => {
+                const isRunning = running === t.id;
+                return (
+                  <div key={t.id} style={{ padding: 14, background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                      <strong style={{ color: COLORS.textPrimary, fontSize: 14 }}>{t.label}</strong>
+                      <span style={{ marginLeft: 'auto', padding: '2px 8px', fontSize: 10, borderRadius: 4, background: (RISK_COLOUR[t.risk] || COLORS.textMuted) + '22', color: RISK_COLOUR[t.risk] || COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>{t.risk}</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>{t.desc}</div>
+                    <pre style={{ margin: 0, padding: 8, fontSize: 10, background: '#040608', color: COLORS.textSecondary, border: `1px solid ${COLORS.border}`, borderRadius: 4, fontFamily: FONT_MONO, overflow: 'auto' }}>{t.command}</pre>
+                    <button onClick={() => run(t)} disabled={!hostId || running !== null} style={{
+                      padding: '6px 12px',
+                      background: (!hostId || isRunning) ? COLORS.bgPanel : COLORS.bgActive,
+                      color: (!hostId || isRunning) ? COLORS.textMuted : COLORS.accentBright,
+                      border: `1px solid ${COLORS.accentBorder}`, borderRadius: 6,
+                      fontSize: 12, fontFamily: FONT_BODY, fontWeight: 500,
+                      cursor: (!hostId || isRunning) ? 'wait' : 'pointer',
+                      alignSelf: 'flex-start',
+                      display: 'flex', alignItems: 'center', gap: 6,
+                    }}>
+                      <Play size={11}/> {isRunning ? 'running…' : 'Run on this host'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          {result && (
+            <section style={{ padding: 14, background: COLORS.bgPanel, border: `1px solid ${result.exec.ok ? COLORS.success : COLORS.error}`, borderRadius: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ padding: '2px 8px', fontSize: 11, borderRadius: 4, background: result.exec.ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,111,92,0.15)', color: result.exec.ok ? COLORS.success : COLORS.error, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  exit {result.exec.exit_code}
+                </span>
+                <span style={{ fontSize: 13, color: COLORS.textPrimary, fontWeight: 500 }}>{result.tool.label}</span>
+                <span style={{ marginLeft: 'auto', fontSize: 11, color: COLORS.textMuted, fontFamily: FONT_MONO }}>
+                  {result.exec.duration_ms ? `${result.exec.duration_ms} ms` : ''}
+                </span>
+              </div>
+              {result.exec.stdout && <Output title="stdout" body={result.exec.stdout} colour={COLORS.textPrimary}/>}
+              {result.exec.stderr && <Output title="stderr" body={result.exec.stderr} colour={COLORS.warning}/>}
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function Output({ title, body, colour }) {
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div style={{ fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 }}>{title}</div>
+      <pre style={{ margin: 0, padding: 10, background: '#040608', color: colour, border: `1px solid ${COLORS.border}`, borderRadius: 4, fontFamily: FONT_MONO, fontSize: 11, lineHeight: 1.55, overflow: 'auto', maxHeight: 280, whiteSpace: 'pre-wrap' }}>
+        {body}
+      </pre>
     </div>
   );
 }
