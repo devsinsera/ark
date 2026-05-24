@@ -155,7 +155,26 @@ Exports respect this even when "include sensitive fields" is checked
 
 ---
 
-## Roll-up roadmap (current as of 2026-05-22)
+## Pre-built images (current builds with flashable .img output)
+
+| Build | Purpose | Size (.img.xz) | Hub registry id |
+|---|---|---|---|
+| **sinsera-vanilla** | Plain DietPi with personal config (hostname `SinseraCore`, SSH key, AU locale + timezone, OpenSSH enabled, normal console login). One-line WiFi edit before flashing. | 183 MB | `img_zhaevtjwm3iq6b` |
+| **sinsera-kiosk** | Boots straight into Chromium full-screen on `https://sinsera.co/` | 183 MB | `img_oi138k54j1okux` |
+| **claude-cli-pi** | Pi 5 boots into headless DietPi with Node 20 + claude-code CLI pre-installed. Operator drops API key into `/etc/claude-cli.env`, then `systemctl enable --now ark-claude.service`. | 183 MB | `img_4ynpgyhks5d6cd` |
+| **sinsera-raspyjack** | Bundles the operator's local `~/Downloads/Jack/` (RaspyJack defensive-recon subset — DNSSpoof / payloads/wifi / payloads/credentials / Responder + culture loot all excluded). First boot extracts + runs upstream `install_raspyjack.sh`. | 250 MB | `img_po7smw9ka5tfjt` |
+
+All four use the same first-boot-install strategy (write
+`/boot/Automation_Custom_Script.sh` from the chroot rather than
+apt-installing in chroot) which avoids the 1 GB base-partition
+ceiling. RaspyJack additionally uses the **chroot extras pipeline**
+(`builder/lib/chroot-run.sh` now copies any sibling `.tar.gz` of
+`install.plan.sh` into the rootfs at `/opt/ark-extras/`) so large
+source bundles ride along with the image.
+
+---
+
+## Roll-up roadmap (current as of 2026-05-24)
 
 ```
 PHASE 1     manifest + config + browser UI + Hub MVP + Builder render
@@ -219,6 +238,9 @@ PHASE 8     UI POLISH + LAST-MILE
    ✅       SSH runner subsystem + UI
    ✅       Online-Pi update (scp install.plan.sh + exec)
    ✅       Installer browser surface (git URL + ZIP upload + folder)
+   ✅       Flash Node install guide in Nodes tab (5 steps + troubleshooting)
+   ✅       Pre-built images (sinsera-vanilla / -kiosk / -raspyjack +
+            claude-cli-pi) with Hub-registered download buttons
 
 GATED ON A FLASHED Pi (physical-world)
         🟡  Phase 4.2 end-to-end validation
@@ -228,5 +250,8 @@ GATED ON A FLASHED Pi (physical-world)
 ```
 
 The single remaining bottleneck is **flashing a card and booting
-SinseraCore**. Once one Pi reports telemetry, the four 🟡 entries
-flip to ✅ together.
+SinseraCore**. Four prebuilt images are ready to flash — pick
+sinsera-vanilla for plain DietPi, sinsera-kiosk for the public
+site as a kiosk, claude-cli-pi for an always-on Claude tmux, or
+sinsera-raspyjack for the recon toolkit. Once one Pi reports
+telemetry, the four 🟡 entries flip to ✅ together.
