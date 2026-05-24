@@ -75,20 +75,34 @@ function writeJSON(key, value) {
 }
 
 // ── Nav definition ─────────────────────────────────────────────────
+// Sidebar nav. `kind: 'header'` entries render as section dividers
+// (small letter-spaced labels) and aren't clickable. The 4 sections
+// group the surfaces by what the operator is doing:
+//   Discover — looking at the network + Pis
+//   Imaging  — defining + building images
+//   Operate  — using flashed Pis (flash + remote control)
+//   Ops      — defense + secrets + logs
 const NAV_SECTIONS = [
-  { id: 'devices',   label: 'Devices',   icon: Cpu,        kind: 'active' },
-  { id: 'network',   label: 'Network',   icon: Radar,      kind: 'active' },
-  { id: 'installer', label: 'Installer', icon: Boxes,      kind: 'active' },
-  { id: 'builds',    label: 'Builds',    icon: HardDrive,  kind: 'active' },
-  { id: 'manifests', label: 'Manifests', icon: Layers,     kind: 'list' },
-  { id: 'presets',   label: 'Presets',   icon: Boxes,      kind: 'active' },
-  { id: 'fleet',     label: 'Fleet',     icon: Server,     kind: 'active' },
-  { id: 'flash',     label: 'Flash Nodes', icon: Zap,      kind: 'active' },
+  { kind: 'header', label: 'Discover' },
+  { id: 'network',   label: 'Network',     icon: Radar,      kind: 'active' },
+  { id: 'fleet',     label: 'Fleet',       icon: Server,     kind: 'active' },
+
+  { kind: 'header', label: 'Imaging' },
+  { id: 'manifests', label: 'Manifests',   icon: Layers,     kind: 'list' },
+  { id: 'devices',   label: 'Device editor', icon: Cpu,      kind: 'active' },
+  { id: 'installer', label: 'Installer',   icon: Boxes,      kind: 'active' },
+  { id: 'presets',   label: 'Presets',     icon: Boxes,      kind: 'active' },
+  { id: 'builds',    label: 'Builds',      icon: HardDrive,  kind: 'active' },
+  { id: 'images',    label: 'Images',      icon: ImageIcon,  kind: 'active' },
+
+  { kind: 'header', label: 'Operate' },
+  { id: 'flash',     label: 'Flash Nodes', icon: Zap,        kind: 'active' },
+  { id: 'runner',    label: 'SSH Runner',  icon: Terminal,   kind: 'active' },
+
+  { kind: 'header', label: 'Ops' },
   { id: 'security',  label: "Can't Phish Here", icon: Shield, kind: 'active' },
-  { id: 'vault',     label: 'Vault',     icon: KeyRound,   kind: 'active' },
-  { id: 'runner',    label: 'SSH Runner', icon: Terminal,  kind: 'active' },
-  { id: 'images',    label: 'Images',    icon: ImageIcon,  kind: 'active' },
-  { id: 'logs',      label: 'Logs',      icon: ScrollText, kind: 'active' },
+  { id: 'vault',     label: 'Secrets',     icon: KeyRound,   kind: 'active' },
+  { id: 'logs',      label: 'Logs',        icon: ScrollText, kind: 'active' },
 ];
 
 // ── Device-stack layer definition ──────────────────────────────────
@@ -479,7 +493,20 @@ function Sidebar({ nav, setNav, count, onCollapse }) {
         )}
       </div>
 
-      {NAV_SECTIONS.map(s => {
+      {NAV_SECTIONS.map((s, i) => {
+        // Section headers render as non-clickable labels with a bit of
+        // top space so they read as group dividers.
+        if (s.kind === 'header') {
+          return (
+            <div key={`hdr-${i}`} style={{
+              padding: i === 0 ? '4px 12px 4px' : '14px 12px 4px',
+              fontSize: 9, color: COLORS.textMuted,
+              textTransform: 'uppercase', letterSpacing: '0.18em',
+              fontFamily: FONT_HEADING || FONT_BODY,
+              userSelect: 'none',
+            }}>{s.label}</div>
+          );
+        }
         const isActive = nav === s.id;
         const Icon = s.icon;
         const badge = s.id === 'manifests' ? count : null;
