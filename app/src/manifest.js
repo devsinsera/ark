@@ -51,6 +51,10 @@ export function emptyManifest(name = 'ark-device-01') {
       name,
       role: 'kiosk',
       version: 1,
+      // Free-form operator description — "what does this Pi do?"
+      // Inherited by every build derived from this manifest, surfaced
+      // in Builds list + Flash Images registry.
+      description: '',
     },
     hardware: {
       model: 'pi-zero-2-w',

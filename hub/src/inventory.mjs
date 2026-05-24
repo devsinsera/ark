@@ -34,6 +34,25 @@ export async function getBuild(name) {
   return summariseBuild(name, buildDir);
 }
 
+// Delete a build directory and everything in it. Validates the name
+// is a single safe path segment (no traversal, no slashes) and that
+// the resolved path is still inside BUILDS_DIR before nuking.
+export async function deleteBuild(name) {
+  if (!name || typeof name !== 'string' || /[\/\\]|\.\./.test(name)) {
+    throw new Error('invalid build name');
+  }
+  const buildDir = path.join(BUILDS_DIR, name);
+  const resolved = path.resolve(buildDir);
+  if (!resolved.startsWith(path.resolve(BUILDS_DIR) + path.sep)) {
+    throw new Error('refusing to delete outside builds/');
+  }
+  if (!existsSync(buildDir)) {
+    return { ok: false, error: 'build not found' };
+  }
+  await fs.rm(buildDir, { recursive: true, force: true });
+  return { ok: true, deleted: name };
+}
+
 async function summariseBuild(name, buildDir) {
   const profilePath  = path.join(buildDir, 'profile.json');
   const manifestPath = path.join(buildDir, 'manifest.json');
@@ -68,6 +87,7 @@ async function summariseBuild(name, buildDir) {
     manifest_summary: manifest ? {
       name: manifest.name,
       version: manifest.version,
+      description: manifest.description || manifest.identity?.description || '',
       entry_points: manifest.entry_points?.length || 0,
       apt: manifest.dependencies?.apt?.length || 0,
       pip: manifest.dependencies?.pip?.length || 0,

@@ -4,7 +4,7 @@
 // when the build directory was last touched.
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { HardDrive, Check, X, AlertCircle, Clock } from 'lucide-react';
+import { HardDrive, Check, X, AlertCircle, Clock, Trash2 } from 'lucide-react';
 import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO } from './lib/theme.js';
 
 const HUB_KEY = 'ark.hubUrl';
@@ -50,23 +50,45 @@ export default function Builds() {
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
-          {state.builds.map(b => <BuildCard key={b.name} b={b} hubUrl={hubUrl}/>)}
+          {state.builds.map(b => <BuildCard key={b.name} b={b} hubUrl={hubUrl} onDeleted={refresh}/>)}
         </div>
       )}
     </div>
   );
 }
 
-function BuildCard({ b, hubUrl }) {
+function BuildCard({ b, hubUrl, onDeleted }) {
+  const [deleting, setDeleting] = useState(false);
   const hasOk = (k) => b.has?.[k];
   const ms = b.manifest_summary;
   const ps = b.plan_summary;
   const pr = b.profile_summary;
+  const description = ms?.description?.trim();
+
+  async function handleDelete() {
+    if (!confirm(`Delete build "${b.name}"?\n\nThis removes builds/${b.name}/ and everything in it — including any .img output. Cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      const r = await fetch(`${hubUrl}/api/builds/${encodeURIComponent(b.name)}`, { method: 'DELETE' });
+      const j = await r.json();
+      if (!j.ok) {
+        alert(j.error || 'delete failed');
+        setDeleting(false);
+        return;
+      }
+      onDeleted?.();
+    } catch (e) {
+      alert(e.message);
+      setDeleting(false);
+    }
+  }
+
   return (
     <div style={{
       padding: 14, background: COLORS.bgPanel,
       border: `1px solid ${COLORS.border}`, borderRadius: 10,
       display: 'flex', flexDirection: 'column', gap: 8,
+      opacity: deleting ? 0.4 : 1,
     }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
         <h3 style={{ margin: 0, fontFamily: FONT_HEADING, fontSize: 17, color: COLORS.textPrimary }}>{b.name}</h3>
@@ -75,9 +97,19 @@ function BuildCard({ b, hubUrl }) {
         )}
       </div>
 
+      {description ? (
+        <p style={{ margin: 0, fontFamily: FONT_BODY, fontSize: 13, color: COLORS.textPrimary, lineHeight: 1.5 }}>
+          {description}
+        </p>
+      ) : (
+        <p style={{ margin: 0, fontFamily: FONT_BODY, fontSize: 12, color: COLORS.textMuted, fontStyle: 'italic' }}>
+          No description. Add one in <strong>Device editor → Identity → Description</strong>, then rebuild.
+        </p>
+      )}
+
       {ms && (
         <div style={{ fontFamily: FONT_BODY, fontSize: 12, color: COLORS.textSecondary }}>
-          {ms.name ? `${ms.name} ${ms.version ? '· ' + ms.version : ''}` : '—'}
+          {ms.name ? `${ms.name} ${ms.version ? '· v' + ms.version : ''}` : '—'}
         </div>
       )}
 
@@ -93,10 +125,19 @@ function BuildCard({ b, hubUrl }) {
         <Clock size={11}/> {b.last_touched ? humanAge(new Date(b.last_touched).getTime()) : 'never built'}
       </div>
 
-      <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
         {hasOk('manifest') && <SmallLink href={`#`} onClick={(e) => { e.preventDefault(); window.open(`${hubUrl}/api/builds/${encodeURIComponent(b.name)}`, '_blank'); }}>manifest</SmallLink>}
         {hasOk('install_log') && <SmallLink href={`#`} onClick={(e) => { e.preventDefault(); window.location.hash = `#logs/build/${encodeURIComponent(b.name)}`; }}>log</SmallLink>}
         {hasOk('built_img') && <SmallLink href={`#`} onClick={(e) => { e.preventDefault(); window.location.hash = `#images`; }}>image</SmallLink>}
+        <span style={{ flex: 1 }}/>
+        <button onClick={handleDelete} disabled={deleting} title="Delete this build directory + all artifacts" style={{
+          padding: '4px 10px', fontSize: 11, borderRadius: 4,
+          background: 'transparent', color: COLORS.error,
+          border: `1px solid ${COLORS.border}`, cursor: deleting ? 'wait' : 'pointer',
+          fontFamily: FONT_BODY, display: 'inline-flex', alignItems: 'center', gap: 4,
+        }}>
+          <Trash2 size={11}/> delete
+        </button>
       </div>
     </div>
   );

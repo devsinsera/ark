@@ -19,7 +19,7 @@ import { openVault } from './vault.mjs';
 import { initDrift, detectConfigDrift, detectNetworkDrift, recordDriftEvents, listDrift, resolveDrift } from './drift.mjs';
 import { computeHealth } from './health.mjs';
 import { devicesCsv, networksCsv, deviceExport, fleetExport, importSnapshot } from './export.mjs';
-import { listBuilds, getBuild, listImages, tailFile, hubLogPath, buildLogPath } from './inventory.mjs';
+import { listBuilds, getBuild, deleteBuild, listImages, tailFile, hubLogPath, buildLogPath } from './inventory.mjs';
 import { runEngine, listProfiles, stageZipFromRequest, safeBuildName } from './installer.mjs';
 import { initFlash, JOB_STATES, NODE_CAPABILITIES } from './flash.mjs';
 import { initSecurity, ALERT_KINDS, HARDENING_CHECKS, classifyCheckOutput } from './security.mjs';
@@ -873,6 +873,14 @@ const server = createServer(async (req, res) => {
     const b = await getBuild(decodeURIComponent(buildMatch[1]));
     if (!b) return json(res, { ok: false, error: 'build not found' }, 404);
     return json(res, b);
+  }
+  if (req.method === 'DELETE' && buildMatch) {
+    try {
+      const r = await deleteBuild(decodeURIComponent(buildMatch[1]));
+      return json(res, r, r.ok ? 200 : 404);
+    } catch (e) {
+      return json(res, { ok: false, error: e.message }, 400);
+    }
   }
   if (req.method === 'GET' && url.pathname === '/api/images') {
     return json(res, await listImages());

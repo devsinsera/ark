@@ -1056,6 +1056,13 @@ function IdentityBody({ active, update, setRole }) {
           onChange={(e) => { update('identity.name', e.target.value); update('network.hostname', e.target.value); }}
           style={inputStyle()}/>
       </Row>
+      <Row label="Description" hint="What does this Pi do? Inherited by every build of this manifest and shown on the Builds + Images lists.">
+        <textarea value={active.identity.description || ''}
+          onChange={(e) => update('identity.description', e.target.value)}
+          rows={3}
+          placeholder="e.g. Garage kiosk on the workbench. Boots into Chromium pointed at the OBD dashboard. Connected to the GR86's USB OBD-II reader."
+          style={{ ...inputStyle(), resize: 'vertical', minHeight: 60, fontFamily: 'inherit', lineHeight: 1.5 }}/>
+      </Row>
       <Row label="Role">
         <select value={active.identity.role} onChange={(e) => setRole(e.target.value)} style={inputStyle()}>
           {ROLES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
