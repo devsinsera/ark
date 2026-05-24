@@ -1,61 +1,94 @@
 #!/bin/bash
-# Claude CLI Pi — install-template.sh
+# Claude CLI Pi — Ark install plan.
 #
-# The Ark Installer Engine renders the REAL install.plan.sh from this
-# template + the build profile + the operator's manifest. Lives here
-# for reference + so the profile is self-documenting.
+# Same first-boot-install strategy as sinsera-kiosk: the chroot
+# writes a /boot/Automation_Custom_Script.sh that runs ON THE Pi at
+# the end of DietPi's first-boot setup, after the rootfs has been
+# expanded to fill the SD card. This avoids the ~1 GB base-partition
+# disk-space ceiling (Node + npm + claude-code easily exceed that).
 #
-# Steps the engine bakes in:
-#   1. apt update + install base + nodejs + npm + tmux
-#   2. Create system user 'claude' (no sudo, no shell history kept)
-#   3. npm install -g @anthropic-ai/claude-code  (via $HOME for claude)
-#   4. Write /etc/claude-cli.env with ANTHROPIC_API_KEY from the vault
-#   5. Install systemd unit ark-claude.service
-#   6. Enable + start
+# After flashing and booting:
+#   - DietPi runs first-boot setup (~60 s)
+#   - DietPi expands rootfs to fill SD
+#   - DietPi runs /boot/Automation_Custom_Script.sh below
+#   - Node 20 LTS, tmux, vim, jq installed
+#   - 'claude' system user created
+#   - @anthropic-ai/claude-code installed globally
+#   - systemd ark-claude.service registered (doesn't auto-start since
+#     ANTHROPIC_API_KEY isn't in /etc/claude-cli.env yet)
 #
-# The actual install.plan.sh produced by `ark-install compile` will
-# look something like below (with the real packages and env wiring
-# substituted in).
+# Post-flash setup:
+#   ssh into the Pi, edit /etc/claude-cli.env to add your API key,
+#   then `sudo systemctl enable --now ark-claude.service` to start
+#   the always-on tmux session.
 
 set -e
 set -o pipefail
+
 LOG=/var/log/ark-install.log
 INSTALLED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 mkdir -p /ark/builds /ark/registry
+echo "[ark] install plan begin: claude-cli-pi" | tee -a "$LOG"
+
 ark_log() { echo "[ark][$(date -u +%H:%M:%S)] $*" | tee -a "$LOG"; }
-ark_run() { ark_log "RUN: $*"; "$@" 2>&1 | tee -a "$LOG"; }
 
-# ── PREPARE ──
-ark_run apt-get update -y
-ark_run apt-get install -y ca-certificates curl git tmux vim jq build-essential
+# ── Detect boot partition ──
+BOOT_DIR=""
+for cand in /boot/firmware /boot; do
+  if [[ -d "$cand" ]] && [[ -f "$cand/cmdline.txt" || -f "$cand/dietpi.txt" || -f "$cand/config.txt" ]]; then
+    BOOT_DIR="$cand"; break
+  fi
+done
+if [[ -z "$BOOT_DIR" ]]; then
+  ark_log "ERROR: could not find boot partition in chroot"; exit 1
+fi
+ark_log "boot partition at: $BOOT_DIR"
 
-# Node 20.x LTS via NodeSource — newer than apt's bundled version
-ark_run bash -c "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -"
-ark_run apt-get install -y nodejs
+# ── Write the first-boot installer to the boot partition ──
+ark_log "writing $BOOT_DIR/Automation_Custom_Script.sh"
+cat > "$BOOT_DIR/Automation_Custom_Script.sh" <<'CLAUDE_FIRSTBOOT'
+#!/bin/bash
+# Claude CLI Pi — DietPi Automation_Custom_Script.sh
+# Runs ONCE at the end of DietPi first-boot setup, after partition
+# expansion. Installs Node 20 + claude-code CLI + sets up the
+# always-on systemd unit (kept disabled until the operator drops in
+# their ANTHROPIC_API_KEY).
+set -e
+exec > >(tee -a /var/log/claude-cli-pi-install.log) 2>&1
+echo "[claude-cli-pi] starting first-boot install $(date)"
 
-# ── CONFIGURE: user, key, npm package ──
-ark_run useradd -m -s /bin/bash claude || true
-ark_run install -d -o claude -g claude -m 0755 /home/claude/.config /home/claude/.local
+apt-get update -y
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+  ca-certificates curl git tmux vim jq build-essential
 
-# ARK_VAULT_ANTHROPIC_API_KEY is interpolated by the Installer Engine
-# from a vault ref the operator provided when selecting this profile.
-# If unset at install time, the file is created empty and `claude`
-# will prompt on first run.
+# Node 20 via NodeSource
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+
+# 'claude' system user
+id claude >/dev/null 2>&1 || useradd -m -s /bin/bash claude
+install -d -o claude -g claude -m 0755 /home/claude/.config /home/claude/.local
+
+# Env file — operator drops the API key here post-flash
 cat > /etc/claude-cli.env <<EOF
-ANTHROPIC_API_KEY=${ARK_VAULT_ANTHROPIC_API_KEY:-}
+# Edit this file to add your Anthropic API key, then:
+#   sudo systemctl enable --now ark-claude.service
+ANTHROPIC_API_KEY=
 EOF
 chmod 0640 /etc/claude-cli.env
 chown root:claude /etc/claude-cli.env
 
-# Install the CLI globally so all users can invoke 'claude'
-ark_run npm install -g @anthropic-ai/claude-code
+# Global CLI install
+npm install -g @anthropic-ai/claude-code
 
-# ── systemd unit ──
+# systemd unit — NOT auto-enabled (no API key yet)
 cat > /etc/systemd/system/ark-claude.service <<'UNIT'
 [Unit]
 Description=Ark Claude CLI — always-on tmux session
 After=network-online.target
 Wants=network-online.target
+ConditionPathExists=!/etc/claude-cli.env.empty
+ConditionEnvironment=ANTHROPIC_API_KEY=
 
 [Service]
 Type=forking
@@ -69,18 +102,46 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 UNIT
-ark_run systemctl daemon-reload
-ark_run systemctl enable --now ark-claude.service
+systemctl daemon-reload
 
-# ── FINALISE ──
-printf '{"name":"claude-cli-pi","version":"1","installed_at":"%s","profile":"claude-cli-pi"}\n' "$INSTALLED_AT" \
-  > /ark/registry/claude-cli-pi.json && ark_log "registered claude-cli-pi"
+# Helpful login MOTD
+cat > /etc/motd <<'EOF'
+
+  ┌─────────────────────────────────────────────────────────┐
+  │  Claude CLI Pi                                          │
+  │                                                         │
+  │  1. Edit /etc/claude-cli.env and add ANTHROPIC_API_KEY  │
+  │  2. sudo systemctl enable --now ark-claude.service      │
+  │  3. tmux attach -t claude                               │
+  │                                                         │
+  │  Ctrl-b d to detach; the session keeps running.         │
+  └─────────────────────────────────────────────────────────┘
+
+EOF
+
+echo "[claude-cli-pi] install complete — drop the API key into"
+echo "[claude-cli-pi] /etc/claude-cli.env and start the service."
+CLAUDE_FIRSTBOOT
+chmod +x "$BOOT_DIR/Automation_Custom_Script.sh"
+
+# Tune dietpi.txt for headless boot
+if [[ -f "$BOOT_DIR/dietpi.txt" ]]; then
+  ark_log "tuning $BOOT_DIR/dietpi.txt for headless"
+  sed -i 's/^AUTO_SETUP_AUTOSTART_TARGET_INDEX=.*/AUTO_SETUP_AUTOSTART_TARGET_INDEX=1/' "$BOOT_DIR/dietpi.txt" || true
+  sed -i 's/^SURVEY_OPTED_IN=.*/SURVEY_OPTED_IN=0/' "$BOOT_DIR/dietpi.txt" || true
+fi
+
+mkdir -p /ark/registry
+printf '{"name":"claude-cli-pi","version":"1","installed_at":"%s","profile":"claude-cli-pi","strategy":"first-boot-install"}\n' "$INSTALLED_AT" \
+  > /ark/registry/claude-cli-pi.json
+ark_log "registered claude-cli-pi"
 
 ark_log ""
 ark_log "================================================================"
-ark_log " Claude CLI Pi ready."
-ark_log "  ssh claude@\$(hostname).local"
-ark_log "  tmux attach -t claude"
-ark_log "  (Ctrl-b d to detach; session survives logout)"
+ark_log "  Claude CLI Pi image baked. Next steps:"
+ark_log "    1. Flash + boot. First boot ~5-7 min (Node + npm install)."
+ark_log "    2. SSH in. Edit /etc/claude-cli.env to add API key."
+ark_log "    3. sudo systemctl enable --now ark-claude.service"
+ark_log "    4. tmux attach -t claude  (Ctrl-b d to detach)"
 ark_log "================================================================"
 exit 0
