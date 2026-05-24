@@ -146,7 +146,11 @@ cat >> /etc/motd <<'EOF'
   ║                                                               ║
   ║  Source at /opt/raspyjack/                                    ║
   ║  Re-run installer:  cd /opt/raspyjack && bash install_*.sh    ║
-  ║  Launch UI:         python3 /opt/raspyjack/raspyjack.py       ║
+  ║  Launch local UI:   python3 /opt/raspyjack/raspyjack.py       ║
+  ║                                                               ║
+  ║  Drive defensive scripts from Ark on your Mac:                ║
+  ║    https://sinsera.co/ark/#security/raspyjack                 ║
+  ║  (First register this Pi in Ark → SSH Runner)                 ║
   ║                                                               ║
   ║  Use only on hardware you own + networks you have permission ║
   ║  to test.                                                     ║

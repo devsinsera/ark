@@ -233,7 +233,35 @@ export default function App() {
   const [activeId, setActiveIdState]   = useState(() => loadActiveId());
 
   // ── UI state ────────────────────────────────────────────────────
-  const [nav, setNav]                 = useState(() => readJSON(UI_NAV_KEY, 'devices'));
+  // Nav state. On mount we honour the URL hash (e.g. `#security/raspyjack`)
+  // over the last-stored value so deeplinks from MOTDs / docs land on the
+  // right tab. Hash format: `<nav>` or `<nav>/<subview>` (the subview is
+  // read by the destination component via useHashSubview()).
+  const [nav, setNav] = useState(() => {
+    const h = (typeof window !== 'undefined' && window.location.hash || '').replace(/^#/, '').split('/')[0];
+    if (h && NAV_SECTIONS.some(s => s.id === h)) return h;
+    return readJSON(UI_NAV_KEY, 'devices');
+  });
+  // Write nav back to URL hash whenever it changes — preserves the
+  // subview path if one was already there.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sub = (window.location.hash || '').replace(/^#/, '').split('/').slice(1).join('/');
+    const next = '#' + nav + (sub ? '/' + sub : '');
+    if (window.location.hash !== next) {
+      window.history.replaceState(null, '', next);
+    }
+  }, [nav]);
+  // Listen for browser back/forward + manual edits.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onHash = () => {
+      const h = (window.location.hash || '').replace(/^#/, '').split('/')[0];
+      if (h && NAV_SECTIONS.some(s => s.id === h) && h !== nav) setNav(h);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [nav]);
   const [openLayers, setOpenLayers]   = useState(() => readJSON(UI_LAYERS_KEY, { identity: true, hardware: true }));
   const [drawerOpen, setDrawerOpen]   = useState(() => readJSON(UI_DRAWER_OPEN_KEY, false));
   const [sidebarOpen, setSidebarOpen] = useState(() => readJSON(UI_SIDEBAR_OPEN_KEY, true));

@@ -25,9 +25,28 @@ const VIEWS = [
   { id: 'settings',  label: 'Settings',  icon: SettingsIcon },
 ];
 
+// Read the hash sub-view on mount, e.g. `#security/raspyjack` → 'raspyjack'.
+// Returns the first valid view name, or 'overview'.
+function initialView() {
+  if (typeof window === 'undefined') return 'overview';
+  const sub = (window.location.hash || '').replace(/^#/, '').split('/')[1];
+  if (sub && VIEWS.some(v => v.id === sub)) return sub;
+  return 'overview';
+}
+
 export default function CantPhishHere() {
   const hubUrl = readHubUrl();
-  const [view, setView] = useState('overview');
+  const [view, setView] = useState(initialView);
+  // Mirror the active sub-view into the URL hash so deeplinks survive
+  // refresh + can be shared.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const cur = (window.location.hash || '').replace(/^#/, '').split('/');
+    const next = '#' + (cur[0] || 'security') + '/' + view;
+    if (window.location.hash !== next) {
+      window.history.replaceState(null, '', next);
+    }
+  }, [view]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -665,11 +684,45 @@ function RaspyJackTab({ hubUrl }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ padding: 12, background: 'rgba(6,182,212,0.06)', border: `1px solid ${COLORS.accentBorder}`, borderRadius: 8, fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.7 }}>
-        <strong style={{ color: COLORS.accentBright }}>Defensive recon only.</strong> These scripts ship as part of the
-        sinsera-raspyjack image. Ark refuses to dispatch anything from <code>payloads/wifi/</code>,
-        <code> payloads/credentials/</code>, <code>DNSSpoof/</code>, or <code>Responder/</code> — those trees are
-        excluded from the image we ship and aren't represented here. Run ONLY against hardware + networks you own.
+        <strong style={{ color: COLORS.accentBright }}>Defensive recon only — from Ark.</strong> The Ark RaspyJack tab dispatches the 6 scripts listed below, all from
+        <code> payloads/reconnaissance/</code> and <code>payloads/hardware/</code>. Ark refuses to call anything from <code>payloads/wifi/</code>,
+        <code> payloads/credentials/</code>, <code>DNSSpoof/</code>, or <code>Responder/</code> — those trees were excluded from the .img we ship.
+        The Pi itself runs the full upstream RaspyJack LCD UI (<code>python3 /opt/raspyjack/raspyjack.py</code>) when you SSH in; Ark is a defensive
+        lens, not a cage. Run ONLY against hardware + networks you own.
       </div>
+
+      <details style={{ background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 8 }}>
+        <summary style={{ padding: '10px 14px', cursor: 'pointer', fontFamily: FONT_HEADING, fontSize: 14, color: COLORS.textPrimary }}>
+          Parts list — what to physically build
+        </summary>
+        <div style={{ padding: '4px 16px 14px', fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.7 }}>
+          <p style={{ margin: '0 0 10px', color: COLORS.textMuted }}>
+            Reference hardware that the upstream RaspyJack project targets. Spec is flexible — anything that gives you a Pi + screen + battery + Ethernet + Wi-Fi will work; the Mini below is the canonical drop-in kit.
+          </p>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: FONT_BODY }}>
+            <thead>
+              <tr style={{ color: COLORS.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                <th style={{ ...th, fontFamily: FONT_HEADING, textAlign: 'left' }}>Part</th>
+                <th style={{ ...th, fontFamily: FONT_HEADING, textAlign: 'left' }}>Spec / notes</th>
+                <th style={{ ...th, fontFamily: FONT_HEADING, textAlign: 'left' }}>Approx AUD</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td style={td}>Raspberry Pi</td><td style={td}>Pi 4 Model B (2 GB or 4 GB). Pi Zero 2 W also works if you skip the LCD HAT. Avoid Pi 5 — Waveshare LCD pins differ.</td><td style={td}>$80 – $130</td></tr>
+              <tr><td style={td}>microSD card</td><td style={td}>32 GB+, A1 / A2 rated (SanDisk Extreme, Samsung EVO Plus). Flash with the sinsera-raspyjack.img.xz from the Images tab.</td><td style={td}>$15 – $25</td></tr>
+              <tr><td style={td}>Waveshare 1.44" LCD HAT</td><td style={td}>128×128 SPI display with 5 buttons + a 4-way joystick — the canonical RaspyJack UI runs on this. SKU: <code>Waveshare 14747</code>.</td><td style={td}>$25 – $35</td></tr>
+              <tr><td style={td}>USB Wi-Fi adapter (monitor-mode capable)</td><td style={td}>Alfa AWUS036ACS / AWUS036NHA, or any RTL8812AU / RT3070-based adapter. Pi's built-in radio works for client mode; an external one is what gives you the option to do passive monitor scans on a separate channel.</td><td style={td}>$50 – $85</td></tr>
+              <tr><td style={td}>USB Ethernet adapter</td><td style={td}>Pi already has built-in RJ45 — this is an extra so the Pi can sit physically between two cables (the canonical RaspyJack "drop in line" pose). Any USB 2.0 100-Mbps-or-better adapter (Cable Matters / Ugreen).</td><td style={td}>$15 – $30</td></tr>
+              <tr><td style={td}>Battery / USB-C power bank</td><td style={td}>5V 3A capable, 10 000 mAh+ if you want untethered runs of {'>'}2 hr. A wall PSU is fine for benchtop use.</td><td style={td}>$30 – $60</td></tr>
+              <tr><td style={td}>Case</td><td style={td}>Any Pi case with a window for the LCD. The official RaspyJack 3D-print STL files are linked from <code>github.com/7h30th3r0n3/Raspyjack</code> if you want the exact look.</td><td style={td}>$15 – $40</td></tr>
+              <tr><td style={td}>Short Ethernet patch leads × 2</td><td style={td}>Cat 6, 0.3 m. One for the built-in port, one for the USB adapter when you're using both at once.</td><td style={td}>$5 – $15</td></tr>
+            </tbody>
+          </table>
+          <p style={{ margin: '10px 0 0', fontSize: 11, color: COLORS.textMuted }}>
+            Total: ~$235 – $420 AUD for the full kit. The Pi + microSD + LCD HAT alone (~$120) is enough to run everything in the Ark RaspyJack tab.
+          </p>
+        </div>
+      </details>
 
       {hostsError && (
         <div style={{ padding: 12, background: 'rgba(245,180,90,0.08)', border: `1px solid ${COLORS.warning}`, borderRadius: 8, color: COLORS.warning, fontSize: 12 }}>
