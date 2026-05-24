@@ -128,7 +128,20 @@ function BuildCard({ b, hubUrl, onDeleted }) {
       <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
         {hasOk('manifest') && <SmallLink href={`#`} onClick={(e) => { e.preventDefault(); window.open(`${hubUrl}/api/builds/${encodeURIComponent(b.name)}`, '_blank'); }}>manifest</SmallLink>}
         {hasOk('install_log') && <SmallLink href={`#`} onClick={(e) => { e.preventDefault(); window.location.hash = `#logs/build/${encodeURIComponent(b.name)}`; }}>log</SmallLink>}
-        {hasOk('built_img') && <SmallLink href={`#`} onClick={(e) => { e.preventDefault(); window.location.hash = `#images`; }}>image</SmallLink>}
+        {hasOk('built_img') && (
+          <a
+            href={`${hubUrl}/api/builds/${encodeURIComponent(b.name)}/download`}
+            download={`${b.name}.img.xz`}
+            title="Download the built .img.xz to your Mac"
+            style={{
+              padding: '4px 10px', fontSize: 11, borderRadius: 4,
+              background: COLORS.bgActive, color: COLORS.accentBright,
+              border: `1px solid ${COLORS.accentBorder}`, textDecoration: 'none',
+              fontFamily: FONT_MONO, display: 'inline-flex', alignItems: 'center', gap: 4,
+            }}>
+            ↓ download
+          </a>
+        )}
         <span style={{ flex: 1 }}/>
         <button onClick={handleDelete} disabled={deleting} title="Delete this build directory + all artifacts" style={{
           padding: '4px 10px', fontSize: 11, borderRadius: 4,

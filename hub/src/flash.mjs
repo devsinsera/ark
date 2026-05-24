@@ -14,6 +14,15 @@
 //   - health          : flash nodes use the same telemetry/health
 //                       path as the regular agent
 
+import { promises as fs, existsSync, statSync, createReadStream } from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, '..', '..');
+const BUILDS_DIR = path.join(REPO_ROOT, 'builds');
+
 const DDL = `
 CREATE TABLE IF NOT EXISTS flash_nodes (
   node_id           TEXT PRIMARY KEY,
@@ -157,6 +166,50 @@ export function initFlash(db) {
     listImages() {
       return db.prepare(`SELECT * FROM flash_images WHERE status = 'active' ORDER BY created_at DESC`).all();
     },
+
+    // Walk builds/*/out/ for ark-built.img(.xz) files and register
+    // anything new. Idempotent — skips when source_path is already
+    // registered AND file size hasn't changed (the cheap proxy for
+    // "image unchanged" — avoids re-hashing 200 MB on every call).
+    //
+    // Called once at Hub startup, and on demand via the rescan endpoint.
+    async rescanBuildOutputs() {
+      if (!existsSync(BUILDS_DIR)) return { scanned: 0, added: 0, updated: 0, skipped: 0 };
+      const stats = { scanned: 0, added: 0, updated: 0, skipped: 0 };
+      const entries = await fs.readdir(BUILDS_DIR, { withFileTypes: true });
+      for (const e of entries) {
+        if (!e.isDirectory()) continue;
+        // Prefer the .img.xz (what you'd actually flash); fall back
+        // to raw .img if no compressed version is around.
+        const xz  = path.join(BUILDS_DIR, e.name, 'out', 'ark-built.img.xz');
+        const raw = path.join(BUILDS_DIR, e.name, 'out', 'ark-built.img');
+        const filePath = existsSync(xz) ? xz : (existsSync(raw) ? raw : null);
+        if (!filePath) continue;
+        stats.scanned++;
+
+        const fsize = statSync(filePath).size;
+        const existing = db.prepare(`SELECT image_id, sha256, size_bytes FROM flash_images WHERE source_path = ?`).get(filePath);
+        if (existing && existing.size_bytes === fsize) {
+          stats.skipped++;
+          continue;
+        }
+
+        // New or changed — compute sha256 (streamed; bounded memory)
+        const sha = await sha256OfFile(filePath);
+        const isXz = filePath.endsWith('.xz');
+        const buildName = e.name + (isXz ? '.img.xz' : '.img');
+        this.registerImage({
+          source_path: filePath,
+          manifest_id: e.name,
+          build_name:  buildName,
+          size_bytes:  fsize,
+          sha256:      sha,
+          compression: isXz ? 'xz' : 'none',
+        });
+        if (existing) stats.updated++; else stats.added++;
+      }
+      return stats;
+    },
     getImage(id) {
       return db.prepare(`SELECT * FROM flash_images WHERE image_id = ?`).get(id);
     },
@@ -283,4 +336,15 @@ function validateJobInput(j) {
 
 function newId(prefix) {
   return prefix + '_' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36).slice(-4);
+}
+
+// Streamed sha256 — bounded memory regardless of file size.
+function sha256OfFile(p) {
+  return new Promise((resolve, reject) => {
+    const h = crypto.createHash('sha256');
+    const s = createReadStream(p);
+    s.on('data', (c) => h.update(c));
+    s.on('end',  () => resolve(h.digest('hex')));
+    s.on('error', reject);
+  });
 }

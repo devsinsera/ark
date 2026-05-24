@@ -8,7 +8,7 @@
 
 import { createServer } from 'node:http';
 import { readFile, stat, rename, mkdir, unlink } from 'node:fs/promises';
-import { existsSync, createReadStream, createWriteStream } from 'node:fs';
+import { existsSync, createReadStream, createWriteStream, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -687,6 +687,16 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
+  // POST /api/flash/images/rescan — walk builds/*/out/ and register
+  // any new .img.xz / .img files into the flash registry. Idempotent;
+  // skip-if-unchanged-size so re-running is cheap. Called automatically
+  // on Hub startup and on demand from the UI.
+  if (req.method === 'POST' && url.pathname === '/api/flash/images/rescan') {
+    flash.rescanBuildOutputs()
+      .then(stats => json(res, { ok: true, ...stats }))
+      .catch(e => json(res, { ok: false, error: e.message }, 500));
+    return;
+  }
   if (req.method === 'GET' && url.pathname === '/api/flash/images') {
     return json(res, { images: flash.listImages() });
   }
@@ -873,6 +883,27 @@ const server = createServer(async (req, res) => {
     const b = await getBuild(decodeURIComponent(buildMatch[1]));
     if (!b) return json(res, { ok: false, error: 'build not found' }, 404);
     return json(res, b);
+  }
+  // Direct download of the build's compressed .img — bypasses the
+  // flash image registry. Streams from builds/<name>/out/ark-built.img.xz
+  // (falls back to .img if no xz is around).
+  const buildDownloadMatch = url.pathname.match(/^\/api\/builds\/([^/]+)\/download$/);
+  if (req.method === 'GET' && buildDownloadMatch) {
+    const name = decodeURIComponent(buildDownloadMatch[1]);
+    if (/[\/\\]|\.\./.test(name)) return json(res, { ok: false, error: 'invalid build name' }, 400);
+    const xz  = path.join(REPO_ROOT, 'builds', name, 'out', 'ark-built.img.xz');
+    const raw = path.join(REPO_ROOT, 'builds', name, 'out', 'ark-built.img');
+    const file = existsSync(xz) ? xz : (existsSync(raw) ? raw : null);
+    if (!file) return json(res, { ok: false, error: 'no built image found' }, 404);
+    const st = statSync(file);
+    res.writeHead(200, {
+      'content-type':        file.endsWith('.xz') ? 'application/x-xz' : 'application/octet-stream',
+      'content-length':      st.size,
+      'content-disposition': `attachment; filename="${name}${file.endsWith('.xz') ? '.img.xz' : '.img'}"`,
+    });
+    const stream = createReadStream(file);
+    stream.pipe(res);
+    return;
   }
   if (req.method === 'DELETE' && buildMatch) {
     try {
@@ -1100,6 +1131,19 @@ server.listen(PORT, BIND_HOST, async () => {
   } else {
     console.log(`[hub] listening on http://127.0.0.1:${PORT} (localhost only)`);
     console.log(`[hub] to expose to the LAN: set ARK_HUB_BIND_HOST=0.0.0.0`);
+  }
+
+  // Auto-register any built images on startup so newly-baked images
+  // appear in the Flash Images table without a manual register call.
+  try {
+    const stats = await flash.rescanBuildOutputs();
+    if (stats.added + stats.updated > 0) {
+      console.log(`[hub] flash image scan: +${stats.added} new, ${stats.updated} updated, ${stats.skipped} unchanged`);
+    } else {
+      console.log(`[hub] flash image scan: ${stats.scanned} build(s) checked, all already registered`);
+    }
+  } catch (e) {
+    console.log(`[hub] flash image scan failed: ${e.message}`);
   }
 
   // Order matters: run the Wi-Fi scan BEFORE the first device scan so

@@ -684,7 +684,18 @@ function ImagesTab({ hubUrl }) {
     setImages(i.images || []);
     setNodes(n.nodes || []);
   }, [hubUrl]);
-  useEffect(() => { refresh(); }, [refresh]);
+  // On mount: kick a rescan first so any newly-built images appear
+  // without needing a Hub restart. The rescan endpoint is fast for
+  // unchanged files (no sha256 recompute) so calling it once per
+  // mount is cheap.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try { await fetch(`${hubUrl}/api/flash/images/rescan`, { method: 'POST' }); } catch {}
+      if (!cancelled) refresh();
+    })();
+    return () => { cancelled = true; };
+  }, [hubUrl, refresh]);
 
   async function onFile(e) {
     const file = e.target.files?.[0];
