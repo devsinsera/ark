@@ -5,7 +5,7 @@
 // against unapproved hosts. Recommendations only.
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { Shield, AlertTriangle, Check, X, Plus, Trash2, Activity, Settings as SettingsIcon, ScrollText, Crosshair, Play, History, Square } from 'lucide-react';
+import { Shield, AlertTriangle, Check, X, Plus, Trash2, Activity, Settings as SettingsIcon, ScrollText, Crosshair, Play, History, Square, Zap } from 'lucide-react';
 import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO } from './lib/theme.js';
 
 const HUB_KEY = 'ark.hubUrl';
@@ -22,6 +22,7 @@ const VIEWS = [
   { id: 'logs',      label: 'Logs',      icon: ScrollText },
   { id: 'hardening', label: 'Hardening', icon: Check },
   { id: 'raspyjack', label: 'RaspyJack', icon: Crosshair },
+  { id: 'flipper',   label: 'Flipper',   icon: Zap },
   { id: 'settings',  label: 'Settings',  icon: SettingsIcon },
 ];
 
@@ -86,6 +87,7 @@ export default function CantPhishHere() {
       {view === 'logs'      && <LogsTab hubUrl={hubUrl}/>}
       {view === 'hardening' && <HardeningTab hubUrl={hubUrl}/>}
       {view === 'raspyjack' && <RaspyJackTab hubUrl={hubUrl}/>}
+      {view === 'flipper'   && <FlipperTab hubUrl={hubUrl}/>}
       {view === 'settings'  && <SettingsTab hubUrl={hubUrl}/>}
     </div>
   );
@@ -567,11 +569,158 @@ const RISK_COLOUR = {
   passive:             COLORS.success,
 };
 
-function RaspyJackTab({ hubUrl }) {
+// ── Parts list — data + checkbox component ─────────────────────────
+// Parts arrays are plain data; PartsList renders them with a
+// localStorage-backed "got it" checkbox so the operator can track
+// what they've already bought.
+const RASPYJACK_PARTS = {
+  storageKey: 'ark.parts.raspyjack.v1',
+  intro: 'Reference hardware that the upstream RaspyJack project targets. Spec is flexible — anything with a Pi + screen + battery + Ethernet + Wi-Fi will work; the kit below is the canonical drop-in.',
+  rows: [
+    { part: 'Raspberry Pi',                       spec: <>Pi 4 Model B (2 GB or 4 GB). Pi Zero 2 W also works if you skip the LCD HAT. Avoid Pi 5 — Waveshare LCD pins differ.</>,                                                                                                          price: '$80 – $130' },
+    { part: 'microSD card',                       spec: <>32 GB+, A1 / A2 rated (SanDisk Extreme, Samsung EVO Plus). Flash with <code>sinsera-raspyjack.img.xz</code> from the Images tab.</>,                                                                                                price: '$15 – $25' },
+    { part: 'Waveshare 1.44" LCD HAT',            spec: <>128×128 SPI display with 5 buttons + a 4-way joystick. SKU <code>Waveshare 14747</code>.</>,                                                                                                                                        price: '$25 – $35' },
+    { part: 'USB Wi-Fi adapter (monitor-mode)',   spec: <>Alfa AWUS036ACS / AWUS036NHA, or any RTL8812AU / RT3070-based adapter. Pi's built-in radio works for client mode; the external one is what lets you do passive monitor scans on a separate channel.</>,                            price: '$50 – $85' },
+    { part: 'USB Ethernet adapter',               spec: <>So the Pi can sit physically between two cables (the canonical RaspyJack "drop in line" pose). Any USB 2.0 100 Mbps adapter — Cable Matters / Ugreen.</>,                                                                            price: '$15 – $30' },
+    { part: 'Battery / USB-C power bank',         spec: <>5 V 3 A capable, 10 000 mAh+ for untethered runs over 2 hr. Wall PSU is fine for benchtop use.</>,                                                                                                                                  price: '$30 – $60' },
+    { part: 'Case',                               spec: <>Any Pi case with a window for the LCD. RaspyJack 3D-print STLs at <code>github.com/7h30th3r0n3/Raspyjack</code> if you want the exact look.</>,                                                                                     price: '$15 – $40' },
+    { part: 'Short Ethernet patch leads × 2',     spec: <>Cat 6, 0.3 m. One for the built-in port, one for the USB adapter when you're using both at once.</>,                                                                                                                                price: '$5 – $15' },
+  ],
+  footer: 'Total: ~$235 – $420 AUD for the full kit. Pi + microSD + LCD HAT alone (~$120) is enough to run everything in this tab.',
+};
+
+const FLIPPER_PARTS = {
+  storageKey: 'ark.parts.flipper.v1',
+  intro: 'Companion Pi that talks to your Flipper Zero over USB. Pi handles the network + SSH + commands; Flipper handles the radios / NFC / iButton hardware.',
+  rows: [
+    { part: 'Flipper Zero',                       spec: <>The hardware itself. Official from <code>flipperzero.one</code>. Make sure the firmware is updated via qFlipper before connecting to the Pi — Ark expects a recent CLI surface.</>,                                                  price: '$240 – $290' },
+    { part: 'Raspberry Pi',                       spec: <>Any of Pi 5 / Pi 4 / Pi Zero 2 W. The bridge script is ~6 KB of Python — zero strain on hardware. Pi Zero 2 W is the move if you want it pocket-sized.</>,                                                                          price: '$30 – $130' },
+    { part: 'microSD card',                       spec: <>32 GB+, A1 / A2 rated. Flash with <code>sinsera-flipper.img.xz</code> from the Images tab (once it builds — current build is in-flight).</>,                                                                                       price: '$15 – $25' },
+    { part: 'USB-A to USB-C cable',               spec: <>Connects Pi → Flipper. Data-capable, NOT a charge-only cable. The Flipper's USB-C port is the data interface.</>,                                                                                                                  price: '$5 – $15' },
+    { part: 'USB-C power for Pi',                 spec: <>5 V 3 A wall PSU or a 10 000 mAh+ power bank if you want it untethered.</>,                                                                                                                                                         price: '$25 – $50' },
+    { part: 'Case (optional)',                    spec: <>Pi sits next to the Flipper, so a small Pi-only case works. The Flipper has its own enclosure.</>,                                                                                                                                  price: '$10 – $30' },
+  ],
+  footer: 'Total: ~$325 – $540 AUD. Flipper Zero alone is the bulk of the cost; if you already own one, the Pi-side kit is ~$85.',
+};
+
+function readPartsState(key) {
+  if (typeof window === 'undefined') return {};
+  try { return JSON.parse(window.localStorage.getItem(key) || '{}'); } catch { return {}; }
+}
+function writePartsState(key, state) {
+  try { window.localStorage.setItem(key, JSON.stringify(state)); } catch {}
+}
+
+function PartsList({ data }) {
+  const [checked, setChecked] = useState(() => readPartsState(data.storageKey));
+  function toggle(part) {
+    const next = { ...checked, [part]: !checked[part] };
+    setChecked(next);
+    writePartsState(data.storageKey, next);
+  }
+  const total = data.rows.length;
+  const got   = data.rows.filter(r => checked[r.part]).length;
+  return (
+    <details style={{ background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 8 }}>
+      <summary style={{ padding: '10px 14px', cursor: 'pointer', fontFamily: FONT_HEADING, fontSize: 14, color: COLORS.textPrimary, display: 'flex', alignItems: 'center', gap: 10 }}>
+        Parts list — what to physically build
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: got === total ? COLORS.success : COLORS.textMuted, fontFamily: FONT_MONO }}>
+          {got} / {total} got
+        </span>
+      </summary>
+      <div style={{ padding: '4px 16px 14px', fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.7 }}>
+        <p style={{ margin: '0 0 10px', color: COLORS.textMuted }}>{data.intro}</p>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: FONT_BODY }}>
+          <thead>
+            <tr style={{ color: COLORS.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              <th style={{ ...th, width: 28, textAlign: 'center' }}>Got</th>
+              <th style={{ ...th, fontFamily: FONT_HEADING, textAlign: 'left' }}>Part</th>
+              <th style={{ ...th, fontFamily: FONT_HEADING, textAlign: 'left' }}>Spec / notes</th>
+              <th style={{ ...th, fontFamily: FONT_HEADING, textAlign: 'left' }}>Approx AUD</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.rows.map(r => {
+              const isChecked = !!checked[r.part];
+              return (
+                <tr key={r.part} onClick={() => toggle(r.part)} style={{ cursor: 'pointer', opacity: isChecked ? 0.55 : 1 }}>
+                  <td style={{ ...td, textAlign: 'center' }}>
+                    <input type="checkbox" checked={isChecked} onChange={() => toggle(r.part)} onClick={(e) => e.stopPropagation()} style={{ cursor: 'pointer', accentColor: COLORS.accent, width: 14, height: 14 }}/>
+                  </td>
+                  <td style={{ ...td, textDecoration: isChecked ? 'line-through' : 'none' }}>{r.part}</td>
+                  <td style={td}>{r.spec}</td>
+                  <td style={td}>{r.price}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <p style={{ margin: '10px 0 0', fontSize: 11, color: COLORS.textMuted }}>{data.footer}</p>
+      </div>
+    </details>
+  );
+}
+
+// ── Flipper tools — defensive, READ-ONLY commands dispatched via SSH ──
+// Calls the bridge script the sinsera-flipper image drops at
+// /opt/flipper/flipper-bridge.py. The bridge itself has a hard
+// allow-list (see builds/sinsera-flipper/install-template.sh).
+const FLIPPER_TOOLS = [
+  {
+    id:      'info',
+    label:   'Flipper device info',
+    kind:    'passive',
+    risk:    'safe',
+    desc:    'Firmware version, hardware name, region, battery health. Confirms the Flipper is connected at /dev/flipper.',
+    command: 'python3 /opt/flipper/flipper-bridge.py info --timeout 4',
+  },
+  {
+    id:      'power',
+    label:   'Power + battery status',
+    kind:    'passive',
+    risk:    'safe',
+    desc:    'Battery level, USB power state, charging current. Useful for confirming the Flipper has enough juice for longer scans.',
+    command: 'python3 /opt/flipper/flipper-bridge.py power --timeout 4',
+  },
+  {
+    id:      'ble-scan',
+    label:   'BLE passive scan',
+    kind:    'passive',
+    risk:    'safe',
+    desc:    'Enumerate Bluetooth LE advertisements in range. Pure listener — Flipper sends nothing.',
+    command: 'python3 /opt/flipper/flipper-bridge.py ble-scan --timeout 10',
+  },
+  {
+    id:      'subghz-listen',
+    label:   'Sub-GHz spectrum receive',
+    kind:    'passive',
+    risk:    'safe',
+    desc:    'Read sub-GHz activity on default channel (433 / 868 / 915 depending on region). Receive-only — detects rogue ISM-band devices, garage-door / TPMS / weather-station chatter.',
+    command: 'python3 /opt/flipper/flipper-bridge.py subghz-listen --timeout 15',
+  },
+  {
+    id:      'nfc-detect',
+    label:   'NFC tag inventory (READ-only)',
+    kind:    'active-but-light',
+    risk:    'low',
+    desc:    'Detect NFC tags currently in proximity of the Flipper. Read-only — does NOT emulate or clone. Useful for defensive audit of cards an attacker might be carrying.',
+    command: 'python3 /opt/flipper/flipper-bridge.py nfc-detect --timeout 6',
+  },
+];
+
+// Shared driver for RaspyJack + Flipper tabs. Takes the full config
+// for what to call, what to display, and how to label the empty
+// state — same hosts-list + streaming + history sidebar plumbing,
+// different data + copy.
+//   tools       — array of catalogue entries (id/label/risk/desc/command)
+//   reason      — runner_log reason tag, also used for the log endpoint filter
+//   intro       — JSX banner shown above the parts list
+//   parts       — PartsList data ({ storageKey, intro, rows, footer })
+//   emptyState  — JSX shown when the operator has no SSH Runner hosts
+function CompanionRunnerTab({ hubUrl, tools, reason, intro, parts, emptyState }) {
   const [hosts, setHosts]   = useState([]);
   const [hostId, setHostId] = useState('');
-  const [running, setRunning] = useState(null);     // tool.id while running
-  // { tool, host_label?, stdout, stderr, exit_code, duration_ms, ok, live, historic_at? }
+  const [running, setRunning] = useState(null);
   const [result, setResult]   = useState(null);
   const [hostsError, setHostsError] = useState(null);
   const [history, setHistory] = useState([]);
@@ -591,12 +740,12 @@ function RaspyJackTab({ hubUrl }) {
 
   const refreshHistory = useCallback(async () => {
     try {
-      const r = await fetch(`${hubUrl}/api/runner/log?reason=raspyjack&limit=20`);
+      const r = await fetch(`${hubUrl}/api/runner/log?reason=${encodeURIComponent(reason)}&limit=20`);
       if (!r.ok) return;
       const j = await r.json();
       setHistory(j.log || []);
     } catch {}
-  }, [hubUrl]);
+  }, [hubUrl, reason]);
   useEffect(() => { refreshHistory(); const t = setInterval(refreshHistory, 30000); return () => clearInterval(t); }, [refreshHistory]);
 
   // NDJSON streaming — read body chunks, parse line-by-line, append to result.
@@ -611,7 +760,7 @@ function RaspyJackTab({ hubUrl }) {
       const r = await fetch(`${hubUrl}/api/runner/hosts/${hostId}/exec/stream`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ command: tool.command, reason: 'raspyjack', timeoutMs: 60000 }),
+        body: JSON.stringify({ command: tool.command, reason, timeoutMs: 60000 }),
         signal: ctl.signal,
       });
       if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
@@ -664,7 +813,7 @@ function RaspyJackTab({ hubUrl }) {
   }
 
   function loadHistoryEntry(entry) {
-    const tool = RASPYJACK_TOOLS.find(t => t.command === entry.command) ||
+    const tool = tools.find(t => t.command === entry.command) ||
       { id: 'historic', label: 'Custom command', desc: entry.command };
     setResult({
       tool,
@@ -683,46 +832,9 @@ function RaspyJackTab({ hubUrl }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ padding: 12, background: 'rgba(6,182,212,0.06)', border: `1px solid ${COLORS.accentBorder}`, borderRadius: 8, fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.7 }}>
-        <strong style={{ color: COLORS.accentBright }}>Defensive recon only — from Ark.</strong> The Ark RaspyJack tab dispatches the 6 scripts listed below, all from
-        <code> payloads/reconnaissance/</code> and <code>payloads/hardware/</code>. Ark refuses to call anything from <code>payloads/wifi/</code>,
-        <code> payloads/credentials/</code>, <code>DNSSpoof/</code>, or <code>Responder/</code> — those trees were excluded from the .img we ship.
-        The Pi itself runs the full upstream RaspyJack LCD UI (<code>python3 /opt/raspyjack/raspyjack.py</code>) when you SSH in; Ark is a defensive
-        lens, not a cage. Run ONLY against hardware + networks you own.
-      </div>
+      {intro}
 
-      <details style={{ background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 8 }}>
-        <summary style={{ padding: '10px 14px', cursor: 'pointer', fontFamily: FONT_HEADING, fontSize: 14, color: COLORS.textPrimary }}>
-          Parts list — what to physically build
-        </summary>
-        <div style={{ padding: '4px 16px 14px', fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.7 }}>
-          <p style={{ margin: '0 0 10px', color: COLORS.textMuted }}>
-            Reference hardware that the upstream RaspyJack project targets. Spec is flexible — anything that gives you a Pi + screen + battery + Ethernet + Wi-Fi will work; the Mini below is the canonical drop-in kit.
-          </p>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: FONT_BODY }}>
-            <thead>
-              <tr style={{ color: COLORS.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                <th style={{ ...th, fontFamily: FONT_HEADING, textAlign: 'left' }}>Part</th>
-                <th style={{ ...th, fontFamily: FONT_HEADING, textAlign: 'left' }}>Spec / notes</th>
-                <th style={{ ...th, fontFamily: FONT_HEADING, textAlign: 'left' }}>Approx AUD</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td style={td}>Raspberry Pi</td><td style={td}>Pi 4 Model B (2 GB or 4 GB). Pi Zero 2 W also works if you skip the LCD HAT. Avoid Pi 5 — Waveshare LCD pins differ.</td><td style={td}>$80 – $130</td></tr>
-              <tr><td style={td}>microSD card</td><td style={td}>32 GB+, A1 / A2 rated (SanDisk Extreme, Samsung EVO Plus). Flash with the sinsera-raspyjack.img.xz from the Images tab.</td><td style={td}>$15 – $25</td></tr>
-              <tr><td style={td}>Waveshare 1.44" LCD HAT</td><td style={td}>128×128 SPI display with 5 buttons + a 4-way joystick — the canonical RaspyJack UI runs on this. SKU: <code>Waveshare 14747</code>.</td><td style={td}>$25 – $35</td></tr>
-              <tr><td style={td}>USB Wi-Fi adapter (monitor-mode capable)</td><td style={td}>Alfa AWUS036ACS / AWUS036NHA, or any RTL8812AU / RT3070-based adapter. Pi's built-in radio works for client mode; an external one is what gives you the option to do passive monitor scans on a separate channel.</td><td style={td}>$50 – $85</td></tr>
-              <tr><td style={td}>USB Ethernet adapter</td><td style={td}>Pi already has built-in RJ45 — this is an extra so the Pi can sit physically between two cables (the canonical RaspyJack "drop in line" pose). Any USB 2.0 100-Mbps-or-better adapter (Cable Matters / Ugreen).</td><td style={td}>$15 – $30</td></tr>
-              <tr><td style={td}>Battery / USB-C power bank</td><td style={td}>5V 3A capable, 10 000 mAh+ if you want untethered runs of {'>'}2 hr. A wall PSU is fine for benchtop use.</td><td style={td}>$30 – $60</td></tr>
-              <tr><td style={td}>Case</td><td style={td}>Any Pi case with a window for the LCD. The official RaspyJack 3D-print STL files are linked from <code>github.com/7h30th3r0n3/Raspyjack</code> if you want the exact look.</td><td style={td}>$15 – $40</td></tr>
-              <tr><td style={td}>Short Ethernet patch leads × 2</td><td style={td}>Cat 6, 0.3 m. One for the built-in port, one for the USB adapter when you're using both at once.</td><td style={td}>$5 – $15</td></tr>
-            </tbody>
-          </table>
-          <p style={{ margin: '10px 0 0', fontSize: 11, color: COLORS.textMuted }}>
-            Total: ~$235 – $420 AUD for the full kit. The Pi + microSD + LCD HAT alone (~$120) is enough to run everything in the Ark RaspyJack tab.
-          </p>
-        </div>
-      </details>
+      <PartsList data={parts}/>
 
       {hostsError && (
         <div style={{ padding: 12, background: 'rgba(245,180,90,0.08)', border: `1px solid ${COLORS.warning}`, borderRadius: 8, color: COLORS.warning, fontSize: 12 }}>
@@ -730,16 +842,7 @@ function RaspyJackTab({ hubUrl }) {
         </div>
       )}
 
-      {hosts.length === 0 ? (
-        <div style={{ padding: 22, background: COLORS.bgPanel, border: `1px dashed ${COLORS.border}`, borderRadius: 10 }}>
-          <h3 style={{ margin: '0 0 6px', fontFamily: FONT_HEADING, fontSize: 16, color: COLORS.textPrimary }}>No managed hosts</h3>
-          <p style={{ margin: 0, color: COLORS.textMuted, fontSize: 13, lineHeight: 1.7 }}>
-            RaspyJack runs <em>on a Pi you've flashed with the sinsera-raspyjack image</em>; Ark dispatches the scripts via
-            the SSH Runner. Open the <strong>SSH Runner</strong> nav, register that Pi
-            (e.g. <code>pi@RaspyJack.local</code>), then come back here.
-          </p>
-        </div>
-      ) : (
+      {hosts.length === 0 ? emptyState : (
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 280px', gap: 14, alignItems: 'start' }}>
           {/* ── Main column ── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
@@ -761,7 +864,7 @@ function RaspyJackTab({ hubUrl }) {
                 Available scripts
               </h3>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
-                {RASPYJACK_TOOLS.map(t => {
+                {tools.map(t => {
                   const isRunning = running === t.id;
                   return (
                     <div key={t.id} style={{ padding: 14, background: COLORS.bgPanel, border: `1px solid ${isRunning ? COLORS.accentBorder : COLORS.border}`, borderRadius: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -850,7 +953,7 @@ function RaspyJackTab({ hubUrl }) {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 480, overflowY: 'auto' }}>
                 {history.map(h => {
-                  const tool = RASPYJACK_TOOLS.find(t => t.command === h.command);
+                  const tool = tools.find(t => t.command === h.command);
                   const label = tool ? tool.label : h.command.split(' ').slice(0, 5).join(' ');
                   const ok = h.exit_code === 0;
                   return (
@@ -880,6 +983,65 @@ function RaspyJackTab({ hubUrl }) {
 
       <style>{`@keyframes rj-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
     </div>
+  );
+}
+
+function RaspyJackTab({ hubUrl }) {
+  return (
+    <CompanionRunnerTab
+      hubUrl={hubUrl}
+      tools={RASPYJACK_TOOLS}
+      reason="raspyjack"
+      parts={RASPYJACK_PARTS}
+      intro={
+        <div style={{ padding: 12, background: 'rgba(6,182,212,0.06)', border: `1px solid ${COLORS.accentBorder}`, borderRadius: 8, fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.7 }}>
+          <strong style={{ color: COLORS.accentBright }}>Defensive recon only — from Ark.</strong> The Ark RaspyJack tab dispatches the 6 scripts listed below, all from
+          <code> payloads/reconnaissance/</code> and <code>payloads/hardware/</code>. Ark refuses to call anything from <code>payloads/wifi/</code>,
+          <code> payloads/credentials/</code>, <code>DNSSpoof/</code>, or <code>Responder/</code> — those trees were excluded from the .img we ship.
+          The Pi itself runs the full upstream RaspyJack LCD UI (<code>python3 /opt/raspyjack/raspyjack.py</code>) when you SSH in; Ark is a defensive
+          lens, not a cage. Run ONLY against hardware + networks you own.
+        </div>
+      }
+      emptyState={
+        <div style={{ padding: 22, background: COLORS.bgPanel, border: `1px dashed ${COLORS.border}`, borderRadius: 10 }}>
+          <h3 style={{ margin: '0 0 6px', fontFamily: FONT_HEADING, fontSize: 16, color: COLORS.textPrimary }}>No managed hosts</h3>
+          <p style={{ margin: 0, color: COLORS.textMuted, fontSize: 13, lineHeight: 1.7 }}>
+            RaspyJack runs <em>on a Pi you've flashed with the sinsera-raspyjack image</em>; Ark dispatches the scripts via
+            the SSH Runner. Open the <strong>SSH Runner</strong> nav, register that Pi
+            (e.g. <code>pi@RaspyJack.local</code>), then come back here.
+          </p>
+        </div>
+      }
+    />
+  );
+}
+
+function FlipperTab({ hubUrl }) {
+  return (
+    <CompanionRunnerTab
+      hubUrl={hubUrl}
+      tools={FLIPPER_TOOLS}
+      reason="flipper"
+      parts={FLIPPER_PARTS}
+      intro={
+        <div style={{ padding: 12, background: 'rgba(6,182,212,0.06)', border: `1px solid ${COLORS.accentBorder}`, borderRadius: 8, fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.7 }}>
+          <strong style={{ color: COLORS.accentBright }}>Read-only Flipper bridge.</strong> The Ark Flipper tab dispatches only the 5 commands listed below
+          via the <code>/opt/flipper/flipper-bridge.py</code> script on a Pi that's been flashed with the <code>sinsera-flipper</code> image
+          AND has a Flipper Zero plugged in via USB. The bridge has a hard allow-list: transmit-capable operations (sub-GHz TX, BadUSB,
+          NFC emulation, IR TX) are never called from Ark — those stay on the Flipper's physical UI. Use only on RF + NFC environments you own
+          or have written permission to monitor.
+        </div>
+      }
+      emptyState={
+        <div style={{ padding: 22, background: COLORS.bgPanel, border: `1px dashed ${COLORS.border}`, borderRadius: 10 }}>
+          <h3 style={{ margin: '0 0 6px', fontFamily: FONT_HEADING, fontSize: 16, color: COLORS.textPrimary }}>No managed hosts</h3>
+          <p style={{ margin: 0, color: COLORS.textMuted, fontSize: 13, lineHeight: 1.7 }}>
+            The Flipper tab drives a Pi that's been flashed with the <code>sinsera-flipper</code> image and has a Flipper Zero plugged in.
+            Open the <strong>SSH Runner</strong> nav, register that Pi (e.g. <code>root@SinseraFlipper.local</code>), then come back here.
+          </p>
+        </div>
+      }
+    />
   );
 }
 
