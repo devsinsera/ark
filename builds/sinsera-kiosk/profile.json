@@ -1,0 +1,39 @@
+{
+  "profile_id":   "sinsera-kiosk",
+  "version":      1,
+  "category":     "raspberry-pi-devices",
+  "name":         "Sinsera Kiosk",
+  "description":  "Pi 5 that boots straight into Chromium kiosk mode pointed at sinsera.co. Auto-login on tty1, openbox session, Chromium with --kiosk flags + screen blank disabled.",
+
+  "supported_hardware": ["pi-5", "pi-5-4gb", "pi-5-8gb", "pi-5-16gb", "pi-4-4gb", "pi-4-8gb"],
+
+  "default_role":   "kiosk",
+  "default_boot":   "desktop-required",
+  "default_os":     "dietpi",
+  "kiosk_url":      "https://sinsera.co/",
+
+  "base_packages": [
+    "chromium",
+    "chromium-sandbox",
+    "xserver-xorg", "xserver-xorg-input-libinput",
+    "xinit", "x11-xserver-utils",
+    "openbox",
+    "unclutter",
+    "fonts-liberation",
+    "ca-certificates",
+    "curl"
+  ],
+
+  "services": {
+    "auto_start_on_boot": true,
+    "systemd_unit_name":  "kiosk-autologin",
+    "user":               "kiosk",
+    "restart_policy":     "on-failure",
+    "exec_start":         "openbox -> chromium --kiosk",
+    "description":        "Autologin tty1 -> startx -> openbox autostart -> chromium kiosk"
+  },
+
+  "post_install_message": "Insert SD, plug in HDMI + Ethernet (or pre-configure WiFi in dietpi.txt), power on. First boot takes 60-120 s as DietPi finalises; Chromium then launches full-screen on sinsera.co. Press Ctrl+Alt+F2 to escape to a console if needed.",
+
+  "authorization_notice": "Builds a flashable .img. Standard kiosk Pi — no remote access enabled by default. To SSH in later, set AUTO_SETUP_DHCP_HOSTNAME + AUTO_SETUP_SSH_SERVER_INDEX=-1 in /boot/dietpi.txt before first boot."
+}
