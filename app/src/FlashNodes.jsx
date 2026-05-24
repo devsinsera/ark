@@ -6,7 +6,7 @@
 // a Flash Agent directly (that would break multi-network use).
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { Server, HardDrive, Activity, AlertTriangle, Lock, Check, X, Plus, Trash2, StopCircle } from 'lucide-react';
+import { Server, HardDrive, Activity, AlertTriangle, Lock, Check, X, Plus, Trash2, StopCircle, Download } from 'lucide-react';
 import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO } from './lib/theme.js';
 
 const HUB_KEY = 'ark.hubUrl';
@@ -597,6 +597,19 @@ function ImagesTab({ hubUrl }) {
                   <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 10, color: COLORS.textMuted }}>{i.sha256.slice(0, 12)}…</td>
                   <td style={td}>{i.compression}</td>
                   <td style={td}>
+                    <a
+                      href={`${hubUrl}/api/flash/images/${encodeURIComponent(i.image_id)}/download`}
+                      download={i.build_name || `${i.image_id}.img`}
+                      title="Download to this device"
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 3,
+                        padding: '4px 10px', fontSize: 11,
+                        background: 'transparent', color: COLORS.accent,
+                        border: `1px solid ${COLORS.border}`, borderRadius: 4,
+                        textDecoration: 'none', cursor: 'pointer', marginRight: 6,
+                      }}>
+                      <Download size={10}/> download
+                    </a>
                     <button onClick={() => setFlashing({ image: i, node_id: '', target_disk_path: '' })} disabled={nodes.length === 0} style={{
                       padding: '4px 12px', fontSize: 11,
                       background: nodes.length === 0 ? COLORS.bgPanel : COLORS.bgActive,
