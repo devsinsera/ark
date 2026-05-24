@@ -301,14 +301,28 @@ export default function App() {
   useEffect(() => { writeJSON(UI_DRAWER_TAB_KEY, drawerTab); },     [drawerTab]);
   useEffect(() => { writeJSON(UI_CONFIG_SUBTAB_KEY, configSubtab); }, [configSubtab]);
 
-  // ── seed on first run ───────────────────────────────────────────
+  // ── seed on FIRST EVER run only ─────────────────────────────────
+  // Previously this re-seeded any time manifests was empty, which
+  // meant "delete the last manifest + refresh → ark-kiosk-01 keeps
+  // coming back". A separate localStorage marker tracks whether the
+  // operator has been here before — if so, an empty list stays empty
+  // and the Manifests view renders its empty-state instead.
   useEffect(() => {
-    if (Object.keys(manifests).length === 0) {
+    const SEEN_KEY = 'ark.manifests.seeded.v1';
+    const alreadySeeded = (() => { try { return localStorage.getItem(SEEN_KEY) === '1'; } catch { return false; } })();
+    if (Object.keys(manifests).length === 0 && !alreadySeeded) {
       const id = uid();
       setManifestsState({ [id]: emptyManifest('ark-kiosk-01') });
       setActiveIdState(id);
+      try { localStorage.setItem(SEEN_KEY, '1'); } catch {}
     } else if (!activeId || !manifests[activeId]) {
-      setActiveIdState(Object.keys(manifests)[0]);
+      setActiveIdState(Object.keys(manifests)[0] || null);
+    }
+    // Mark "seen" the first time we see a non-empty list too, so
+    // an operator who already has manifests doesn't get re-seeded
+    // if they ever clear them later.
+    if (Object.keys(manifests).length > 0 && !alreadySeeded) {
+      try { localStorage.setItem(SEEN_KEY, '1'); } catch {}
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
