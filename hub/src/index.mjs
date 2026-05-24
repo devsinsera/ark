@@ -685,6 +685,36 @@ const server = createServer(async (req, res) => {
     return json(res, { job_states: JOB_STATES, node_capabilities: NODE_CAPABILITIES });
   }
 
+  // Image delete — hard-removes from registry + optionally the file.
+  // Refuses when an in-flight job references the image.
+  const flashImgDelete = url.pathname.match(/^\/api\/flash\/images\/([^/]+)$/);
+  if (req.method === 'DELETE' && flashImgDelete) {
+    try {
+      const id = decodeURIComponent(flashImgDelete[1]);
+      const result = flash.deleteImage(id);
+      if (!result) return json(res, { ok: false, error: 'image not found' }, 404);
+      // Best-effort remove the file on disk too
+      if (result.source_path && existsSync(result.source_path) && result.source_path.startsWith(FLASH_IMAGE_DIR)) {
+        try { await unlink(result.source_path); } catch {}
+      }
+      return json(res, { ok: true });
+    } catch (e) {
+      return json(res, { ok: false, error: e.message }, 409);
+    }
+  }
+
+  // Node delete — removes from registry. Refuses if jobs are in flight.
+  const flashNodeDelete = url.pathname.match(/^\/api\/flash\/nodes\/([^/]+)$/);
+  if (req.method === 'DELETE' && flashNodeDelete) {
+    try {
+      const id = decodeURIComponent(flashNodeDelete[1]);
+      const ok = flash.deleteNode(id);
+      return json(res, { ok });
+    } catch (e) {
+      return json(res, { ok: false, error: e.message }, 409);
+    }
+  }
+
   // Image upload — accepts raw bytes. Filename via ?filename= query
   // param (cosmetic only; stored content-addressable by sha256).
   if (req.method === 'POST' && url.pathname === '/api/flash/images/upload') {

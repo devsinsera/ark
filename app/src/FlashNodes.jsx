@@ -6,7 +6,7 @@
 // a Flash Agent directly (that would break multi-network use).
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { Server, HardDrive, Activity, AlertTriangle, Lock, Check, X, Plus } from 'lucide-react';
+import { Server, HardDrive, Activity, AlertTriangle, Lock, Check, X, Plus, Trash2, StopCircle } from 'lucide-react';
 import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO } from './lib/theme.js';
 
 const HUB_KEY = 'ark.hubUrl';
@@ -81,6 +81,14 @@ function NodesTab({ hubUrl, onPick }) {
 
   useEffect(() => { refresh(); const t = setInterval(refresh, 8000); return () => clearInterval(t); }, [refresh]);
 
+  async function removeNode(nodeId) {
+    if (!confirm('Remove this flash node from the registry? The Pi keeps running; only Ark forgets about it.')) return;
+    const r = await fetch(`${hubUrl}/api/flash/nodes/${encodeURIComponent(nodeId)}`, { method: 'DELETE' });
+    const j = await r.json();
+    if (!j.ok) alert(j.error || 'failed');
+    refresh();
+  }
+
   if (state.status === 'error') return <Err msg={state.error} hubUrl={hubUrl}/>;
   if (state.nodes.length === 0) return <Empty title="No flash nodes registered yet" body={
     <>Install on a Pi: <code style={{ fontFamily: FONT_MONO }}>sudo HUB_URL={hubUrl} bash agent/install-flash-agent.sh</code>. Once it starts, it auto-registers.</>
@@ -91,7 +99,7 @@ function NodesTab({ hubUrl, onPick }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: FONT_BODY, fontSize: 13 }}>
         <thead>
           <tr style={{ background: 'rgba(255,255,255,0.02)', color: COLORS.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-            <th style={th}>Name</th><th style={th}>Status</th><th style={th}>Model</th><th style={th}>Capabilities</th><th style={th}>Agent URL</th><th style={th}>Last seen</th>
+            <th style={th}>Name</th><th style={th}>Status</th><th style={th}>Model</th><th style={th}>Capabilities</th><th style={th}>Agent URL</th><th style={th}>Last seen</th><th style={th}></th>
           </tr>
         </thead>
         <tbody>
@@ -103,6 +111,12 @@ function NodesTab({ hubUrl, onPick }) {
               <td style={td}>{(n.capabilities || []).join(', ') || '—'}</td>
               <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{n.agent_url}</td>
               <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11, color: COLORS.textMuted }}>{humanAge(new Date(n.last_seen).getTime())}</td>
+              <td style={td} onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => removeNode(n.node_id)} title="Remove from registry" style={{
+                  padding: '4px 10px', fontSize: 11, background: 'transparent',
+                  color: COLORS.error, border: `1px solid ${COLORS.border}`, borderRadius: 4, cursor: 'pointer',
+                }}><Trash2 size={10}/></button>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -203,9 +217,14 @@ function DiskTable({ disks, rootDisk }) {
 }
 
 // ── Tab 3: Jobs ─────────────────────────────────────────────────
+const ACTIVE_STATES = new Set(['queued', 'preparing', 'writing', 'syncing', 'verifying', 'mount_test']);
+
 function JobsTab({ hubUrl }) {
   const [state, setState] = useState({ status: 'loading', jobs: [], error: null });
   const [nodes, setNodes] = useState([]);
+  const [filter, setFilter] = useState('all');   // all / active / completed / failed
+  const [openJob, setOpenJob] = useState(null);
+
   const refresh = useCallback(async () => {
     try {
       const r = await fetch(`${hubUrl}/api/flash/jobs`, { cache: 'no-cache' });
@@ -219,24 +238,180 @@ function JobsTab({ hubUrl }) {
     fetch(`${hubUrl}/api/flash/nodes`).then(r => r.json()).then(j => setNodes(j.nodes || [])).catch(() => {});
   }, [hubUrl]);
 
+  async function cancelJob(jobId) {
+    if (!confirm('Cancel this flash job? If the write is in progress the SD card may be partially-written and unbootable.')) return;
+    await fetch(`${hubUrl}/api/flash/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+    refresh();
+  }
+
   if (state.status === 'error') return <Err msg={state.error} hubUrl={hubUrl}/>;
   if (state.jobs.length === 0) return <Empty title="No flash jobs yet" body="Once you queue one from the Images tab + a registered node it'll appear here with live progress."/>;
 
   const nodeUrlById = Object.fromEntries(nodes.map(n => [n.node_id, n.agent_url]));
+  const filtered = state.jobs.filter(j => {
+    if (filter === 'all')       return true;
+    if (filter === 'active')    return ACTIVE_STATES.has(j.state);
+    if (filter === 'completed') return j.state === 'completed';
+    if (filter === 'failed')    return j.state === 'failed' || j.state === 'cancelled';
+    return true;
+  });
+  const counts = state.jobs.reduce((acc, j) => {
+    if (ACTIVE_STATES.has(j.state)) acc.active++;
+    else if (j.state === 'completed') acc.completed++;
+    else if (j.state === 'failed' || j.state === 'cancelled') acc.failed++;
+    return acc;
+  }, { active: 0, completed: 0, failed: 0 });
 
   return (
-    <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: 'hidden', background: COLORS.bgPanel }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: FONT_BODY, fontSize: 13 }}>
-        <thead>
-          <tr style={{ background: 'rgba(255,255,255,0.02)', color: COLORS.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-            <th style={th}>Job</th><th style={th}>Node</th><th style={th}>Image</th><th style={th}>Target</th>
-            <th style={th}>State</th><th style={th}>Progress</th><th style={th}>Speed</th><th style={th}>ETA</th>
-          </tr>
-        </thead>
-        <tbody>
-          {state.jobs.map(j => <JobRow key={j.job_id} j={j} agentUrl={nodeUrlById[j.node_id]}/>)}
-        </tbody>
-      </table>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <FilterChip label={`All · ${state.jobs.length}`} active={filter === 'all'} onClick={() => setFilter('all')}/>
+        <FilterChip label={`Active · ${counts.active}`} active={filter === 'active'} colour={COLORS.accent} onClick={() => setFilter('active')}/>
+        <FilterChip label={`Completed · ${counts.completed}`} active={filter === 'completed'} colour={COLORS.success} onClick={() => setFilter('completed')}/>
+        <FilterChip label={`Failed · ${counts.failed}`} active={filter === 'failed'} colour={COLORS.error} onClick={() => setFilter('failed')}/>
+      </div>
+      <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: 'hidden', background: COLORS.bgPanel }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: FONT_BODY, fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: 'rgba(255,255,255,0.02)', color: COLORS.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              <th style={th}>Job</th><th style={th}>Node</th><th style={th}>Image</th><th style={th}>Target</th>
+              <th style={th}>State</th><th style={th}>Progress</th><th style={th}>Speed</th><th style={th}>ETA</th>
+              <th style={th}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr><td colSpan={9} style={{ padding: 24, textAlign: 'center', color: COLORS.textMuted }}>
+                No jobs matching this filter.
+              </td></tr>
+            )}
+            {filtered.map(j => <JobRow key={j.job_id} j={j} agentUrl={nodeUrlById[j.node_id]} onOpen={() => setOpenJob(j.job_id)} onCancel={() => cancelJob(j.job_id)}/>)}
+          </tbody>
+        </table>
+      </div>
+      {openJob && <JobDetailModal hubUrl={hubUrl} jobId={openJob} onClose={() => setOpenJob(null)} onCancel={cancelJob}/>}
+    </div>
+  );
+}
+
+function FilterChip({ label, active, colour, onClick }) {
+  const c = colour || COLORS.textPrimary;
+  return (
+    <button onClick={onClick} style={{
+      padding: '6px 12px', fontSize: 12,
+      background: active ? COLORS.bgActive : COLORS.bgPanel,
+      color: active ? c : COLORS.textSecondary,
+      border: `1px solid ${active ? COLORS.accentBorder : COLORS.border}`,
+      borderRadius: 6, cursor: 'pointer', fontFamily: FONT_BODY,
+    }}>{label}</button>
+  );
+}
+
+// Single-job detail modal — full state, log_tail, error if failed,
+// cancel button if active. Polls /api/flash/jobs/<id> every 2 s while
+// the modal is open so the operator sees fresh state.
+function JobDetailModal({ hubUrl, jobId, onClose, onCancel }) {
+  const [job, setJob] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      const r = await fetch(`${hubUrl}/api/flash/jobs/${encodeURIComponent(jobId)}`).catch(() => null);
+      if (r?.ok) {
+        const j = await r.json();
+        if (!cancelled) setJob(j);
+      }
+    };
+    tick();
+    const t = setInterval(tick, 2000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [jobId, hubUrl]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [onClose]);
+
+  if (!job) return null;
+  const active = ACTIVE_STATES.has(job.state);
+  const colour = stateColour(job.state);
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 1000,
+      background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`,
+        borderRadius: 12, width: '100%', maxWidth: 720, maxHeight: '85vh',
+        overflow: 'auto', color: COLORS.textPrimary, padding: '20px 22px',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
+          <div>
+            <h3 style={{ margin: 0, fontFamily: FONT_HEADING, fontSize: 20 }}>{job.job_id}</h3>
+            <div style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
+              {job.node_id} · {job.image_id} → {job.target_disk_path}
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Close" style={{ background: 'transparent', border: 'none', color: COLORS.textMuted, fontSize: 22, cursor: 'pointer', lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10, marginBottom: 16 }}>
+          <DetailStat label="State"        value={<span style={{ color: colour, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>{job.state}</span>}/>
+          <DetailStat label="Progress"     value={`${job.progress_pct || 0}%`}/>
+          <DetailStat label="Bytes written" value={prettyBytes(job.bytes_written || 0)}/>
+          <DetailStat label="Speed"         value={job.write_speed_mbps ? `${job.write_speed_mbps} MB/s` : '—'}/>
+          <DetailStat label="ETA"           value={job.eta_s ? `${job.eta_s}s` : '—'}/>
+          <DetailStat label="Created"       value={(job.created_at || '').slice(11, 19)}/>
+          {job.started_at   && <DetailStat label="Started"   value={(job.started_at   || '').slice(11, 19)}/>}
+          {job.completed_at && <DetailStat label="Completed" value={(job.completed_at || '').slice(11, 19)}/>}
+        </div>
+
+        <div style={{ width: '100%', height: 8, background: 'rgba(255,255,255,0.08)', borderRadius: 4, overflow: 'hidden', marginBottom: 14 }}>
+          <div style={{ width: `${job.progress_pct || 0}%`, height: '100%', background: colour, transition: 'width 300ms ease' }}/>
+        </div>
+
+        {job.error && (
+          <div style={{ padding: 12, background: 'rgba(239,111,92,0.10)', border: `1px solid ${COLORS.error}`, borderRadius: 6, marginBottom: 14 }}>
+            <div style={{ fontSize: 11, color: COLORS.error, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Error</div>
+            <pre style={{ margin: 0, fontFamily: FONT_MONO, fontSize: 12, color: COLORS.error, whiteSpace: 'pre-wrap' }}>{job.error}</pre>
+          </div>
+        )}
+
+        {job.log_tail && (
+          <details open={!active}>
+            <summary style={{ fontSize: 11, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, cursor: 'pointer' }}>
+              Log tail
+            </summary>
+            <pre style={{ margin: '6px 0 0', padding: 10, background: '#040608', color: COLORS.textPrimary, border: `1px solid ${COLORS.border}`, borderRadius: 4, fontFamily: FONT_MONO, fontSize: 11, lineHeight: 1.55, overflow: 'auto', maxHeight: 280, whiteSpace: 'pre-wrap' }}>
+              {job.log_tail}
+            </pre>
+          </details>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+          {active && (
+            <button onClick={() => onCancel(jobId)} style={{
+              padding: '8px 14px', background: 'transparent',
+              border: `1px solid ${COLORS.error}`, color: COLORS.error,
+              borderRadius: 8, fontSize: 13, cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}><StopCircle size={12}/> Cancel job</button>
+          )}
+          <button onClick={onClose} style={{ padding: '8px 14px', background: COLORS.accent, border: 'none', color: '#0a0a0a', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetailStat({ label, value }) {
+  return (
+    <div style={{ padding: '10px 12px', background: 'rgba(255,255,255,0.025)', border: `1px solid ${COLORS.border}`, borderRadius: 8 }}>
+      <div style={{ fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.6 }}>{label}</div>
+      <div style={{ fontSize: 14, marginTop: 2, color: COLORS.textPrimary, fontFamily: FONT_MONO }}>{value}</div>
     </div>
   );
 }
@@ -267,14 +442,13 @@ function useJobStream(j, agentUrl) {
   return live;
 }
 
-function JobRow({ j, agentUrl }) {
+function JobRow({ j, agentUrl, onOpen, onCancel }) {
   const live = useJobStream(j, agentUrl);
-  // Merge live updates over the polled snapshot — WS progress wins
-  // when fresher than the poll.
   const merged = { ...j, ...(live || {}) };
   const colour = stateColour(merged.state);
+  const active = ACTIVE_STATES.has(merged.state);
   return (
-    <tr>
+    <tr style={{ cursor: 'pointer' }} onClick={onOpen}>
       <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>
         {merged.job_id}
         {live && <span title="WebSocket stream" style={{ marginLeft: 4, color: COLORS.success }}>●</span>}
@@ -291,6 +465,14 @@ function JobRow({ j, agentUrl }) {
       </td>
       <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{merged.write_speed_mbps ? `${merged.write_speed_mbps} MB/s` : '—'}</td>
       <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 11 }}>{merged.eta_s ? `${merged.eta_s}s` : '—'}</td>
+      <td style={td} onClick={(e) => e.stopPropagation()}>
+        {active && (
+          <button onClick={() => onCancel(merged.job_id)} title="Cancel" style={{
+            padding: '4px 8px', fontSize: 11, background: 'transparent',
+            color: COLORS.error, border: `1px solid ${COLORS.border}`, borderRadius: 4, cursor: 'pointer',
+          }}><StopCircle size={10}/></button>
+        )}
+      </td>
     </tr>
   );
 }
@@ -421,7 +603,21 @@ function ImagesTab({ hubUrl }) {
                       color: nodes.length === 0 ? COLORS.textMuted : COLORS.accentBright,
                       border: `1px solid ${COLORS.border}`, borderRadius: 4,
                       cursor: nodes.length === 0 ? 'not-allowed' : 'pointer',
+                      marginRight: 6,
                     }}>flash →</button>
+                    <button
+                      onClick={async () => {
+                        if (!confirm(`Delete image ${i.image_id}? The .img file on disk is removed too. Refused if a job is in flight.`)) return;
+                        const r = await fetch(`${hubUrl}/api/flash/images/${encodeURIComponent(i.image_id)}`, { method: 'DELETE' });
+                        const j = await r.json();
+                        if (!j.ok) alert(j.error || 'failed');
+                        refresh();
+                      }}
+                      title="Delete image"
+                      style={{
+                        padding: '4px 8px', fontSize: 11, background: 'transparent',
+                        color: COLORS.error, border: `1px solid ${COLORS.border}`, borderRadius: 4, cursor: 'pointer',
+                      }}><Trash2 size={10}/></button>
                   </td>
                 </tr>
               ))}

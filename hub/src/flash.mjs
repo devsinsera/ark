@@ -152,6 +152,34 @@ export function initFlash(db) {
       return r.changes > 0;
     },
 
+    // Hard-delete an image registry row. Returns the row's
+    // source_path so the caller can also remove the file on disk.
+    // Refuses to delete an image referenced by an in-flight job.
+    deleteImage(id) {
+      const inflight = db.prepare(`
+        SELECT COUNT(*) AS n FROM flash_jobs
+        WHERE image_id = ? AND state NOT IN ('completed', 'failed', 'cancelled')
+      `).get(id);
+      if (inflight.n > 0) throw new Error(`image ${id} is referenced by ${inflight.n} in-flight job(s); cancel them first`);
+      const img = this.getImage(id);
+      if (!img) return null;
+      db.prepare(`DELETE FROM flash_images WHERE image_id = ?`).run(id);
+      return { deleted: true, source_path: img.source_path };
+    },
+
+    // Hard-delete a flash node from the registry. Doesn't touch the
+    // Pi itself — just removes Ark's record. Refuses if jobs are
+    // in flight against this node.
+    deleteNode(id) {
+      const inflight = db.prepare(`
+        SELECT COUNT(*) AS n FROM flash_jobs
+        WHERE node_id = ? AND state NOT IN ('completed', 'failed', 'cancelled')
+      `).get(id);
+      if (inflight.n > 0) throw new Error(`node ${id} has ${inflight.n} job(s) in flight; cancel them first`);
+      const r = db.prepare(`DELETE FROM flash_nodes WHERE node_id = ?`).run(id);
+      return r.changes > 0;
+    },
+
     // ── Jobs ─────────────────────────────────────────────────────
     enqueueJob(job) {
       const errors = validateJobInput(job);
