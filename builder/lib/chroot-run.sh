@@ -173,6 +173,27 @@ mkdir -p "$MNT_ROOT/ark"
 cp "$PLAN_SH" "$MNT_ROOT/ark/install.plan.sh"
 chmod +x "$MNT_ROOT/ark/install.plan.sh"
 
+# Sibling artefacts: anything next to install.plan.sh that looks like
+# a tarball (.tar.gz / .tgz / .tar.xz) gets copied into the rootfs at
+# /opt/ark-extras/. Tarballs can be much larger than the FAT32 boot
+# partition (typically 128 MB on a Pi image) — the rootfs has more
+# headroom (~200 MB on a fresh DietPi base, much more after DietPi
+# expands the partition on first boot). First-boot scripts find the
+# tarballs at /opt/ark-extras/.
+PLAN_DIR="$(dirname "$PLAN_SH")"
+EXTRAS_DIR="$MNT_ROOT/opt/ark-extras"
+if [[ -d "$PLAN_DIR" ]]; then
+  mkdir -p "$EXTRAS_DIR"
+  shopt -s nullglob
+  for extra in "$PLAN_DIR"/*.tar.gz "$PLAN_DIR"/*.tgz "$PLAN_DIR"/*.tar.xz; do
+    [[ -f "$extra" ]] || continue
+    bn=$(basename "$extra")
+    log "staging plan extra: $bn  ($(stat --printf='%s' "$extra") bytes) -> /opt/ark-extras/$bn"
+    cp "$extra" "$EXTRAS_DIR/$bn"
+  done
+  shopt -u nullglob
+fi
+
 # ── 8) chroot + run the plan ────────────────────────────────────────
 if [[ "${ARK_SKIP_INSTALL:-0}" == "1" ]]; then
   log "ARK_SKIP_INSTALL=1 — skipping plan execution (debug)"
