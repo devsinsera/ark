@@ -161,11 +161,65 @@ export function initRunner(db) {
       return { ok: result.code === 0, exit_code: result.code, stderr: result.stderr, duration_ms: dur };
     },
 
+    // ── Streaming exec ─────────────────────────────────────────
+    // Same as exec() except onChunk is called for each piece of
+    // stdout / stderr as it arrives. Final return value identical
+    // to exec() so callers that only care about totals can ignore
+    // onChunk. Still writes one row to runner_log at the end.
+    async execStream(hostId, command, { reason = 'manual', timeoutMs = 60000, onChunk } = {}) {
+      if (typeof command !== 'string' || !command.trim()) throw new Error('command required');
+      const host = this.getHost(hostId);
+      if (!host) throw new Error(`unknown host_id: ${hostId}`);
+      const t0 = Date.now();
+      const args = ['-o', 'BatchMode=yes',
+                    '-o', 'ConnectTimeout=10',
+                    '-o', 'StrictHostKeyChecking=accept-new',
+                    '-p', String(host.ssh_port || 22)];
+      if (host.identity_file) { args.push('-i', host.identity_file); }
+      args.push(host.ssh_target.split(':')[0], '--', command);
+
+      const result = await runSpawnStream('ssh', args, timeoutMs, onChunk);
+      const dur = Date.now() - t0;
+      const stdoutTail = result.stdout.slice(-4096);
+      const stderrTail = result.stderr.slice(-4096);
+      db.prepare(`
+        INSERT INTO runner_log (host_id, command, exit_code, stdout_tail, stderr_tail, duration_ms, ran_at, reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(hostId, command, result.code, stdoutTail, stderrTail, dur, new Date().toISOString(), reason);
+      db.prepare(`
+        UPDATE managed_hosts SET last_reached_at = ?, last_status = ? WHERE id = ?
+      `).run(new Date().toISOString(), result.code === 0 ? 'ok' : `exit ${result.code}`, hostId);
+      return {
+        ok:          result.code === 0,
+        exit_code:   result.code,
+        stdout:      result.stdout,
+        stderr:      result.stderr,
+        duration_ms: dur,
+      };
+    },
+
     // ── Log access ─────────────────────────────────────────────
     listLog(hostId, limit = 50) {
       return db.prepare(`
         SELECT * FROM runner_log WHERE host_id = ? ORDER BY ran_at DESC LIMIT ?
       `).all(hostId, limit);
+    },
+    // All recent runs filtered by reason tag, joined to managed_hosts
+    // for the human-readable label. Caps limit at 200 to keep payload
+    // bounded.
+    listLogByReason(reason, limit = 20) {
+      const lim = Math.max(1, Math.min(200, Number(limit) || 20));
+      return db.prepare(`
+        SELECT
+          rl.id, rl.host_id, rl.command, rl.exit_code,
+          rl.stdout_tail, rl.stderr_tail, rl.duration_ms, rl.ran_at, rl.reason,
+          mh.label AS host_label, mh.ssh_target
+        FROM runner_log rl
+        LEFT JOIN managed_hosts mh ON mh.id = rl.host_id
+        WHERE rl.reason = ?
+        ORDER BY rl.ran_at DESC
+        LIMIT ?
+      `).all(reason, lim);
     },
   };
 }
@@ -182,5 +236,34 @@ function runSpawn(cmd, args, timeoutMs) {
     const t = setTimeout(() => { try { child.kill('SIGTERM'); } catch {} }, timeoutMs);
     child.on('close', (code) => { clearTimeout(t); resolve({ code, stdout, stderr }); });
     child.on('error', (e) => { clearTimeout(t); resolve({ code: -1, stdout, stderr: stderr + '\nspawn error: ' + e.message }); });
+  });
+}
+
+// runSpawn variant that calls onChunk({stream, data}) for every
+// stdout/stderr buffer as it arrives. Still resolves with the full
+// concatenated stdout + stderr so callers can persist them.
+function runSpawnStream(cmd, args, timeoutMs, onChunk) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (b) => {
+      const s = b.toString('utf8'); stdout += s;
+      try { onChunk && onChunk({ stream: 'stdout', data: s }); } catch {}
+    });
+    child.stderr.on('data', (b) => {
+      const s = b.toString('utf8'); stderr += s;
+      try { onChunk && onChunk({ stream: 'stderr', data: s }); } catch {}
+    });
+    const t = setTimeout(() => {
+      try { child.kill('SIGTERM'); } catch {}
+      try { onChunk && onChunk({ stream: 'stderr', data: `\n[timed out after ${timeoutMs}ms]\n` }); } catch {}
+    }, timeoutMs);
+    child.on('close', (code) => { clearTimeout(t); resolve({ code, stdout, stderr }); });
+    child.on('error', (e) => {
+      clearTimeout(t);
+      const errLine = '\nspawn error: ' + e.message;
+      try { onChunk && onChunk({ stream: 'stderr', data: errLine }); } catch {}
+      resolve({ code: -1, stdout, stderr: stderr + errLine });
+    });
   });
 }

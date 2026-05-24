@@ -4,8 +4,8 @@
 // and a hardening checklist. NEVER auto-runs anything aggressive
 // against unapproved hosts. Recommendations only.
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { Shield, AlertTriangle, Check, X, Plus, Trash2, Activity, Settings as SettingsIcon, ScrollText, Crosshair, Play } from 'lucide-react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { Shield, AlertTriangle, Check, X, Plus, Trash2, Activity, Settings as SettingsIcon, ScrollText, Crosshair, Play, History, Square } from 'lucide-react';
 import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO } from './lib/theme.js';
 
 const HUB_KEY = 'ark.hubUrl';
@@ -552,8 +552,11 @@ function RaspyJackTab({ hubUrl }) {
   const [hosts, setHosts]   = useState([]);
   const [hostId, setHostId] = useState('');
   const [running, setRunning] = useState(null);     // tool.id while running
-  const [result, setResult]   = useState(null);     // { tool, exec } most recent
+  // { tool, host_label?, stdout, stderr, exit_code, duration_ms, ok, live, historic_at? }
+  const [result, setResult]   = useState(null);
   const [hostsError, setHostsError] = useState(null);
+  const [history, setHistory] = useState([]);
+  const abortRef = useRef(null);
 
   const refreshHosts = useCallback(async () => {
     try {
@@ -567,21 +570,94 @@ function RaspyJackTab({ hubUrl }) {
   }, [hubUrl, hostId]);
   useEffect(() => { refreshHosts(); const t = setInterval(refreshHosts, 15000); return () => clearInterval(t); }, [refreshHosts]);
 
+  const refreshHistory = useCallback(async () => {
+    try {
+      const r = await fetch(`${hubUrl}/api/runner/log?reason=raspyjack&limit=20`);
+      if (!r.ok) return;
+      const j = await r.json();
+      setHistory(j.log || []);
+    } catch {}
+  }, [hubUrl]);
+  useEffect(() => { refreshHistory(); const t = setInterval(refreshHistory, 30000); return () => clearInterval(t); }, [refreshHistory]);
+
+  // NDJSON streaming — read body chunks, parse line-by-line, append to result.
   async function run(tool) {
     if (!hostId) { alert('Pick a host first.'); return; }
     setRunning(tool.id);
-    setResult(null);
+    setResult({ tool, stdout: '', stderr: '', exit_code: null, duration_ms: 0, ok: false, live: true });
+
+    const ctl = new AbortController();
+    abortRef.current = ctl;
     try {
-      const r = await fetch(`${hubUrl}/api/runner/hosts/${hostId}/exec`, {
+      const r = await fetch(`${hubUrl}/api/runner/hosts/${hostId}/exec/stream`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ command: tool.command, reason: 'raspyjack', timeoutMs: 60000 }),
+        signal: ctl.signal,
       });
-      const j = await r.json();
-      setResult({ tool, exec: j });
+      if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 1);
+          if (!line) continue;
+          let ev;
+          try { ev = JSON.parse(line); } catch { continue; }
+          if (ev.event === 'chunk') {
+            setResult(prev => prev ? ({
+              ...prev,
+              stdout: ev.stream === 'stdout' ? prev.stdout + ev.data : prev.stdout,
+              stderr: ev.stream === 'stderr' ? prev.stderr + ev.data : prev.stderr,
+            }) : prev);
+          } else if (ev.event === 'end') {
+            setResult(prev => prev ? ({
+              ...prev,
+              exit_code:   ev.exit_code,
+              duration_ms: ev.duration_ms || 0,
+              ok:          !!ev.ok,
+              live:        false,
+            }) : prev);
+          }
+        }
+      }
     } catch (e) {
-      setResult({ tool, exec: { ok: false, exit_code: -1, stdout: '', stderr: e.message, duration_ms: 0 } });
-    } finally { setRunning(null); }
+      if (e.name !== 'AbortError') {
+        setResult(prev => prev ? ({ ...prev, stderr: (prev.stderr || '') + '\n' + e.message, live: false, ok: false, exit_code: -1 }) : prev);
+      } else {
+        setResult(prev => prev ? ({ ...prev, stderr: (prev.stderr || '') + '\n[cancelled by operator]', live: false, ok: false, exit_code: -2 }) : prev);
+      }
+    } finally {
+      setRunning(null);
+      abortRef.current = null;
+      refreshHistory();
+    }
+  }
+
+  function cancel() {
+    if (abortRef.current) abortRef.current.abort();
+  }
+
+  function loadHistoryEntry(entry) {
+    const tool = RASPYJACK_TOOLS.find(t => t.command === entry.command) ||
+      { id: 'historic', label: 'Custom command', desc: entry.command };
+    setResult({
+      tool,
+      host_label:  entry.host_label,
+      stdout:      entry.stdout_tail || '',
+      stderr:      entry.stderr_tail || '',
+      exit_code:   entry.exit_code,
+      duration_ms: entry.duration_ms,
+      ok:          entry.exit_code === 0,
+      live:        false,
+      historic_at: entry.ran_at,
+    });
   }
 
   const selected = hosts.find(h => String(h.id) === String(hostId));
@@ -611,70 +687,145 @@ function RaspyJackTab({ hubUrl }) {
           </p>
         </div>
       ) : (
-        <>
-          <section style={{ padding: 12, background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10 }}>
-            <label style={{ fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Run on host</label>
-            <select value={hostId} onChange={e => setHostId(e.target.value)} style={{ ...inp, marginTop: 4, maxWidth: 480 }}>
-              <option value="">— pick a host —</option>
-              {hosts.map(h => <option key={h.id} value={h.id}>{h.label} ({h.ssh_target})</option>)}
-            </select>
-            {selected && (
-              <div style={{ marginTop: 6, fontSize: 11, color: COLORS.textMuted, fontFamily: FONT_MONO }}>
-                last reached: {selected.last_reached_at ? selected.last_reached_at.slice(11, 19) : 'never'} · status: {selected.last_status || 'unknown'}
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 280px', gap: 14, alignItems: 'start' }}>
+          {/* ── Main column ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
+            <section style={{ padding: 12, background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10 }}>
+              <label style={{ fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Run on host</label>
+              <select value={hostId} onChange={e => setHostId(e.target.value)} style={{ ...inp, marginTop: 4, maxWidth: 480 }}>
+                <option value="">— pick a host —</option>
+                {hosts.map(h => <option key={h.id} value={h.id}>{h.label} ({h.ssh_target})</option>)}
+              </select>
+              {selected && (
+                <div style={{ marginTop: 6, fontSize: 11, color: COLORS.textMuted, fontFamily: FONT_MONO }}>
+                  last reached: {selected.last_reached_at ? selected.last_reached_at.slice(11, 19) : 'never'} · status: {selected.last_status || 'unknown'}
+                </div>
+              )}
+            </section>
+
+            <section>
+              <h3 style={{ margin: '0 0 10px', fontFamily: FONT_HEADING, fontSize: 18, color: COLORS.textPrimary }}>
+                Available scripts
+              </h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
+                {RASPYJACK_TOOLS.map(t => {
+                  const isRunning = running === t.id;
+                  return (
+                    <div key={t.id} style={{ padding: 14, background: COLORS.bgPanel, border: `1px solid ${isRunning ? COLORS.accentBorder : COLORS.border}`, borderRadius: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                        <strong style={{ color: COLORS.textPrimary, fontSize: 14 }}>{t.label}</strong>
+                        <span style={{ marginLeft: 'auto', padding: '2px 8px', fontSize: 10, borderRadius: 4, background: (RISK_COLOUR[t.risk] || COLORS.textMuted) + '22', color: RISK_COLOUR[t.risk] || COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>{t.risk}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>{t.desc}</div>
+                      <pre style={{ margin: 0, padding: 8, fontSize: 10, background: '#040608', color: COLORS.textSecondary, border: `1px solid ${COLORS.border}`, borderRadius: 4, fontFamily: FONT_MONO, overflow: 'auto' }}>{t.command}</pre>
+                      {isRunning ? (
+                        <button onClick={cancel} style={{
+                          padding: '6px 12px', background: 'rgba(239,111,92,0.15)', color: COLORS.error,
+                          border: `1px solid ${COLORS.error}`, borderRadius: 6,
+                          fontSize: 12, fontFamily: FONT_BODY, fontWeight: 500, cursor: 'pointer',
+                          alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6,
+                        }}>
+                          <Square size={11}/> Cancel · streaming…
+                        </button>
+                      ) : (
+                        <button onClick={() => run(t)} disabled={!hostId || running !== null} style={{
+                          padding: '6px 12px',
+                          background: (!hostId || running !== null) ? COLORS.bgPanel : COLORS.bgActive,
+                          color: (!hostId || running !== null) ? COLORS.textMuted : COLORS.accentBright,
+                          border: `1px solid ${COLORS.accentBorder}`, borderRadius: 6,
+                          fontSize: 12, fontFamily: FONT_BODY, fontWeight: 500,
+                          cursor: (!hostId || running !== null) ? 'not-allowed' : 'pointer',
+                          alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6,
+                        }}>
+                          <Play size={11}/> Run on this host
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            {result && (() => {
+              const borderColour =
+                result.live ? COLORS.accentBorder :
+                result.ok   ? COLORS.success :
+                              COLORS.error;
+              return (
+                <section style={{ padding: 14, background: COLORS.bgPanel, border: `1px solid ${borderColour}`, borderRadius: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                    {result.live ? (
+                      <span style={{ padding: '2px 8px', fontSize: 11, borderRadius: 4, background: 'rgba(6,182,212,0.18)', color: COLORS.accentBright, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: 3, background: COLORS.accentBright, animation: 'rj-pulse 0.9s ease-in-out infinite' }}/>
+                        live
+                      </span>
+                    ) : (
+                      <span style={{ padding: '2px 8px', fontSize: 11, borderRadius: 4, background: result.ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,111,92,0.15)', color: result.ok ? COLORS.success : COLORS.error, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        exit {result.exit_code}
+                      </span>
+                    )}
+                    <span style={{ fontSize: 13, color: COLORS.textPrimary, fontWeight: 500 }}>{result.tool.label}</span>
+                    {result.host_label && <span style={{ fontSize: 11, color: COLORS.textMuted }}>on {result.host_label}</span>}
+                    {result.historic_at && <span style={{ fontSize: 11, color: COLORS.textMuted, fontFamily: FONT_MONO }}>{result.historic_at.slice(0, 19).replace('T', ' ')}</span>}
+                    <span style={{ marginLeft: 'auto', fontSize: 11, color: COLORS.textMuted, fontFamily: FONT_MONO }}>
+                      {result.duration_ms ? `${result.duration_ms} ms` : ''}
+                    </span>
+                  </div>
+                  {result.stdout && <Output title="stdout" body={result.stdout} colour={COLORS.textPrimary}/>}
+                  {result.stderr && <Output title="stderr" body={result.stderr} colour={COLORS.warning}/>}
+                  {!result.stdout && !result.stderr && result.live && (
+                    <div style={{ padding: 10, color: COLORS.textMuted, fontSize: 12, fontStyle: 'italic' }}>
+                      waiting for first output…
+                    </div>
+                  )}
+                </section>
+              );
+            })()}
+          </div>
+
+          {/* ── History sidebar ── */}
+          <aside style={{ background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, position: 'sticky', top: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <History size={14} style={{ color: COLORS.textMuted }}/>
+              <strong style={{ fontFamily: FONT_HEADING, fontSize: 14, color: COLORS.textPrimary }}>Recent runs</strong>
+              <span style={{ marginLeft: 'auto', fontSize: 10, color: COLORS.textMuted }}>last 20</span>
+            </div>
+            {history.length === 0 ? (
+              <div style={{ padding: '12px 4px', fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>
+                No runs yet. Pick a script and click Run.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 480, overflowY: 'auto' }}>
+                {history.map(h => {
+                  const tool = RASPYJACK_TOOLS.find(t => t.command === h.command);
+                  const label = tool ? tool.label : h.command.split(' ').slice(0, 5).join(' ');
+                  const ok = h.exit_code === 0;
+                  return (
+                    <button key={h.id} onClick={() => loadHistoryEntry(h)} style={{
+                      textAlign: 'left', padding: '8px 10px',
+                      background: 'transparent', border: `1px solid ${COLORS.border}`, borderRadius: 6,
+                      cursor: 'pointer', color: COLORS.textPrimary,
+                      display: 'flex', flexDirection: 'column', gap: 3,
+                      fontFamily: FONT_BODY, fontSize: 12,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 4, background: ok ? COLORS.success : COLORS.error, flexShrink: 0 }}/>
+                        <span style={{ fontWeight: 500, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+                      </div>
+                      <div style={{ fontSize: 10, color: COLORS.textMuted, fontFamily: FONT_MONO, display: 'flex', justifyContent: 'space-between' }}>
+                        <span>{h.host_label || `host#${h.host_id}`}</span>
+                        <span>{h.ran_at.slice(11, 19)} · {h.duration_ms}ms</span>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             )}
-          </section>
-
-          <section>
-            <h3 style={{ margin: '0 0 10px', fontFamily: FONT_HEADING, fontSize: 18, color: COLORS.textPrimary }}>
-              Available scripts
-            </h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
-              {RASPYJACK_TOOLS.map(t => {
-                const isRunning = running === t.id;
-                return (
-                  <div key={t.id} style={{ padding: 14, background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                      <strong style={{ color: COLORS.textPrimary, fontSize: 14 }}>{t.label}</strong>
-                      <span style={{ marginLeft: 'auto', padding: '2px 8px', fontSize: 10, borderRadius: 4, background: (RISK_COLOUR[t.risk] || COLORS.textMuted) + '22', color: RISK_COLOUR[t.risk] || COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>{t.risk}</span>
-                    </div>
-                    <div style={{ fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>{t.desc}</div>
-                    <pre style={{ margin: 0, padding: 8, fontSize: 10, background: '#040608', color: COLORS.textSecondary, border: `1px solid ${COLORS.border}`, borderRadius: 4, fontFamily: FONT_MONO, overflow: 'auto' }}>{t.command}</pre>
-                    <button onClick={() => run(t)} disabled={!hostId || running !== null} style={{
-                      padding: '6px 12px',
-                      background: (!hostId || isRunning) ? COLORS.bgPanel : COLORS.bgActive,
-                      color: (!hostId || isRunning) ? COLORS.textMuted : COLORS.accentBright,
-                      border: `1px solid ${COLORS.accentBorder}`, borderRadius: 6,
-                      fontSize: 12, fontFamily: FONT_BODY, fontWeight: 500,
-                      cursor: (!hostId || isRunning) ? 'wait' : 'pointer',
-                      alignSelf: 'flex-start',
-                      display: 'flex', alignItems: 'center', gap: 6,
-                    }}>
-                      <Play size={11}/> {isRunning ? 'running…' : 'Run on this host'}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          {result && (
-            <section style={{ padding: 14, background: COLORS.bgPanel, border: `1px solid ${result.exec.ok ? COLORS.success : COLORS.error}`, borderRadius: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <span style={{ padding: '2px 8px', fontSize: 11, borderRadius: 4, background: result.exec.ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,111,92,0.15)', color: result.exec.ok ? COLORS.success : COLORS.error, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                  exit {result.exec.exit_code}
-                </span>
-                <span style={{ fontSize: 13, color: COLORS.textPrimary, fontWeight: 500 }}>{result.tool.label}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 11, color: COLORS.textMuted, fontFamily: FONT_MONO }}>
-                  {result.exec.duration_ms ? `${result.exec.duration_ms} ms` : ''}
-                </span>
-              </div>
-              {result.exec.stdout && <Output title="stdout" body={result.exec.stdout} colour={COLORS.textPrimary}/>}
-              {result.exec.stderr && <Output title="stderr" body={result.exec.stderr} colour={COLORS.warning}/>}
-            </section>
-          )}
-        </>
+          </aside>
+        </div>
       )}
+
+      <style>{`@keyframes rj-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
     </div>
   );
 }

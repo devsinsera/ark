@@ -508,6 +508,58 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && runnerLogMatch) {
     return json(res, { log: runner.listLog(Number(runnerLogMatch[1]), 50) });
   }
+  // GET /api/runner/log?reason=raspyjack&limit=20  — all-host log
+  // filtered by reason tag. Backs the RaspyJack tab's run-history
+  // sidebar in Can't Phish Here.
+  if (req.method === 'GET' && url.pathname === '/api/runner/log') {
+    const reason = url.searchParams.get('reason');
+    const limit  = url.searchParams.get('limit');
+    if (!reason) return json(res, { ok: false, error: 'reason query param required' }, 400);
+    return json(res, { log: runner.listLogByReason(reason, limit) });
+  }
+  // POST /api/runner/hosts/<id>/exec/stream — same body as /exec but
+  // returns NDJSON streamed line-by-line:
+  //   {"event":"start","host":{...}}
+  //   {"event":"chunk","stream":"stdout","data":"..."}
+  //   {"event":"chunk","stream":"stderr","data":"..."}
+  //   ...
+  //   {"event":"end","ok":true,"exit_code":0,"duration_ms":1234}
+  const runnerExecStreamMatch = url.pathname.match(/^\/api\/runner\/hosts\/(\d+)\/exec\/stream$/);
+  if (req.method === 'POST' && runnerExecStreamMatch) {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', async () => {
+      const hostId = Number(runnerExecStreamMatch[1]);
+      try {
+        const { command, reason, timeoutMs } = JSON.parse(body);
+        const host = runner.getHost(hostId);
+        if (!host) { return json(res, { ok: false, error: 'unknown host' }, 404); }
+        res.writeHead(200, {
+          'content-type':  'application/x-ndjson',
+          'cache-control': 'no-cache',
+          'x-accel-buffering': 'no',
+        });
+        const send = (obj) => {
+          try { res.write(JSON.stringify(obj) + '\n'); } catch {}
+        };
+        send({ event: 'start', host: { id: host.id, label: host.label, ssh_target: host.ssh_target } });
+        const r = await runner.execStream(hostId, command, {
+          reason: reason || 'manual',
+          timeoutMs: timeoutMs || 60000,
+          onChunk: (c) => send({ event: 'chunk', ...c }),
+        });
+        send({ event: 'end', ok: r.ok, exit_code: r.exit_code, duration_ms: r.duration_ms });
+        res.end();
+      } catch (e) {
+        try {
+          if (!res.headersSent) return json(res, { ok: false, error: e.message }, 400);
+          res.write(JSON.stringify({ event: 'end', ok: false, error: e.message }) + '\n');
+          res.end();
+        } catch {}
+      }
+    });
+    return;
+  }
 
   // CPH scheduled checks — Phase 7.6
   if (req.method === 'GET' && url.pathname === '/api/cph/scheduled') {
