@@ -71,10 +71,18 @@ cleanup() {
 trap cleanup EXIT
 
 # ── 1) copy base → output (don't mutate the source) ──────────────────
-log "copying base image (this may take a minute)…"
+# When BASE_IMG and OUT_IMG resolve to the same inode (the caller has
+# already prepared the working image — e.g. the sinsera-installer
+# pipeline pre-expands then passes the same path for both), skip the
+# copy and operate on it in place.
 mkdir -p "$(dirname "$OUT_IMG")"
-cp --reflink=auto "$BASE_IMG" "$OUT_IMG"
-log "copied → $OUT_IMG ($(stat --printf='%s' "$OUT_IMG") bytes)"
+if [[ "$(readlink -f "$BASE_IMG")" == "$(readlink -f "$OUT_IMG")" ]]; then
+  log "BASE_IMG == OUT_IMG — operating in place ($(stat --printf='%s' "$OUT_IMG") bytes)"
+else
+  log "copying base image (this may take a minute)…"
+  cp --reflink=auto "$BASE_IMG" "$OUT_IMG"
+  log "copied → $OUT_IMG ($(stat --printf='%s' "$OUT_IMG") bytes)"
+fi
 
 # ── 2) losetup ──────────────────────────────────────────────────────
 # In Colima / Docker on macOS, the host kernel doesn't always create
@@ -174,22 +182,27 @@ cp "$PLAN_SH" "$MNT_ROOT/ark/install.plan.sh"
 chmod +x "$MNT_ROOT/ark/install.plan.sh"
 
 # Sibling artefacts: anything next to install.plan.sh that looks like
-# a tarball (.tar.gz / .tgz / .tar.xz) gets copied into the rootfs at
-# /opt/ark-extras/. Tarballs can be much larger than the FAT32 boot
-# partition (typically 128 MB on a Pi image) — the rootfs has more
-# headroom (~200 MB on a fresh DietPi base, much more after DietPi
-# expands the partition on first boot). First-boot scripts find the
-# tarballs at /opt/ark-extras/.
+# a tarball (.tar.gz / .tgz / .tar.xz) OR a Pi image (.img / .img.xz)
+# gets copied into the rootfs at /opt/ark-extras/. The .img / .img.xz
+# matching lets the sinsera-installer profile bundle other Sinsera
+# images so the installer Pi can write them onto NVMe / USB drives
+# without needing network access. Caller is responsible for
+# pre-expanding the rootfs partition (see builder/lib/expand-rootfs.sh)
+# if the extras don't fit.
 PLAN_DIR="$(dirname "$PLAN_SH")"
 EXTRAS_DIR="$MNT_ROOT/opt/ark-extras"
 if [[ -d "$PLAN_DIR" ]]; then
   mkdir -p "$EXTRAS_DIR"
   shopt -s nullglob
-  for extra in "$PLAN_DIR"/*.tar.gz "$PLAN_DIR"/*.tgz "$PLAN_DIR"/*.tar.xz; do
+  for extra in "$PLAN_DIR"/*.tar.gz "$PLAN_DIR"/*.tgz "$PLAN_DIR"/*.tar.xz \
+               "$PLAN_DIR"/*.img    "$PLAN_DIR"/*.img.xz; do
     [[ -f "$extra" ]] || continue
+    # Follow symlinks so the installer profile can symlink to the
+    # canonical images sitting in their own builds/*/out/ trees.
+    real=$(readlink -f "$extra")
     bn=$(basename "$extra")
-    log "staging plan extra: $bn  ($(stat --printf='%s' "$extra") bytes) -> /opt/ark-extras/$bn"
-    cp "$extra" "$EXTRAS_DIR/$bn"
+    log "staging plan extra: $bn  ($(stat --printf='%s' "$real") bytes) -> /opt/ark-extras/$bn"
+    cp "$real" "$EXTRAS_DIR/$bn"
   done
   shopt -u nullglob
 fi
