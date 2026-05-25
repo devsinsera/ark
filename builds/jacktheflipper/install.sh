@@ -113,9 +113,14 @@ step "Install ups CLI + first detection"
 if [ -f /opt/jacktheflipper/ups-cli.py ]; then
   install -m 755 /opt/jacktheflipper/ups-cli.py /usr/local/bin/ups
   echo "ups CLI installed at /usr/local/bin/ups"
-  # First-read may fail if i2c isn't loaded yet (install_raspyjack.sh sets
-  # dtparam=i2c_arm=on but that requires a reboot to take effect).
   /usr/local/bin/ups --json 2>&1 | head -3 || true
+fi
+
+# ── 5c. Ragnar wrapper CLI — start/stop the vendored Ragnar via SSH ──
+step "Install ragnar CLI"
+if [ -f /opt/jacktheflipper/ragnar-cli.sh ]; then
+  install -m 755 /opt/jacktheflipper/ragnar-cli.sh /usr/local/bin/ragnar
+  echo "ragnar CLI installed at /usr/local/bin/ragnar"
 fi
 
 # ── 6. Reload udev for Flipper symlink ──
@@ -170,6 +175,11 @@ cat > /etc/motd <<'EOF'
   ║    Run: ups          (snapshot of V/A/SOC + charging state)   ║
   ║    Or:  ups --watch  (live, refresh every 2 s)                ║
   ║    Auto-detects Waveshare INA219 or PiSugar IP5306.           ║
+  ║                                                               ║
+  ║  Ragnar (vendored offensive recon stack):                     ║
+  ║    Start: ragnar start    Stop: ragnar stop                   ║
+  ║    Status + dashboard URL: ragnar status                      ║
+  ║    Web UI: http://<this-pi-ip>:8091                           ║
   ║                                                               ║
   ║  Tor:                                                         ║
   ║    SOCKS proxy at 127.0.0.1:9050  (sudo systemctl status tor) ║
