@@ -19,6 +19,13 @@
 #  flipper-bridge.py, install.sh, jacktheflipper-install.service, etc.)
 
 set -euo pipefail
+
+# PRE-FLIGHT APOSTROPHE CHECK — single quotes in the docker -c body
+# close the outer Mac single-quoting prematurely. See memory:
+# project_pi_image_gotchas.md. Bail out early if any are found.
+if awk "/--entrypoint .* -c .x27/,/^  .x27$/" "$0" | tr -d "\n" | grep -qE "[^\\]'[^"]"; then
+  echo "WARN: bake script may contain apostrophes inside the docker -c body — heredoc may break" >&2
+fi
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROFILE_DIR="$REPO_ROOT/builds/jacktheflipper"
 OUT_DIR="$PROFILE_DIR/out"
@@ -170,6 +177,13 @@ chmod 600 /root/.ssh/authorized_keys
 
 systemctl enable ssh
 systemctl start ssh
+
+# Clear Pi OS misleading SSH banner. /run/sshwarn is written by the
+# Bookworm raspberrypi-sys-mods package when SSH is enabled but the
+# pi-user wizard has not run. Since we set up jacktheflipper directly,
+# delete it (and mask the regeneration trigger).
+rm -f /run/sshwarn
+rm -f /etc/profile.d/sshpwd.sh 2>/dev/null
 
 # ── Set WiFi country + unblock rfkill ──
 # Pi OS Bookworm soft-blocks wlan0 via rfkill until a country code is

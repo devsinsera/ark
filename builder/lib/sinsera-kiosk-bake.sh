@@ -9,6 +9,13 @@
 # Targets Pi 5 (works on Pi 4 too).
 
 set -euo pipefail
+
+# PRE-FLIGHT APOSTROPHE CHECK — single quotes in the docker -c body
+# close the outer Mac single-quoting prematurely. See memory:
+# project_pi_image_gotchas.md. Bail out early if any are found.
+if awk "/--entrypoint .* -c .x27/,/^  .x27$/" "$0" | tr -d "\n" | grep -qE "[^\\]'[^"]"; then
+  echo "WARN: bake script may contain apostrophes inside the docker -c body — heredoc may break" >&2
+fi
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROFILE_DIR="$REPO_ROOT/builds/sinsera-kiosk"
 OUT_DIR="$PROFILE_DIR/out"
