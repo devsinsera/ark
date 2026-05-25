@@ -5,7 +5,7 @@
 # bridge + systemd oneshot install service.
 #
 # Two-phase install on the Pi:
-#   Phase 1 (cmdline systemd.run=): firstrun.sh creates peta user with
+#   Phase 1 (cmdline systemd.run=): firstrun.sh creates jacktheflipper user with
 #     SSH key, hostname jacktheflipper, WiFi creds, enables sshd.
 #     Reboots.
 #   Phase 2 (jacktheflipper-install.service after network-online): runs
@@ -143,25 +143,23 @@ set -x
 echo "jacktheflipper" > /etc/hostname
 sed -i "s/127.0.1.1.*/127.0.1.1\tjacktheflipper/g" /etc/hosts
 
-# peta user (no password — SSH-key only)
-if ! id peta >/dev/null 2>&1; then
-  useradd -m -s /bin/bash -G adm,dialout,cdrom,sudo,audio,video,plugdev,games,users,input,render,netdev,gpio,i2c,spi peta
+# jacktheflipper user — SSH key OR password (7173) for console access
+if ! id jacktheflipper >/dev/null 2>&1; then
+  useradd -m -s /bin/bash -G adm,dialout,cdrom,sudo,audio,video,plugdev,games,users,input,render,netdev,gpio,i2c,spi jacktheflipper
 fi
-# Set a random, locked password so the Pi OS first-run wizard sees a
-# password is set (it triggers when password is empty/locked) — then
-# lock it so password auth is impossible. SSH-key only.
-echo "peta:!!" | chpasswd -e 2>/dev/null || passwd -l peta
+# Password 7173 — short, intentional. Console + sudo work with it.
+echo "jacktheflipper:7173" | chpasswd
 
-echo "peta ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/010_peta-nopasswd
-chmod 440 /etc/sudoers.d/010_peta-nopasswd
+echo "jacktheflipper ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/010_jacktheflipper-nopasswd
+chmod 440 /etc/sudoers.d/010_jacktheflipper-nopasswd
 
-mkdir -p /home/peta/.ssh
-chmod 700 /home/peta/.ssh
-cat > /home/peta/.ssh/authorized_keys <<PETA_KEY
+mkdir -p /home/jacktheflipper/.ssh
+chmod 700 /home/jacktheflipper/.ssh
+cat > /home/jacktheflipper/.ssh/authorized_keys <<JTF_KEY
 ${SSH_PUBKEY}
-PETA_KEY
-chmod 600 /home/peta/.ssh/authorized_keys
-chown -R peta:peta /home/peta/.ssh
+JTF_KEY
+chmod 600 /home/jacktheflipper/.ssh/authorized_keys
+chown -R jacktheflipper:jacktheflipper /home/jacktheflipper/.ssh
 
 mkdir -p /root/.ssh
 chmod 700 /root/.ssh
@@ -185,7 +183,7 @@ iw reg set AU 2>/dev/null || true
 
 # ── Kill the Pi OS Bookworm first-run wizard ──
 # userconfig.service prompts for username/password on every boot
-# until satisfied. We already created peta, so disable + mask the
+# until satisfied. We already created jacktheflipper, so disable + mask the
 # service AND remove the trigger files Pi OS uses to gate it.
 systemctl disable userconfig.service 2>/dev/null || true
 systemctl mask    userconfig.service 2>/dev/null || true
@@ -195,16 +193,14 @@ rm -f /var/lib/userconf-pi/needs-userconf
 rm -f /etc/userconf.firstboot
 rm -f /etc/xdg/autostart/piwiz.desktop 2>/dev/null
 
-# ── Autologin peta on tty1 ──
-# Boot straight to a peta shell on HDMI, no login prompt. SSH still
-# needs the key. Write the drop-in via a nested heredoc with double
-# quotes to avoid single-quoting issues that close the outer docker
-# -c quoting.
+# ── Autologin jacktheflipper on tty1 ──
+# Boot straight to a jacktheflipper shell on HDMI, no login prompt.
+# SSH still needs the key (or the 7173 password for console-only).
 mkdir -p /etc/systemd/system/getty@tty1.service.d
 cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf <<AUTOLOGIN
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --autologin peta --noclear %I \\\$TERM
+ExecStart=-/sbin/agetty --autologin jacktheflipper --noclear %I \\\$TERM
 AUTOLOGIN
 systemctl daemon-reload
 systemctl enable getty@tty1.service

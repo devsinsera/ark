@@ -14,7 +14,7 @@
 #   7. Reboot so SPI dtoverlay actually loads
 #
 # Logs to /var/log/jacktheflipper-install.log. SSH in and tail to
-# watch progress: ssh peta@jacktheflipper.local 'tail -f /var/log/jacktheflipper-install.log'
+# watch progress: ssh jacktheflipper@jacktheflipper.local 'tail -f /var/log/jacktheflipper-install.log'
 
 set +e
 exec > >(tee -a /var/log/jacktheflipper-install.log) 2>&1
@@ -94,9 +94,9 @@ else
     || echo "git clone failed"
 fi
 
-# ── 3. Mirror SSH key to peta + raspyjack user (when raspyjack creates one) ──
+# ── 3. Mirror SSH key to jacktheflipper + other users that raspyjack might create ──
 step "Mirror SSH key to other users so we can SSH as them after raspyjack install"
-for user in pi peta; do
+for user in pi jacktheflipper; do
   if id "$user" >/dev/null 2>&1; then
     home=$(getent passwd "$user" | cut -d: -f6)
     if [ -f /root/.ssh/authorized_keys ] && [ ! -f "$home/.ssh/authorized_keys" ]; then
@@ -123,6 +123,49 @@ if [ -f install_raspyjack.sh ]; then
   fi
 else
   echo "ERROR: install_raspyjack.sh missing from /opt/raspyjack/"
+fi
+
+# ── 4b. RaspyJack LCD daemon auto-start ──
+# Make the 1.44" Waveshare LCD HAT come up on every boot. install_
+# raspyjack.sh may install its own systemd unit (raspyjack.service);
+# enable it if found. Otherwise write a fallback unit so the LCD
+# always lights up.
+step "Configure raspyjack.py LCD daemon to auto-start on boot"
+RJ_UNIT=""
+for cand in /etc/systemd/system/raspyjack.service /lib/systemd/system/raspyjack.service \
+            /etc/systemd/system/raspyjack-lcd.service /lib/systemd/system/raspyjack-lcd.service; do
+  [ -f "$cand" ] && RJ_UNIT="$cand" && break
+done
+if [ -n "$RJ_UNIT" ]; then
+  echo "found raspyjack systemd unit: $RJ_UNIT — enabling"
+  systemctl daemon-reload
+  systemctl enable "$(basename "$RJ_UNIT")"
+else
+  echo "no raspyjack systemd unit found — writing fallback"
+  cat > /etc/systemd/system/raspyjack-lcd.service <<UNIT
+[Unit]
+Description=RaspyJack LCD UI daemon (1.44 inch HAT)
+Documentation=https://github.com/7h30th3r0n3/Raspyjack
+After=multi-user.target
+ConditionPathExists=/dev/spidev0.0
+ConditionPathExists=/opt/raspyjack/raspyjack.py
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/raspyjack/raspyjack.py
+WorkingDirectory=/opt/raspyjack
+Restart=on-failure
+RestartSec=5
+User=root
+StandardOutput=append:/var/log/raspyjack-lcd.log
+StandardError=append:/var/log/raspyjack-lcd.log
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable raspyjack-lcd.service
+  echo "fallback unit raspyjack-lcd.service enabled"
 fi
 
 # ── 5. Flipper bridge sanity check ──
