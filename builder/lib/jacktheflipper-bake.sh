@@ -26,7 +26,7 @@ OUT_IMG="$OUT_DIR/ark-built.img"
 SRC_XZ="$REPO_ROOT/Os/raspios_lite_arm64_latest.img.xz"
 
 [ -f "$SRC_XZ" ] || { echo "ERROR: base image not found: $SRC_XZ" >&2; exit 1; }
-for f in raspyjack-src.tar.gz flipper-bridge.py install.sh jacktheflipper-install.service 99-flipper.rules; do
+for f in raspyjack-src.tar.gz flipper-bridge.py install.sh jacktheflipper-install.service 99-flipper.rules ups-cli.py; do
   [ -f "$PROFILE_DIR/$f" ] || { echo "ERROR: missing $PROFILE_DIR/$f"; exit 1; }
 done
 mkdir -p "$OUT_DIR"
@@ -113,6 +113,8 @@ docker run --rm --privileged \
 
     cp /profile/flipper-bridge.py /mnt/root/opt/jacktheflipper/flipper-bridge.py
     chmod 755 /mnt/root/opt/jacktheflipper/flipper-bridge.py
+    cp /profile/ups-cli.py /mnt/root/opt/jacktheflipper/ups-cli.py
+    chmod 755 /mnt/root/opt/jacktheflipper/ups-cli.py
     # Substitute __TAILSCALE_AUTHKEY_PLACEHOLDER__ in install.sh
     awk -v tskey="$TAILSCALE_AUTHKEY" "{ gsub(/__TAILSCALE_AUTHKEY_PLACEHOLDER__/, tskey); print }" \
       /profile/install.sh > /mnt/root/opt/jacktheflipper/install.sh

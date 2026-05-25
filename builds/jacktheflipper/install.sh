@@ -108,6 +108,16 @@ else
   echo "ERROR: /opt/jacktheflipper/flipper-bridge.py not executable or missing"
 fi
 
+# ── 5b. UPS CLI — install + try a one-shot read so the log shows what's detected ──
+step "Install ups CLI + first detection"
+if [ -f /opt/jacktheflipper/ups-cli.py ]; then
+  install -m 755 /opt/jacktheflipper/ups-cli.py /usr/local/bin/ups
+  echo "ups CLI installed at /usr/local/bin/ups"
+  # First-read may fail if i2c isn't loaded yet (install_raspyjack.sh sets
+  # dtparam=i2c_arm=on but that requires a reboot to take effect).
+  /usr/local/bin/ups --json 2>&1 | head -3 || true
+fi
+
 # ── 6. Reload udev for Flipper symlink ──
 step "udev reload (for /dev/flipper symlink)"
 udevadm control --reload-rules || true
@@ -155,6 +165,11 @@ cat > /etc/motd <<'EOF'
   ║  Drive from Ark on your Mac:                                  ║
   ║    https://sinsera.co/ark/#security/raspyjack                 ║
   ║    https://sinsera.co/ark/#security/flipper                   ║
+  ║                                                               ║
+  ║  UPS battery:                                                 ║
+  ║    Run: ups          (snapshot of V/A/SOC + charging state)   ║
+  ║    Or:  ups --watch  (live, refresh every 2 s)                ║
+  ║    Auto-detects Waveshare INA219 or PiSugar IP5306.           ║
   ║                                                               ║
   ║  Tor:                                                         ║
   ║    SOCKS proxy at 127.0.0.1:9050  (sudo systemctl status tor) ║
