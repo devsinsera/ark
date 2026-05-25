@@ -151,23 +151,41 @@ mount -t proc  none   "$MNT_ROOT/proc"
 mount -t sysfs none   "$MNT_ROOT/sys"
 
 # ── 5) handle cross-arch: copy qemu-static if host ≠ image arch ─────
-# Apple Silicon hosts run arm64 containers natively, so this is a
-# no-op there. x86 hosts emulating arm64 need the static binary inside
-# the rootfs so the dynamic linker can find it.
+# Match host arch against the image rootfs's /bin/bash ELF header. For
+# arm32 images on an arm64 host we need qemu-arm-static; for arm64
+# images on x86 hosts we need qemu-aarch64-static. binfmt_misc on
+# the kernel side ties everything together via /proc/sys/fs/binfmt_misc.
 HOST_ARCH=$(uname -m)
-case "$HOST_ARCH" in
-  x86_64|i*86)
-    if [[ -x /usr/bin/qemu-aarch64-static ]]; then
-      log "x86 host detected — installing qemu-aarch64-static into rootfs"
-      cp /usr/bin/qemu-aarch64-static "$MNT_ROOT/usr/bin/qemu-aarch64-static"
-    else
-      echo "WARN: x86 host but /usr/bin/qemu-aarch64-static not present in container" >&2
-    fi
-    ;;
-  aarch64|arm64)
-    log "arm64 host — no qemu emulation needed"
-    ;;
+# Read the ELF machine field from the image's /bin/bash (offset 18-19).
+# 0x28 (40) = ARM (arm32), 0xB7 (183) = AArch64, 0x3E (62) = x86_64.
+IMG_ELF_MACHINE=$(od -An -t u1 -N 1 -j 18 "$MNT_ROOT/bin/bash" 2>/dev/null | awk '{print $1}')
+case "$IMG_ELF_MACHINE" in
+  40)  IMG_ARCH=arm32 ;;
+  183) IMG_ARCH=arm64 ;;
+  62)  IMG_ARCH=x86_64 ;;
+  *)   IMG_ARCH=unknown ;;
 esac
+log "host arch: $HOST_ARCH · image arch: $IMG_ARCH (elf machine $IMG_ELF_MACHINE)"
+
+needs_qemu=""
+case "$HOST_ARCH:$IMG_ARCH" in
+  x86_64:arm64|i*86:arm64) needs_qemu=qemu-aarch64-static ;;
+  x86_64:arm32|i*86:arm32) needs_qemu=qemu-arm-static ;;
+  aarch64:arm32|arm64:arm32) needs_qemu=qemu-arm-static ;;
+  aarch64:arm64|arm64:arm64) needs_qemu="" ;;
+  *)                          needs_qemu="" ;;
+esac
+
+if [[ -n "$needs_qemu" ]]; then
+  if [[ -x "/usr/bin/$needs_qemu" ]]; then
+    log "cross-arch chroot — installing $needs_qemu into rootfs"
+    cp "/usr/bin/$needs_qemu" "$MNT_ROOT/usr/bin/$needs_qemu"
+  else
+    echo "WARN: need $needs_qemu but /usr/bin/$needs_qemu not present in container" >&2
+  fi
+else
+  log "no qemu emulation needed (host and image arch match)"
+fi
 
 # ── 6) DNS for apt inside the chroot ─────────────────────────────────
 if [[ -L "$MNT_ROOT/etc/resolv.conf" ]]; then

@@ -5,7 +5,8 @@
   "name":         "Sinsera RaspyJack (defensive, on-own-LAN)",
   "description":  "DietPi image bundled with the operator's local ~/Downloads/Jack/ tree — RaspyJack as the upstream ships it. Installs run on first boot via the project's own install_raspyjack.sh. Authorization: USE ONLY ON HARDWARE YOU OWN AND NETWORKS YOU HAVE WRITTEN PERMISSION TO TEST.",
 
-  "supported_hardware": ["pi-5-4gb", "pi-5-8gb", "pi-5-16gb", "pi-4-4gb", "pi-4-8gb", "pi-3b-plus"],
+  "supported_hardware": ["pi-zero-2-w", "pi-3b-plus", "pi-3b"],
+  "base_image":         "DietPi_RPi2-ARMv7-Trixie.img",
 
   "default_role":   "portable_node",
   "default_boot":   "headless",
