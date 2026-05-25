@@ -335,6 +335,7 @@ function HardeningTab({ hubUrl }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <BaselineSection hubUrl={hubUrl} checks={checks}/>
       <SchedulesSection hubUrl={hubUrl} checks={checks}/>
       <p style={{ margin: 0, color: COLORS.textMuted, fontSize: 12, fontFamily: FONT_BODY, lineHeight: 1.6 }}>
         Below: full check catalogue with the shell commands. Schedule any check above to run automatically against
@@ -362,6 +363,169 @@ function HardeningTab({ hubUrl }) {
     </div>
   );
 }
+// One-shot baseline runner. Fires every probe-able check in sequence
+// against a single host via the existing /api/cph/hardening/run
+// endpoint. Sequential (not parallel) so the host doesn't get hit
+// with 8 concurrent SSH sessions, and so the UI can show progress
+// as each check resolves. Findings are recorded by the Hub via the
+// same code path the scheduler uses.
+function BaselineSection({ hubUrl, checks }) {
+  const [hosts,  setHosts]  = useState([]);
+  const [hostId, setHostId] = useState('');
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0, current: null });
+  const [results, setResults] = useState([]);  // [{ check_id, label, severity, passed?, error?, observation }]
+
+  useEffect(() => {
+    fetch(`${hubUrl}/api/runner/hosts`).then(r => r.json()).then(j => setHosts(j.hosts || [])).catch(() => setHosts([]));
+  }, [hubUrl]);
+
+  const probed = useMemo(() => checks.filter(c => c.probe), [checks]);
+
+  async function runBaseline() {
+    if (!hostId || probed.length === 0) return;
+    setRunning(true);
+    setResults([]);
+    setProgress({ done: 0, total: probed.length, current: probed[0]?.id });
+    const collected = [];
+    for (let i = 0; i < probed.length; i++) {
+      const c = probed[i];
+      setProgress({ done: i, total: probed.length, current: c.id });
+      try {
+        const r = await fetch(`${hubUrl}/api/cph/hardening/run`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ host_id: Number(hostId), check_id: c.id }),
+        });
+        const j = await r.json();
+        collected.push({
+          check_id: c.id, label: c.label, severity: c.severity,
+          passed: j.ok ? j.passed : null,
+          observation: j.observation || '',
+          error: j.ok ? null : (j.error || `HTTP ${r.status}`),
+        });
+      } catch (e) {
+        collected.push({ check_id: c.id, label: c.label, severity: c.severity, passed: null, error: e.message, observation: '' });
+      }
+      setResults([...collected]);
+    }
+    setProgress({ done: probed.length, total: probed.length, current: null });
+    setRunning(false);
+  }
+
+  const summary = useMemo(() => {
+    if (results.length === 0) return null;
+    let pass = 0, fail = 0, err = 0;
+    for (const r of results) {
+      if (r.error != null) err++;
+      else if (r.passed === true) pass++;
+      else if (r.passed === false) fail++;
+    }
+    return { pass, fail, err };
+  }, [results]);
+
+  return (
+    <section style={{ padding: 14, background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10 }}>
+      <h3 style={{ margin: '0 0 6px', fontFamily: FONT_HEADING, fontSize: 18, color: COLORS.textPrimary }}>
+        Baseline run
+      </h3>
+      <p style={{ margin: '0 0 12px', fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>
+        Run every automated check once against a registered host — a quick health snapshot.
+        Each result is recorded as a hardening finding (same as the scheduler).
+        {' '}<strong>{probed.length}</strong> probe-able checks in the catalogue.
+      </p>
+
+      {hosts.length === 0 ? (
+        <div style={{ padding: 14, background: 'rgba(245,180,90,0.06)', border: `1px solid ${COLORS.warning}`, borderRadius: 6, color: COLORS.warning, fontSize: 12 }}>
+          No SSH Runner hosts registered yet. Open the <strong>SSH Runner</strong> nav, add a host, then come back.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+            <select value={hostId} onChange={e => setHostId(e.target.value)} disabled={running} style={{ ...inp, flex: 1, maxWidth: 360 }}>
+              <option value="">— host —</option>
+              {hosts.map(h => <option key={h.id} value={h.id}>{h.label} ({h.ssh_target})</option>)}
+            </select>
+            <button onClick={runBaseline} disabled={!hostId || running || probed.length === 0} style={{
+              padding: '6px 14px',
+              background: (!hostId || running || probed.length === 0) ? COLORS.bgPanel : COLORS.bgActive,
+              color: (!hostId || running || probed.length === 0) ? COLORS.textMuted : COLORS.accentBright,
+              border: `1px solid ${COLORS.accentBorder}`, borderRadius: 6, fontSize: 12,
+              cursor: (!hostId || running || probed.length === 0) ? 'not-allowed' : 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}>
+              <Play size={11}/> {running ? `running ${progress.done}/${progress.total}…` : 'run baseline now'}
+            </button>
+            {summary && (
+              <div style={{ display: 'flex', gap: 6, fontSize: 11, fontFamily: FONT_MONO, color: COLORS.textMuted }}>
+                <span style={{ color: COLORS.success }}>{summary.pass} pass</span>·
+                <span style={{ color: COLORS.error }}>{summary.fail} fail</span>·
+                <span>{summary.err} err</span>
+              </div>
+            )}
+          </div>
+
+          {running && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ width: '100%', height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{ width: `${(progress.done / progress.total) * 100}%`, height: '100%', background: COLORS.accent, transition: 'width 200ms ease' }}/>
+              </div>
+              <div style={{ marginTop: 4, fontSize: 11, color: COLORS.textMuted, fontFamily: FONT_MONO }}>
+                {progress.current ? `running ${progress.current}…` : 'starting…'}
+              </div>
+            </div>
+          )}
+
+          {results.length > 0 && (
+            <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 6, overflow: 'hidden' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: 'rgba(255,255,255,0.02)', color: COLORS.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    <th style={th}>Result</th><th style={th}>Severity</th><th style={th}>Check</th><th style={th}>Observation</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.map(r => (
+                    <tr key={r.check_id}>
+                      <td style={td}>
+                        {r.error != null ? (
+                          <span style={{ padding: '2px 8px', fontSize: 10, borderRadius: 4, background: 'rgba(124,132,153,0.10)', color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>err</span>
+                        ) : r.passed === true ? (
+                          <span style={{ padding: '2px 8px', fontSize: 10, borderRadius: 4, background: 'rgba(34,197,94,0.15)', color: COLORS.success, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>pass</span>
+                        ) : (
+                          <span style={{ padding: '2px 8px', fontSize: 10, borderRadius: 4, background: 'rgba(239,111,92,0.15)', color: COLORS.error, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>fail</span>
+                        )}
+                      </td>
+                      <td style={td}>
+                        <span style={{
+                          padding: '2px 8px', fontSize: 10, borderRadius: 4,
+                          background: severityColour(r.severity) + '22',
+                          color: severityColour(r.severity),
+                          textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600,
+                        }}>{r.severity}</span>
+                      </td>
+                      <td style={td}>
+                        <div style={{ color: COLORS.textPrimary }}>{r.label}</div>
+                        <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLORS.textMuted }}>{r.check_id}</div>
+                      </td>
+                      <td style={{ ...td, maxWidth: 360 }}>
+                        {r.error != null ? (
+                          <span style={{ color: COLORS.error, fontFamily: FONT_MONO, fontSize: 11 }}>{r.error}</span>
+                        ) : (
+                          <code style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLORS.textSecondary, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{r.observation || '—'}</code>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 // Hardening scheduler section — Phase 7.6 UI.
 // Lists scheduled checks (host × check × interval) and lets the
 // operator add / remove / toggle them. The Hub's scheduler tick

@@ -38,6 +38,11 @@ const AGENT_FILE = path.join(REPO_ROOT, 'agent', 'ark-agent.py');
 // named by their sha256 → automatic dedup of re-uploads.
 const FLASH_IMAGE_DIR = path.join(homedir(), '.ark', 'flash-images');
 await mkdir(FLASH_IMAGE_DIR, { recursive: true });
+// Staging area for browser → Hub uploads that get scp'd onward to a
+// managed host. Files here are short-lived (deleted after the scp
+// finishes, success or failure).
+const PUSH_STAGING_DIR = path.join(homedir(), '.ark', 'push-staging');
+await mkdir(PUSH_STAGING_DIR, { recursive: true });
 // Bind host: 127.0.0.1 by default (localhost-only). Set
 // ARK_HUB_BIND_HOST=0.0.0.0 to expose to the LAN — required when
 // the browser running the Ark UI is on a DIFFERENT machine from the
@@ -508,6 +513,51 @@ const server = createServer(async (req, res) => {
   const runnerLogMatch = url.pathname.match(/^\/api\/runner\/hosts\/(\d+)\/log$/);
   if (req.method === 'GET' && runnerLogMatch) {
     return json(res, { log: runner.listLog(Number(runnerLogMatch[1]), 50) });
+  }
+  // POST /api/runner/hosts/<id>/push — accepts raw bytes in the body,
+  // stages them under ~/.ark/push-staging, then scp's the file to the
+  // host at ?path=<remote_path>. Filename for the staging file comes
+  // from ?filename=<name> (cosmetic; the remote path is what matters).
+  // The remote path may be either a full file path or a directory
+  // (trailing /), in which case the filename is appended. Temp file
+  // is unlinked whether the scp succeeds or fails.
+  const runnerPushMatch = url.pathname.match(/^\/api\/runner\/hosts\/(\d+)\/push$/);
+  if (req.method === 'POST' && runnerPushMatch) {
+    const hostId   = Number(runnerPushMatch[1]);
+    const filename = url.searchParams.get('filename') || 'upload.bin';
+    const wantPath = url.searchParams.get('path') || '';
+    if (!wantPath)           return json(res, { ok: false, error: 'path query param required' }, 400);
+    if (!/^[A-Za-z0-9._\-]+$/.test(filename)) return json(res, { ok: false, error: 'filename: only [A-Za-z0-9._-] allowed' }, 400);
+    if (!runner.getHost(hostId)) return json(res, { ok: false, error: 'unknown host_id' }, 404);
+    const remotePath = wantPath.endsWith('/') ? wantPath + filename : wantPath;
+    const stagePath = path.join(PUSH_STAGING_DIR, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${filename}`);
+    let size = 0;
+    const out = createWriteStream(stagePath);
+    req.on('data', (chunk) => { size += chunk.length; out.write(chunk); });
+    req.on('end', () => {
+      out.end(async () => {
+        try {
+          const pushed = await runner.pushFile(hostId, stagePath, remotePath);
+          return json(res, {
+            ok:          pushed.ok,
+            exit_code:   pushed.exit_code,
+            stderr:      pushed.stderr,
+            duration_ms: pushed.duration_ms,
+            remote_path: remotePath,
+            size_bytes:  size,
+          });
+        } catch (e) {
+          return json(res, { ok: false, error: e.message }, 500);
+        } finally {
+          try { await unlink(stagePath); } catch {}
+        }
+      });
+    });
+    req.on('error', async (e) => {
+      try { await unlink(stagePath); } catch {}
+      return json(res, { ok: false, error: e.message }, 400);
+    });
+    return;
   }
   // GET /api/runner/log?reason=raspyjack&limit=20  — all-host log
   // filtered by reason tag. Backs the RaspyJack tab's run-history

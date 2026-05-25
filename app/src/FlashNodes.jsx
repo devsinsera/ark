@@ -6,7 +6,7 @@
 // a Flash Agent directly (that would break multi-network use).
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { Server, HardDrive, Activity, AlertTriangle, Lock, Check, X, Plus, Trash2, StopCircle, Download } from 'lucide-react';
+import { Server, HardDrive, Activity, AlertTriangle, Lock, Check, X, Plus, Trash2, StopCircle, Download, Usb, RefreshCw } from 'lucide-react';
 import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO } from './lib/theme.js';
 
 const HUB_KEY = 'ark.hubUrl';
@@ -26,8 +26,22 @@ const TABS = [
 
 export default function FlashNodes() {
   const hubUrl = readHubUrl();
-  const [tab, setTab] = useState('nodes');
+  // Honour a sub-hash like #flash/images so links from other views
+  // (e.g. the Images page) can deeplink to a specific tab.
+  const initialSub = (typeof window !== 'undefined' ? window.location.hash || '' : '').replace(/^#/, '').split('/')[1];
+  const validTab = TABS.some(t => t.id === initialSub) ? initialSub : 'nodes';
+  const [tab, setTab] = useState(validTab);
   const [selectedNode, setSelectedNode] = useState(null);
+
+  // Mirror the active tab into the URL hash for shareable deeplinks.
+  useEffect(() => {
+    const cur = (window.location.hash || '').replace(/^#/, '').split('/');
+    if (cur[0] !== 'flash') return;
+    const next = `#flash/${tab}`;
+    if (window.location.hash !== next) {
+      window.history.replaceState(null, '', next);
+    }
+  }, [tab]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -675,6 +689,7 @@ function ImagesTab({ hubUrl }) {
   const [nodes,  setNodes]  = useState([]);
   const [uploading, setUploading] = useState(null);  // { name, pct, error? }
   const [flashing, setFlashing] = useState(null);    // { image_id, node_id, target_disk_path }
+  const [localFlash, setLocalFlash] = useState(null); // image being flashed directly to a Mac SD
 
   const refresh = useCallback(async () => {
     const [i, n] = await Promise.all([
@@ -806,7 +821,25 @@ function ImagesTab({ hubUrl }) {
                       }}>
                       <Download size={10}/> download
                     </a>
-                    <button onClick={() => setFlashing({ image: i, node_id: '', target_disk_path: '' })} disabled={nodes.length === 0} style={{
+                    <button
+                      onClick={() => setLocalFlash({ image: i })}
+                      title="Flash this image to an SD card plugged into this Mac (macOS only)"
+                      style={{
+                        padding: '4px 10px', fontSize: 11,
+                        background: COLORS.bgPanel, color: COLORS.accent,
+                        border: `1px solid ${COLORS.border}`, borderRadius: 4,
+                        cursor: 'pointer', marginRight: 6,
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                      }}>
+                      <Usb size={10}/> Mac SD
+                    </button>
+                    <button
+                      onClick={() => setFlashing({ image: i, node_id: '', target_disk_path: '' })}
+                      disabled={nodes.length === 0}
+                      title={nodes.length === 0
+                        ? 'No Flash Nodes registered. Add one in the Nodes tab to flash over the network. (You can still flash to a Mac-attached SD via the Mac SD button.)'
+                        : 'Queue a flash job on a registered Flash Node (Pi).'}
+                      style={{
                       padding: '4px 12px', fontSize: 11,
                       background: nodes.length === 0 ? COLORS.bgPanel : COLORS.bgActive,
                       color: nodes.length === 0 ? COLORS.textMuted : COLORS.accentBright,
@@ -836,6 +869,216 @@ function ImagesTab({ hubUrl }) {
       </section>
 
       {flashing && <FlashDialog hubUrl={hubUrl} image={flashing.image} nodes={nodes} onClose={() => setFlashing(null)} onSubmit={(node, disk) => enqueueFlash(flashing.image, node, disk)}/>}
+      {localFlash && <LocalFlashDialog hubUrl={hubUrl} image={localFlash.image} onClose={() => setLocalFlash(null)}/>}
+    </div>
+  );
+}
+
+// Mac-side SD flash. Calls /api/local/disks to enumerate external Mac
+// disks, lets the operator pick one, requires typing the disk name
+// to confirm, then POSTs /api/local/flash. The Hub routes through
+// osascript → user gets one macOS auth prompt → dd writes the image.
+// macOS-only; the disks endpoint returns [] on other platforms.
+export function LocalFlashDialog({ hubUrl, image, onClose }) {
+  const [disksState, setDisksState] = useState({ status: 'loading', list: [], error: null });
+  const [picked, setPicked] = useState('');
+  const [confirmText, setConfirmText] = useState('');
+  const [flashing, setFlashing] = useState(false);
+  const [result, setResult] = useState(null);  // { ok, error?, duration_s? }
+
+  const refresh = useCallback(async () => {
+    setDisksState({ status: 'loading', list: [], error: null });
+    try {
+      const r = await fetch(`${hubUrl}/api/local/disks`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      setDisksState({ status: 'ok', list: j.disks || [], error: null });
+    } catch (e) {
+      setDisksState({ status: 'error', list: [], error: e.message });
+    }
+  }, [hubUrl]);
+  useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && !flashing) onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [onClose, flashing]);
+
+  const pickedDisk = disksState.list.find(d => d.device === picked);
+  // Confirmation phrase is the device path tail (e.g. 'disk4') —
+  // matches what's about to be obliterated, hard to mistype.
+  const expectedConfirm = picked.replace(/^\/dev\//, '');
+  const canFlash = !!pickedDisk && confirmText.trim() === expectedConfirm && !flashing && !result;
+
+  async function doFlash() {
+    setFlashing(true);
+    setResult(null);
+    try {
+      const r = await fetch(`${hubUrl}/api/local/flash`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ image_id: image.image_id, target: picked }),
+      });
+      const j = await r.json();
+      setResult(j);
+    } catch (e) {
+      setResult({ ok: false, error: e.message });
+    } finally {
+      setFlashing(false);
+    }
+  }
+
+  return (
+    <div onClick={() => { if (!flashing) onClose(); }} style={{
+      position: 'fixed', inset: 0, zIndex: 1000,
+      background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 12,
+        width: '100%', maxWidth: 620, padding: '20px 22px', color: COLORS.textPrimary,
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div>
+            <h3 style={{ margin: 0, fontFamily: FONT_HEADING, fontSize: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Usb size={18} style={{ color: COLORS.accent }}/>
+              Flash to Mac-attached SD
+            </h3>
+            <div style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>
+              {image.build_name || image.image_id} · {prettyBytes(image.size_bytes)} · sha256 {image.sha256?.slice(0, 12)}…
+            </div>
+          </div>
+          <button onClick={onClose} disabled={flashing} aria-label="Close" style={{
+            background: 'transparent', border: 'none',
+            color: flashing ? COLORS.textMuted : COLORS.textMuted,
+            fontSize: 22, cursor: flashing ? 'not-allowed' : 'pointer', lineHeight: 1,
+          }}>×</button>
+        </div>
+
+        {result ? (
+          <div>
+            {result.ok ? (
+              <div style={{ padding: 16, background: 'rgba(34,197,94,0.10)', border: `1px solid ${COLORS.success}`, borderRadius: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: COLORS.success, fontWeight: 700, marginBottom: 6 }}>
+                  <Check size={16}/> Done — wrote image to {result.target} in {result.duration_s}s
+                </div>
+                <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.6 }}>
+                  Eject the SD safely from Finder, then insert it into the Pi and power on.
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: 14, background: 'rgba(239,111,92,0.10)', border: `1px solid ${COLORS.error}`, borderRadius: 8 }}>
+                <div style={{ color: COLORS.error, fontWeight: 700, marginBottom: 6 }}>✖ Flash failed</div>
+                <pre style={{ margin: 0, fontFamily: FONT_MONO, fontSize: 12, color: COLORS.error, whiteSpace: 'pre-wrap' }}>
+                  {result.error || 'unknown error'}
+                </pre>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+              <button onClick={onClose} style={{ padding: '8px 14px', background: COLORS.accent, border: 'none', color: '#0a0a0a', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                Close
+              </button>
+            </div>
+          </div>
+        ) : flashing ? (
+          <div style={{ padding: 16, background: 'rgba(0,0,0,0.3)', border: `1px solid ${COLORS.border}`, borderRadius: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: COLORS.accentBright, marginBottom: 8 }}>
+              <RefreshCw size={16} className="spin" style={{ animation: 'spin 1s linear infinite' }}/>
+              <strong>Flashing — do not unplug</strong>
+            </div>
+            <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.7 }}>
+              macOS prompted for your admin password. Once authorised, <code>dd</code> is writing
+              {image.size_bytes ? <> ~{prettyBytes(image.size_bytes)}</> : null} to{' '}
+              <code style={{ fontFamily: FONT_MONO }}>{picked}</code>. Typical time: 3–5 min for a 200 MB image,
+              longer for bigger images. <strong>No progress bar — macOS dd doesn't stream progress.</strong>
+            </div>
+            <style>{`@keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }`}</style>
+          </div>
+        ) : (
+          <>
+            {disksState.status === 'loading' && <div style={{ padding: 12, color: COLORS.textMuted }}>Listing external Mac disks…</div>}
+            {disksState.status === 'error' && (
+              <div style={{ padding: 12, background: 'rgba(239,111,92,0.08)', border: `1px solid ${COLORS.error}`, borderRadius: 6, color: COLORS.error, fontSize: 12, marginBottom: 10 }}>
+                Can't list disks: {disksState.error}
+              </div>
+            )}
+
+            {disksState.status === 'ok' && disksState.list.length === 0 ? (
+              <div style={{ padding: 16, background: 'rgba(245,180,90,0.06)', border: `1px solid ${COLORS.warning}`, borderRadius: 8, color: COLORS.warning, fontSize: 13, marginBottom: 12, lineHeight: 1.7 }}>
+                No external disks detected. Insert an SD card (or USB SD reader) into this Mac and click
+                <strong> Refresh</strong>. (Internal / boot disks are filtered out for safety.)
+              </div>
+            ) : disksState.status === 'ok' ? (
+              <>
+                <label style={{ fontSize: 11, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>External disk</label>
+                <select value={picked} onChange={(e) => { setPicked(e.target.value); setConfirmText(''); }} style={{
+                  display: 'block', width: '100%', marginTop: 4, marginBottom: 12,
+                  padding: '8px 10px', background: '#040608', color: COLORS.textPrimary,
+                  border: `1px solid ${COLORS.border}`, borderRadius: 6, fontFamily: FONT_MONO, fontSize: 13,
+                }}>
+                  <option value="">— pick an external disk —</option>
+                  {disksState.list.map(d => (
+                    <option key={d.device} value={d.device}>
+                      {d.device} · {prettyBytes(d.size_bytes)}{d.name ? ` · "${d.name}"` : ''}{d.content ? ` · ${d.content}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </>
+            ) : null}
+
+            {pickedDisk && (
+              <div style={{ padding: 12, background: 'rgba(239,111,92,0.08)', border: `1px solid ${COLORS.error}`, borderRadius: 8, marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: COLORS.error, fontWeight: 700, marginBottom: 6 }}>
+                  <AlertTriangle size={14}/> ALL DATA WILL BE DESTROYED
+                </div>
+                <div style={{ fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.6 }}>
+                  <code style={{ fontFamily: FONT_MONO }}>{pickedDisk.device}</code>
+                  {pickedDisk.name ? <> (<strong>"{pickedDisk.name}"</strong>)</> : null}
+                  {' '}will be overwritten. There's no undo. Verify the disk is the SD card you intended.
+                </div>
+                <label style={{ display: 'block', marginTop: 10, fontSize: 11, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  Type <code style={{ fontFamily: FONT_MONO, color: COLORS.error }}>{expectedConfirm}</code> to confirm
+                </label>
+                <input
+                  value={confirmText}
+                  onChange={(e) => setConfirmText(e.target.value)}
+                  autoFocus
+                  spellCheck={false}
+                  placeholder={expectedConfirm}
+                  style={{ display: 'block', width: '100%', marginTop: 4, padding: '8px 10px', background: '#040608', color: COLORS.textPrimary, border: `1px solid ${confirmText.trim() === expectedConfirm ? COLORS.success : COLORS.border}`, borderRadius: 6, fontFamily: FONT_MONO, fontSize: 13, boxSizing: 'border-box' }}
+                />
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center', marginTop: 14 }}>
+              <button onClick={refresh} disabled={disksState.status === 'loading'} style={{
+                padding: '6px 12px', background: 'transparent', color: COLORS.textSecondary,
+                border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+              }}>
+                <RefreshCw size={11}/> Refresh
+              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={onClose} style={{ padding: '8px 14px', background: 'transparent', border: `1px solid ${COLORS.border}`, color: COLORS.textSecondary, borderRadius: 8, fontSize: 13, cursor: 'pointer' }}>
+                  Cancel
+                </button>
+                <button onClick={doFlash} disabled={!canFlash} style={{
+                  padding: '8px 14px',
+                  background: canFlash ? COLORS.error : COLORS.bgPanel,
+                  border: 'none',
+                  color: canFlash ? '#fff' : COLORS.textMuted,
+                  borderRadius: 8, fontSize: 13, fontWeight: 600,
+                  cursor: canFlash ? 'pointer' : 'not-allowed',
+                }}>
+                  ERASE & FLASH
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

@@ -58,6 +58,11 @@ export default function Images() {
         <p style={{ margin: '4px 0 0', color: COLORS.textMuted, fontSize: 13 }}>
           Base <code>.img</code> files in <code>Os/</code> + images the Phase 3 builder produced under <code>builds/&lt;name&gt;/out/</code>.
         </p>
+        <p style={{ margin: '6px 0 0', color: COLORS.textMuted, fontSize: 12, lineHeight: 1.55 }}>
+          This is a file-level view from <code>/api/images</code>. To flash one of these to a Pi or a Mac-attached SD, switch to{' '}
+          <a href="#flash/images" style={{ color: COLORS.accent, textDecoration: 'none' }}>Flash Nodes → Images</a>{' '}
+          — that's the registry view backed by <code>/api/flash/images</code>, with <code>flash →</code> and <code>Mac SD</code> buttons per row.
+        </p>
       </header>
 
       <Section title={`Base images · ${state.bases.length}`}

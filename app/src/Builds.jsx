@@ -4,8 +4,9 @@
 // when the build directory was last touched.
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { HardDrive, Check, X, AlertCircle, Clock, Trash2 } from 'lucide-react';
+import { HardDrive, Check, X, AlertCircle, Clock, Trash2, Usb } from 'lucide-react';
 import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO } from './lib/theme.js';
+import { LocalFlashDialog } from './FlashNodes.jsx';
 
 const HUB_KEY = 'ark.hubUrl';
 const DEFAULT_HUB = 'http://localhost:7400';
@@ -17,13 +18,22 @@ function readHubUrl() {
 export default function Builds() {
   const hubUrl = readHubUrl();
   const [state, setState] = useState({ status: 'loading', builds: [], error: null });
+  // Flash registry — keyed by build_name → image. Used to wire the
+  // "Mac SD" button on built-image cards. Refreshed alongside builds.
+  const [registry, setRegistry] = useState({});
 
   const refresh = useCallback(async () => {
     try {
-      const r = await fetch(`${hubUrl}/api/builds`, { cache: 'no-cache' });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const j = await r.json();
-      setState({ status: 'ok', builds: j.builds || [], error: null });
+      const [b, i] = await Promise.all([
+        fetch(`${hubUrl}/api/builds`, { cache: 'no-cache' }).then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))),
+        fetch(`${hubUrl}/api/flash/images`, { cache: 'no-cache' }).then(r => r.ok ? r.json() : { images: [] }).catch(() => ({ images: [] })),
+      ]);
+      setState({ status: 'ok', builds: b.builds || [], error: null });
+      const map = {};
+      for (const img of (i.images || [])) {
+        if (img.build_name) map[img.build_name] = img;
+      }
+      setRegistry(map);
     } catch (e) {
       setState(s => ({ ...s, status: 'error', error: e.message }));
     }
@@ -50,15 +60,16 @@ export default function Builds() {
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
-          {state.builds.map(b => <BuildCard key={b.name} b={b} hubUrl={hubUrl} onDeleted={refresh}/>)}
+          {state.builds.map(b => <BuildCard key={b.name} b={b} hubUrl={hubUrl} image={registry[b.name]} onDeleted={refresh}/>)}
         </div>
       )}
     </div>
   );
 }
 
-function BuildCard({ b, hubUrl, onDeleted }) {
+function BuildCard({ b, hubUrl, image, onDeleted }) {
   const [deleting, setDeleting] = useState(false);
+  const [localFlash, setLocalFlash] = useState(false);
   const hasOk = (k) => b.has?.[k];
   const ms = b.manifest_summary;
   const ps = b.plan_summary;
@@ -142,6 +153,20 @@ function BuildCard({ b, hubUrl, onDeleted }) {
             ↓ download
           </a>
         )}
+        {hasOk('built_img') && image && (
+          <button
+            onClick={() => setLocalFlash(true)}
+            title="Flash this image to an SD card plugged into this Mac (macOS only)"
+            style={{
+              padding: '4px 10px', fontSize: 11, borderRadius: 4,
+              background: 'transparent', color: COLORS.accent,
+              border: `1px solid ${COLORS.border}`, cursor: 'pointer',
+              fontFamily: FONT_BODY, display: 'inline-flex', alignItems: 'center', gap: 4,
+            }}>
+            <Usb size={11}/> Mac SD
+          </button>
+        )}
+        {localFlash && image && <LocalFlashDialog hubUrl={hubUrl} image={image} onClose={() => setLocalFlash(false)}/>}
         <span style={{ flex: 1 }}/>
         <button onClick={handleDelete} disabled={deleting} title="Delete this build directory + all artifacts" style={{
           padding: '4px 10px', fontSize: 11, borderRadius: 4,

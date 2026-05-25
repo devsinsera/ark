@@ -6,7 +6,7 @@
 // never sees credentials.
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { Terminal, Plus, Trash2, Play, AlertTriangle, Check, X as XIcon } from 'lucide-react';
+import { Terminal, Plus, Trash2, Play, AlertTriangle, Check, X as XIcon, Upload } from 'lucide-react';
 import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO } from './lib/theme.js';
 
 const HUB_KEY = 'ark.hubUrl';
@@ -288,6 +288,8 @@ function ExecPanel({ hubUrl, host, onClose }) {
           </div>
         )}
 
+        <SendFile hubUrl={hubUrl} hostId={host.id}/>
+
         <details>
           <summary style={{ fontSize: 11, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, cursor: 'pointer' }}>
             Recent commands · {log.length}
@@ -312,6 +314,106 @@ function ExecPanel({ hubUrl, host, onClose }) {
         </details>
       </div>
     </div>
+  );
+}
+
+// Send-file-to-Pi — POSTs raw bytes to /api/runner/hosts/<id>/push.
+// Hub stages locally then scp's to <remote_path>. Filename is
+// constrained to [A-Za-z0-9._-] by the Hub to avoid scp argument
+// shenanigans; we mirror that constraint client-side for the hint.
+// Default remote dir is /tmp/ so an operator can drop a script and
+// immediately exec it via the command box above.
+function SendFile({ hubUrl, hostId }) {
+  const [open, setOpen] = useState(false);
+  const [file, setFile] = useState(null);
+  const [remoteDir, setRemoteDir] = useState('/tmp/');
+  const [busy, setBusy] = useState(false);
+  const [pct,  setPct]  = useState(0);
+  const [result, setResult] = useState(null);
+
+  const SAFE_FILENAME = /^[A-Za-z0-9._\-]+$/;
+  const safeName = file ? (file.name.match(SAFE_FILENAME) ? file.name : null) : null;
+
+  async function send() {
+    if (!file || !safeName) return;
+    setBusy(true); setPct(0); setResult(null);
+    const url = `${hubUrl}/api/runner/hosts/${hostId}/push`
+      + `?path=${encodeURIComponent(remoteDir)}`
+      + `&filename=${encodeURIComponent(safeName)}`;
+    await new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.setRequestHeader('content-type', 'application/octet-stream');
+      xhr.upload.onprogress = (ev) => {
+        if (ev.lengthComputable) setPct(Math.round((ev.loaded / ev.total) * 100));
+      };
+      xhr.onload = () => {
+        try { setResult(JSON.parse(xhr.responseText)); }
+        catch { setResult({ ok: false, error: `HTTP ${xhr.status}` }); }
+        setBusy(false); resolve();
+      };
+      xhr.onerror = () => { setResult({ ok: false, error: 'network error' }); setBusy(false); resolve(); };
+      xhr.send(file);
+    });
+  }
+
+  return (
+    <details open={open} onToggle={(e) => setOpen(e.currentTarget.open)} style={{ marginBottom: 14, padding: 10, border: `1px solid ${COLORS.border}`, borderRadius: 8, background: 'rgba(255,255,255,0.015)' }}>
+      <summary style={{ cursor: 'pointer', fontSize: 12, color: COLORS.textSecondary, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Upload size={12}/> Send a file to this host (scp)
+      </summary>
+      <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div>
+          <label style={{ fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>File</label>
+          <input
+            type="file"
+            onChange={(e) => { setFile(e.target.files?.[0] || null); setResult(null); setPct(0); }}
+            style={{ display: 'block', marginTop: 4, fontSize: 12, color: COLORS.textSecondary }}
+          />
+          {file && !safeName && (
+            <div style={{ marginTop: 4, fontSize: 11, color: COLORS.error }}>
+              Filename <code style={{ fontFamily: FONT_MONO }}>{file.name}</code> has characters outside [A-Za-z0-9._-]. Rename locally and retry.
+            </div>
+          )}
+        </div>
+        <div>
+          <label style={{ fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Remote path</label>
+          <input
+            value={remoteDir}
+            onChange={(e) => setRemoteDir(e.target.value)}
+            placeholder="/tmp/ (trailing / → uses filename; otherwise exact path)"
+            style={{ display: 'block', width: '100%', marginTop: 4, padding: '6px 10px', background: '#040608', color: COLORS.textPrimary, border: `1px solid ${COLORS.border}`, borderRadius: 4, fontFamily: FONT_MONO, fontSize: 12, boxSizing: 'border-box' }}
+          />
+          <div style={{ marginTop: 3, fontSize: 11, color: COLORS.textMuted, fontFamily: FONT_BODY }}>
+            Ends with <code>/</code> → file lands at <code style={{ fontFamily: FONT_MONO }}>{remoteDir}{safeName || '<filename>'}</code>. Otherwise the path is used verbatim.
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button onClick={send} disabled={!file || !safeName || busy || !remoteDir.trim()} style={{
+            padding: '6px 14px',
+            background: (!file || !safeName || busy || !remoteDir.trim()) ? COLORS.bgPanel : COLORS.bgActive,
+            color: (!file || !safeName || busy || !remoteDir.trim()) ? COLORS.textMuted : COLORS.accentBright,
+            border: `1px solid ${COLORS.accentBorder}`, borderRadius: 6, fontSize: 12,
+            cursor: (!file || !safeName || busy || !remoteDir.trim()) ? 'not-allowed' : 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}>
+            <Upload size={12}/> {busy ? `sending ${pct}%…` : 'send file'}
+          </button>
+          {busy && (
+            <div style={{ flex: 1, height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{ width: `${pct}%`, height: '100%', background: COLORS.accent, transition: 'width 200ms' }}/>
+            </div>
+          )}
+        </div>
+        {result && (
+          <div style={{ marginTop: 4, padding: 10, borderRadius: 6, fontSize: 12, lineHeight: 1.5, background: result.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,111,92,0.08)', border: `1px solid ${result.ok ? COLORS.success : COLORS.error}`, color: result.ok ? COLORS.success : COLORS.error }}>
+            {result.ok
+              ? <>✓ scp'd {result.size_bytes != null ? `${(result.size_bytes/1024).toFixed(1)} KB ` : ''}to <code style={{ fontFamily: FONT_MONO }}>{result.remote_path}</code> in {result.duration_ms} ms</>
+              : <>✖ {result.error || result.stderr || `exit ${result.exit_code}`}</>}
+          </div>
+        )}
+      </div>
+    </details>
   );
 }
 
