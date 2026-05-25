@@ -46,11 +46,10 @@ for img in builds/sinsera-vanilla/out/ark-built.img.xz \
   fi
 done
 
-echo "[installer-build] step 2: bake SSH key into install.plan.sh"
-SSH_PUBKEY=$(cat ~/.ssh/id_ed25519.pub 2>/dev/null) || { echo "ERROR: no ~/.ssh/id_ed25519.pub" >&2; exit 2; }
-awk -v key="$SSH_PUBKEY" '{gsub(/__SSH_PUBKEY_PLACEHOLDER__/, key); print}' \
-  "$PROFILE_DIR/install-template.sh" > "$PROFILE_DIR/install.plan.sh"
-chmod +x "$PROFILE_DIR/install.plan.sh"
+echo "[installer-build] step 2: bake SSH key + WiFi into install.plan.sh"
+bash "$REPO_ROOT/builder/lib/bake-creds.sh" \
+  "$PROFILE_DIR/install-template.sh" \
+  "$PROFILE_DIR/install.plan.sh"
 
 echo "[installer-build] step 3: copy + expand base image"
 mkdir -p "$OUT_DIR"
