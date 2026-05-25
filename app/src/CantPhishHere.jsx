@@ -1074,7 +1074,7 @@ function CompanionRunnerTab({ hubUrl, tools, reason, intro, parts, emptyState })
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {intro}
 
-      <PartsList data={parts}/>
+      {parts && <PartsList data={parts}/>}
 
       {hostsError && (
         <div style={{ padding: 12, background: 'rgba(245,180,90,0.08)', border: `1px solid ${COLORS.warning}`, borderRadius: 8, color: COLORS.warning, fontSize: 12 }}>
