@@ -13,7 +13,7 @@ import { Server, AlertTriangle, Activity, X as XIcon, Download } from 'lucide-re
 import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO } from './lib/theme.js';
 
 const HUB_KEY = 'ark.hubUrl';
-const DEFAULT_HUB = 'http://localhost:7400';
+const DEFAULT_HUB = 'http://192.168.4.167:7400';
 function readHubUrl() {
   try { return (window.localStorage.getItem(HUB_KEY) || DEFAULT_HUB).replace(/\/+$/, ''); }
   catch { return DEFAULT_HUB; }

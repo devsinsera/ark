@@ -9,7 +9,7 @@ import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO } from './lib/theme.js';
 import { LocalFlashDialog } from './FlashNodes.jsx';
 
 const HUB_KEY = 'ark.hubUrl';
-const DEFAULT_HUB = 'http://localhost:7400';
+const DEFAULT_HUB = 'http://192.168.4.167:7400';
 function readHubUrl() {
   try { return (window.localStorage.getItem(HUB_KEY) || DEFAULT_HUB).replace(/\/+$/, ''); }
   catch { return DEFAULT_HUB; }
@@ -144,7 +144,7 @@ function BuildCard({ b, hubUrl, image, onDeleted }) {
             onClick={async (e) => {
               // Fetch → Blob → saveAs. Avoids the silent mixed-content
               // drop browsers apply to <a download> linking from
-              // https://sinsera.co/ to http://localhost:7400/.
+              // https://sinsera.co/ to http://192.168.4.167:7400/.
               e.preventDefault();
               const target = `${hubUrl}/api/builds/${encodeURIComponent(b.name)}/download`;
               try {

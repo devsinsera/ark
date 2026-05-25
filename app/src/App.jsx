@@ -278,7 +278,7 @@ export default function App() {
   // the UI keeps working from localStorage. Debounced so a rapid
   // edit-typing session doesn't spam the endpoint.
   useEffect(() => {
-    const url = (() => { try { return (window.localStorage.getItem('ark.hubUrl') || 'http://localhost:7400').replace(/\/+$/, ''); } catch { return 'http://localhost:7400'; } })();
+    const url = (() => { try { return (window.localStorage.getItem('ark.hubUrl') || 'http://192.168.4.167:7400').replace(/\/+$/, ''); } catch { return 'http://192.168.4.167:7400'; } })();
     const handle = setTimeout(() => {
       for (const m of Object.values(manifests)) {
         if (!m || !m.id) continue;
@@ -598,8 +598,8 @@ export function useAlertNotifier() {
     // support Notifications.
     if (typeof window === 'undefined' || typeof Notification === 'undefined') return;
     const hubUrl = (() => {
-      try { return (window.localStorage.getItem('ark.hubUrl') || 'http://localhost:7400').replace(/\/+$/, ''); }
-      catch { return 'http://localhost:7400'; }
+      try { return (window.localStorage.getItem('ark.hubUrl') || 'http://192.168.4.167:7400').replace(/\/+$/, ''); }
+      catch { return 'http://192.168.4.167:7400'; }
     })();
     let stopped = false;
     const tick = async () => {
@@ -643,8 +643,8 @@ export function useAlertNotifier() {
 
 function HubUrlWidget() {
   const [url, setUrl]     = useState(() => {
-    try { return (window.localStorage.getItem('ark.hubUrl') || 'http://localhost:7400').replace(/\/+$/, ''); }
-    catch { return 'http://localhost:7400'; }
+    try { return (window.localStorage.getItem('ark.hubUrl') || 'http://192.168.4.167:7400').replace(/\/+$/, ''); }
+    catch { return 'http://192.168.4.167:7400'; }
   });
   const [reach, setReach] = useState('checking');
   const [editing, setEditing] = useState(false);
@@ -740,7 +740,7 @@ function HubUrlWidget() {
           </div>
         )}
         <div style={{ color: COLORS.textMuted, fontSize: 10, lineHeight: 1.5 }}>
-          The Hub runs locally. Default <code>http://localhost:7400</code> works on the same machine. On another device,
+          The Hub runs locally. Default <code>http://192.168.4.167:7400</code> works on the same machine. On another device,
           point this at the host running the Hub — e.g. <code>{hubConfig?.lan_url || 'http://192.168.4.167:7400'}</code>.
         </div>
       </div>

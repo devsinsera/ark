@@ -2,7 +2,7 @@
 // as the four-tab Network Landscape view spec'd in
 // docs/NETWORK_LANDSCAPE.md.
 //
-// Talks to the local Ark Hub (typically http://localhost:7400). The
+// Talks to the local Ark Hub (typically http://192.168.4.167:7400). The
 // browser cannot do ARP / mDNS itself; the Hub does the discovery
 // and exposes the data via JSON. This component is the operator's
 // window onto whatever the Hub currently knows about.
@@ -12,7 +12,7 @@ import { Wifi, Cpu, Network as NetworkIcon, Share2, RefreshCw, AlertTriangle, Se
 import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO } from './lib/theme.js';
 
 const HUB_KEY = 'ark.hubUrl';
-const DEFAULT_HUB = 'http://localhost:7400';
+const DEFAULT_HUB = 'http://192.168.4.167:7400';
 
 function readHubUrl() {
   try {
