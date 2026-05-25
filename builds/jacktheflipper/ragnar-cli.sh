@@ -39,11 +39,18 @@ case "$cmd" in
       echo "ERROR: $SHIM not found. Is RaspyJack installed?"
       exit 1
     fi
-    sudo mkdir -p "$LOG_DIR"
-    cd "$RAGNAR_ROOT"
-    PYTHONPATH="$RAGNAR_ROOT" PYTHONUNBUFFERED=1 \
-      sudo -E nohup python3 "$SHIM" --port "$PORT" >> "$LOG" 2>&1 &
-    echo $! | sudo tee "$PID_FILE" >/dev/null
+    # Run the whole launch as root via sudo bash so log redirection,
+    # cwd, env vars, and the python subprocess all happen with the
+    # right permissions. Previous version did `sudo python ... >> LOG`
+    # which opened LOG as the calling user (Permission denied on a
+    # root-owned /opt/raspyjack/loot tree).
+    sudo bash -c "
+      mkdir -p '$LOG_DIR'
+      cd '$RAGNAR_ROOT'
+      PYTHONPATH='$RAGNAR_ROOT' PYTHONUNBUFFERED=1 \
+        nohup python3 '$SHIM' --port '$PORT' >> '$LOG' 2>&1 &
+      echo \$! > '$PID_FILE'
+    "
     sleep 2
     if is_running; then
       echo "ragnar started (pid $(cat "$PID_FILE"), port $PORT)"
@@ -51,7 +58,7 @@ case "$cmd" in
       [ -n "$IP" ] && echo "dashboard: http://$IP:$PORT"
     else
       echo "ragnar failed to start. Check log:"
-      tail -20 "$LOG"
+      sudo tail -20 "$LOG" 2>/dev/null
       exit 1
     fi
     ;;

@@ -79,12 +79,16 @@ fi
 # Upstream install_raspyjack.sh has /root/Raspyjack/ hardcoded as the
 # install location (it writes gui_conf.json, expects the source layout
 # there). We extract to BOTH /opt/raspyjack (operator-friendly path)
-# and /root/Raspyjack (what the installer expects). Symlink-aware so
-# they share data.
+# and /root/Raspyjack (what the installer expects).
 step "Extract /opt/ark-extras/raspyjack-src.tar.gz → /opt/raspyjack + /root/Raspyjack"
 mkdir -p /opt/raspyjack /root/Raspyjack /var/lib/raspyjack
 if [ -f /opt/ark-extras/raspyjack-src.tar.gz ]; then
   tar -xzf /opt/ark-extras/raspyjack-src.tar.gz -C /opt/raspyjack
+  # Strip macOS metadata that tar on Apple Silicon embeds when xattrs
+  # exist on source files. PIL crashes on these when Ragnar tries to
+  # load the resource-fork files as PNG/BMP icons.
+  find /opt/raspyjack -name "._*" -delete 2>/dev/null
+  find /opt/raspyjack -name ".DS_Store" -delete 2>/dev/null
   # Stage at the installer's expected location too
   rsync -aH /opt/raspyjack/ /root/Raspyjack/
   cp /opt/ark-extras/raspyjack-src.tar.gz /var/lib/raspyjack/source.tar.gz
@@ -127,6 +131,21 @@ if [ -f install_raspyjack.sh ]; then
   fi
 else
   echo "ERROR: install_raspyjack.sh missing from /opt/raspyjack/"
+fi
+
+# ── 4a. Ragnar Python deps (flask, paramiko, psutil, …) ──
+# Upstream RaspyJack ships an install_ragnar_port.sh that apt-installs
+# Ragnar's specific dep set. Phase-2's general install missed several
+# of these (e.g. python3-flask) because we used --no-install-recommends.
+# Run the upstream Ragnar installer now so `ragnar start` works on
+# first try.
+step "Run RaspyJack scripts/install_ragnar_port.sh (Ragnar deps)"
+if [ -x /opt/raspyjack/scripts/install_ragnar_port.sh ]; then
+  bash /opt/raspyjack/scripts/install_ragnar_port.sh 2>&1 | tail -20
+elif [ -f /opt/raspyjack/scripts/install_ragnar_port.sh ]; then
+  bash /opt/raspyjack/scripts/install_ragnar_port.sh 2>&1 | tail -20
+else
+  echo "WARN: install_ragnar_port.sh not found — Ragnar may fail to start"
 fi
 
 # ── 4b. RaspyJack LCD daemon auto-start ──
