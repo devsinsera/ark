@@ -124,12 +124,39 @@ echo "[claude-cli-pi] /etc/claude-cli.env and start the service."
 CLAUDE_FIRSTBOOT
 chmod +x "$BOOT_DIR/Automation_Custom_Script.sh"
 
-# Tune dietpi.txt for headless boot
+# Tune dietpi.txt for headless boot + WiFi + SSH key
 if [[ -f "$BOOT_DIR/dietpi.txt" ]]; then
   ark_log "tuning $BOOT_DIR/dietpi.txt for headless"
-  sed -i 's/^AUTO_SETUP_AUTOSTART_TARGET_INDEX=.*/AUTO_SETUP_AUTOSTART_TARGET_INDEX=1/' "$BOOT_DIR/dietpi.txt" || true
-  sed -i 's/^SURVEY_OPTED_IN=.*/SURVEY_OPTED_IN=0/' "$BOOT_DIR/dietpi.txt" || true
+  set_dp() {
+    local key="$1" value="$2"
+    if grep -q "^${key}=" "$BOOT_DIR/dietpi.txt"; then
+      sed -i "s|^${key}=.*|${key}=${value}|" "$BOOT_DIR/dietpi.txt"
+    else
+      printf '\n%s=%s\n' "$key" "$value" >> "$BOOT_DIR/dietpi.txt"
+    fi
+  }
+  set_dp AUTO_SETUP_NET_HOSTNAME           'ClaudeCli'
+  set_dp AUTO_SETUP_NET_WIFI_ENABLED       '1'
+  set_dp AUTO_SETUP_NET_WIFI_COUNTRY_CODE  'AU'
+  set_dp AUTO_SETUP_NET_WIFI_SSID          'REPLACE_WITH_YOUR_SSID'
+  set_dp AUTO_SETUP_NET_WIFI_KEY           'REPLACE_WITH_YOUR_WIFI_PASSWORD'
+  set_dp AUTO_SETUP_TIMEZONE               'Australia/Sydney'
+  set_dp AUTO_SETUP_LOCALE                 'en_AU.UTF-8'
+  set_dp AUTO_SETUP_KEYBOARD_LAYOUT        'au'
+  set_dp AUTO_SETUP_SSH_SERVER_INDEX       '-1'
+  set_dp AUTO_SETUP_ACCEPT_LICENSE         '1'
+  set_dp AUTO_SETUP_AUTOSTART_TARGET_INDEX '1'
+  set_dp SURVEY_OPTED_IN                   '0'
 fi
+
+# ── SSH public key (root) — baked by bake-creds.sh ──
+ark_log "installing SSH public key for root"
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+cat > /root/.ssh/authorized_keys <<'PUBKEY'
+__SSH_PUBKEY_PLACEHOLDER__
+PUBKEY
+chmod 600 /root/.ssh/authorized_keys
 
 mkdir -p /ark/registry
 printf '{"name":"claude-cli-pi","version":"1","installed_at":"%s","profile":"claude-cli-pi","strategy":"first-boot-install"}\n' "$INSTALLED_AT" \

@@ -165,9 +165,13 @@ async function runScan() {
 // ── HTTP server ─────────────────────────────────────────────────────
 const server = createServer(async (req, res) => {
   // CORS — browser UI is served from sinsera.co; Hub is localhost.
+  // Allow-Private-Network: yes is the Chrome PNA preflight bit that
+  // lets a public HTTPS origin talk to localhost. Without this Chrome
+  // silently blocks the request (no console error in some versions).
   res.setHeader('Access-Control-Allow-Origin',  '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'content-type, x-ark-agent-token');
+  res.setHeader('Access-Control-Allow-Private-Network', 'true');
   res.setHeader('Cache-Control', 'no-cache');
 
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }

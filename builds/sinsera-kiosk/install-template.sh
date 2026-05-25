@@ -138,20 +138,48 @@ echo "[sinsera-kiosk] install complete; rebooting into kiosk mode"
 KIOSK_FIRSTBOOT
 chmod +x "$BOOT_DIR/Automation_Custom_Script.sh"
 
-# ── Tweak dietpi.txt so the Pi boots straight to console autologin ──
-# (DietPi runs Automation_Custom_Script.sh near the end of first-boot
-# setup regardless; we just don't need it to land in a desktop env.)
+# ── Tweak dietpi.txt: WiFi + SSH key + autologin ──
+# Auto-join the operator's WiFi on first boot (creds baked in by
+# bake-creds.sh from ~/.ark/wifi.env). Plus the autologin/console
+# tweaks already in this template.
 if [[ -f "$BOOT_DIR/dietpi.txt" ]]; then
   ark_log "tuning $BOOT_DIR/dietpi.txt for kiosk role"
+  set_dp() {
+    local key="$1" value="$2"
+    if grep -q "^${key}=" "$BOOT_DIR/dietpi.txt"; then
+      sed -i "s|^${key}=.*|${key}=${value}|" "$BOOT_DIR/dietpi.txt"
+    else
+      printf '\n%s=%s\n' "$key" "$value" >> "$BOOT_DIR/dietpi.txt"
+    fi
+  }
+  set_dp AUTO_SETUP_NET_HOSTNAME           'SinseraKiosk'
+  set_dp AUTO_SETUP_NET_WIFI_ENABLED       '1'
+  set_dp AUTO_SETUP_NET_WIFI_COUNTRY_CODE  'AU'
+  set_dp AUTO_SETUP_NET_WIFI_SSID          'REPLACE_WITH_YOUR_SSID'
+  set_dp AUTO_SETUP_NET_WIFI_KEY           'REPLACE_WITH_YOUR_WIFI_PASSWORD'
+  set_dp AUTO_SETUP_TIMEZONE               'Australia/Sydney'
+  set_dp AUTO_SETUP_LOCALE                 'en_AU.UTF-8'
+  set_dp AUTO_SETUP_KEYBOARD_LAYOUT        'au'
+  set_dp AUTO_SETUP_SSH_SERVER_INDEX       '-1'
+  set_dp AUTO_SETUP_ACCEPT_LICENSE         '1'
   # Disable serial console prompt + DietPi survey
   sed -i 's/^AUTO_SETUP_SERIAL_CONSOLE_ENABLE=.*/AUTO_SETUP_SERIAL_CONSOLE_ENABLE=0/' "$BOOT_DIR/dietpi.txt" || true
-  sed -i 's/^SURVEY_OPTED_IN=.*/SURVEY_OPTED_IN=0/' "$BOOT_DIR/dietpi.txt" || true
+  set_dp SURVEY_OPTED_IN                   '0'
   # Headless-style autostart: console autologin (the kiosk user
   # autologin systemd unit overrides this anyway, but having
   # AUTO_SETUP_AUTOSTART_TARGET_INDEX=1 prevents DietPi from trying
   # to install a desktop environment we don't need.)
-  sed -i 's/^AUTO_SETUP_AUTOSTART_TARGET_INDEX=.*/AUTO_SETUP_AUTOSTART_TARGET_INDEX=1/' "$BOOT_DIR/dietpi.txt" || true
+  set_dp AUTO_SETUP_AUTOSTART_TARGET_INDEX '1'
 fi
+
+# ── SSH public key (root) — baked by bake-creds.sh ──
+ark_log "installing SSH public key for root"
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+cat > /root/.ssh/authorized_keys <<'PUBKEY'
+__SSH_PUBKEY_PLACEHOLDER__
+PUBKEY
+chmod 600 /root/.ssh/authorized_keys
 
 # ── FINALISE — registry marker ──
 mkdir -p /ark/registry
