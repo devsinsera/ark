@@ -132,6 +132,24 @@ allowed_users=anybody
 needs_root_rights=no
 EOF
 
+# ── Tailscale (optional) — joins tailnet so you can SSH from anywhere.
+# Authkey baked at build time by bake-creds.sh from ~/.ark/tailscale.env.
+# Empty placeholder → block is a no-op.
+TS_AUTHKEY="__TAILSCALE_AUTHKEY_PLACEHOLDER__"
+if [ -n "$TS_AUTHKEY" ]; then
+  echo "[sinsera-kiosk] installing Tailscale + joining tailnet"
+  for i in 1 2 3 4 5 6; do
+    curl -fsS -m 10 https://tailscale.com/install.sh -o /tmp/ts.sh && break
+    echo "[sinsera-kiosk] tailscale fetch retry $i (waiting for network)…"; sleep 10
+  done
+  if [ -f /tmp/ts.sh ]; then
+    sh /tmp/ts.sh
+    tailscale up --auth-key="$TS_AUTHKEY" --hostname="sinsera-kiosk" --ssh --accept-routes \
+      || echo "[sinsera-kiosk] tailscale up failed (check authkey + tailnet ACLs)"
+    rm -f /tmp/ts.sh
+  fi
+fi
+
 echo "[sinsera-kiosk] install complete; rebooting into kiosk mode"
 # DietPi will reboot after this script returns. The kiosk user
 # autologin + openbox autostart picks up from there.

@@ -251,6 +251,25 @@ cat >> /etc/motd <<'EOF'
   ╚═══════════════════════════════════════════════════════════════╝
 
 EOF
+
+# ── Tailscale (optional) — joins tailnet so you can SSH the installer
+# from anywhere (useful if the installer Pi is across the house or in
+# a closet). Authkey baked at build time by bake-creds.sh.
+TS_AUTHKEY="__TAILSCALE_AUTHKEY_PLACEHOLDER__"
+if [ -n "$TS_AUTHKEY" ]; then
+  echo "[sinsera-installer] installing Tailscale + joining tailnet"
+  for i in 1 2 3 4 5 6; do
+    curl -fsS -m 10 https://tailscale.com/install.sh -o /tmp/ts.sh && break
+    echo "[sinsera-installer] tailscale fetch retry $i…"; sleep 10
+  done
+  if [ -f /tmp/ts.sh ]; then
+    sh /tmp/ts.sh
+    tailscale up --auth-key="$TS_AUTHKEY" --hostname="sinsera-installer" --ssh --accept-routes \
+      || echo "[sinsera-installer] tailscale up failed"
+    rm -f /tmp/ts.sh
+  fi
+fi
+
 echo "[sinsera-installer] first-boot complete"
 INSTALLER_FIRSTBOOT
 chmod +x "$BOOT_DIR/Automation_Custom_Script.sh"

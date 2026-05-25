@@ -119,6 +119,23 @@ cat > /etc/motd <<'EOF'
 
 EOF
 
+# ── Tailscale (optional) — joins tailnet so you can SSH from anywhere.
+# Authkey baked at build time by bake-creds.sh from ~/.ark/tailscale.env.
+TS_AUTHKEY="__TAILSCALE_AUTHKEY_PLACEHOLDER__"
+if [ -n "$TS_AUTHKEY" ]; then
+  echo "[claude-cli-pi] installing Tailscale + joining tailnet"
+  for i in 1 2 3 4 5 6; do
+    curl -fsS -m 10 https://tailscale.com/install.sh -o /tmp/ts.sh && break
+    echo "[claude-cli-pi] tailscale fetch retry $i…"; sleep 10
+  done
+  if [ -f /tmp/ts.sh ]; then
+    sh /tmp/ts.sh
+    tailscale up --auth-key="$TS_AUTHKEY" --hostname="claude-cli-pi" --ssh --accept-routes \
+      || echo "[claude-cli-pi] tailscale up failed"
+    rm -f /tmp/ts.sh
+  fi
+fi
+
 echo "[claude-cli-pi] install complete — drop the API key into"
 echo "[claude-cli-pi] /etc/claude-cli.env and start the service."
 CLAUDE_FIRSTBOOT

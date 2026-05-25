@@ -10,7 +10,7 @@ import { createServer } from 'node:http';
 import { readFile, stat, rename, mkdir, unlink } from 'node:fs/promises';
 import { existsSync, createReadStream, createWriteStream, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { homedir } from 'node:os';
+import { homedir, networkInterfaces } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, execFile } from 'node:child_process';
@@ -188,6 +188,22 @@ const server = createServer(async (req, res) => {
       last_scan: state.scanned_at,
       port: PORT,
       store_path: store.path,
+    });
+  }
+
+  // ── Config — what the UI needs to know about the Hub's binding ──
+  // Used by the sidebar to show whether the Hub is LAN-reachable +
+  // what URL other devices should use. lanIpHint() may return null
+  // on a Mac that's currently offline; the UI degrades gracefully.
+  if (req.method === 'GET' && url.pathname === '/api/config') {
+    const lanIp = lanIpHint();
+    return json(res, {
+      bind_host:       BIND_HOST,
+      lan_reachable:   BIND_HOST === '0.0.0.0',
+      port:            PORT,
+      lan_ip:          lanIp,
+      lan_url:         lanIp ? `http://${lanIp}:${PORT}` : null,
+      version:         VERSION,
     });
   }
 
@@ -1298,7 +1314,17 @@ function shQuote(s) {
 // back from the Hub.
 function lanIpHint() {
   try {
-    const ifaces = require('node:os').networkInterfaces();
+    const ifaces = networkInterfaces();
+    // Prefer a 192.168.* or 10.* IP over tailscale/utun virtual ones
+    // (utun typically gets 100.x.x.x from Tailscale). Walk twice:
+    // first prefer real LAN ranges, then fall through to anything
+    // non-internal IPv4.
+    for (const name of Object.keys(ifaces)) {
+      for (const i of ifaces[name] || []) {
+        if (i.family !== 'IPv4' || i.internal) continue;
+        if (/^(192\.168|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(i.address)) return i.address;
+      }
+    }
     for (const name of Object.keys(ifaces)) {
       for (const i of ifaces[name] || []) {
         if (i.family === 'IPv4' && !i.internal) return i.address;

@@ -166,6 +166,23 @@ cat >> /etc/motd <<'EOF'
 
 EOF
 
+# ── Tailscale (optional) — joins tailnet so you can SSH from anywhere.
+# Authkey baked at build time by bake-creds.sh from ~/.ark/tailscale.env.
+TS_AUTHKEY="__TAILSCALE_AUTHKEY_PLACEHOLDER__"
+if [ -n "$TS_AUTHKEY" ]; then
+  echo "[sinsera-raspyjack] installing Tailscale + joining tailnet"
+  for i in 1 2 3 4 5 6; do
+    curl -fsS -m 10 https://tailscale.com/install.sh -o /tmp/ts.sh && break
+    echo "[sinsera-raspyjack] tailscale fetch retry $i…"; sleep 10
+  done
+  if [ -f /tmp/ts.sh ]; then
+    sh /tmp/ts.sh
+    tailscale up --auth-key="$TS_AUTHKEY" --hostname="sinsera-raspyjack" --ssh --accept-routes \
+      || echo "[sinsera-raspyjack] tailscale up failed"
+    rm -f /tmp/ts.sh
+  fi
+fi
+
 echo "[sinsera-raspyjack] first-boot install complete $(date)"
 RJ_FIRSTBOOT
 chmod +x "$BOOT_DIR/Automation_Custom_Script.sh"
