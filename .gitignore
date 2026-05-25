@@ -38,6 +38,7 @@ builds/*/manifest.json
 # dodge AV quarantine). Same reason as above — keep local.
 Jack/
 cant-phish-here/
+builds/*/*.tar.gz
 
 # Build outputs — large .img files, not version-controlled.
 builds/*/out/
