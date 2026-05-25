@@ -1,0 +1,3 @@
+# Flipper Zero — stable /dev/flipper symlink.
+# USB IDs from the Flipper Zero firmware (production + DFU).
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", SYMLINK+="flipper", MODE="0660", GROUP="dialout"

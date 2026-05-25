@@ -1,0 +1,17 @@
+[Unit]
+Description=Sinsera Kiosk phase-2 install (Chromium + X11 + autostart)
+Documentation=https://sinsera.co/ark/
+After=network-online.target time-sync.target
+Wants=network-online.target
+ConditionPathExists=/opt/sinsera-kiosk/install.sh
+
+[Service]
+Type=oneshot
+ExecStart=/opt/sinsera-kiosk/install.sh
+RemainAfterExit=yes
+TimeoutSec=1800
+StandardOutput=append:/var/log/sinsera-kiosk-install.log
+StandardError=append:/var/log/sinsera-kiosk-install.log
+
+[Install]
+WantedBy=multi-user.target

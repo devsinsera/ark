@@ -1,0 +1,18 @@
+[Unit]
+Description=JackTheFlipper phase-2 install (RaspyJack + Flipper bridge)
+Documentation=https://sinsera.co/ark/
+After=network-online.target time-sync.target
+Wants=network-online.target
+ConditionPathExists=/opt/jacktheflipper/install.sh
+ConditionFirstBoot=no
+
+[Service]
+Type=oneshot
+ExecStart=/opt/jacktheflipper/install.sh
+RemainAfterExit=yes
+TimeoutSec=1800
+StandardOutput=append:/var/log/jacktheflipper-install.log
+StandardError=append:/var/log/jacktheflipper-install.log
+
+[Install]
+WantedBy=multi-user.target

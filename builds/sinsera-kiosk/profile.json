@@ -1,0 +1,23 @@
+{
+  "profile_id":   "sinsera-kiosk",
+  "version":      2,
+  "category":     "raspberry-pi-devices",
+  "name":         "Sinsera Kiosk (Pi 5 — Chromium → sinsera.co)",
+  "description":  "Pi OS Lite (Bookworm, 64-bit) + a two-phase first-boot install that adds Chromium + X11 minimal stack and auto-launches https://sinsera.co/ in fullscreen kiosk mode on HDMI. Boots from NVMe (or SD). Targets Pi 5.",
+  "supported_hardware": ["pi-5-4gb", "pi-5-8gb", "pi-5-16gb", "pi-4-4gb", "pi-4-8gb"],
+  "base_image":         "raspios_lite_arm64_latest.img.xz",
+  "preconfigured": {
+    "hostname":      "sinsera-kiosk",
+    "user":          "peta (no password — SSH-key only, sudo NOPASSWD)",
+    "kiosk_user":    "kiosk (auto-login on tty1, runs openbox + chromium --kiosk)",
+    "ssh":           "enabled, peta + root authorized_keys baked",
+    "wifi":          "from ~/.ark/wifi.env via NetworkManager nmconnection",
+    "kiosk_target":  "https://sinsera.co/",
+    "install_log":   "/var/log/sinsera-kiosk-install.log on the Pi"
+  },
+  "first_boot_sequence": [
+    "Phase 1 (~30s): firstrun.sh sets up peta user + SSH + WiFi + hostname. Reboots.",
+    "Phase 2 (~5-8 min on Pi 5): apt-installs chromium + xserver-xorg + openbox + helpers; creates 'kiosk' user with autologin on tty1; writes .xinitrc + openbox autostart launching Chromium --kiosk https://sinsera.co/. Reboots into kiosk mode.",
+    "Phase 3 (~30s): Chromium opens fullscreen on HDMI."
+  ]
+}

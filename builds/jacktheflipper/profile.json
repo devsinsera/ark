@@ -1,0 +1,23 @@
+{
+  "profile_id":   "jacktheflipper",
+  "version":      1,
+  "category":     "raspberry-pi-devices",
+  "name":         "JackTheFlipper — RaspyJack + Flipper bridge (Pi Zero 2 W)",
+  "description":  "Pi OS Lite (Bookworm, 64-bit) with the full RaspyJack toolkit (LCD-driven, 231 payloads) AND the Sinsera Flipper Companion bridge baked in. Boot, wait, both work — standalone via the 1.44\" LCD HAT, or remotely via Ark → SSH Runner.",
+  "supported_hardware": ["pi-zero-2-w", "pi-3b-plus", "pi-3b"],
+  "base_image":         "raspios_lite_arm64_latest.img.xz",
+  "preconfigured": {
+    "hostname":      "jacktheflipper",
+    "user":          "peta (no password — SSH-key only, sudo NOPASSWD)",
+    "ssh":           "enabled, peta + root authorized_keys baked",
+    "wifi":          "from ~/.ark/wifi.env via NetworkManager nmconnection",
+    "raspyjack":     "/opt/raspyjack/ (extracted by jacktheflipper-install.service on first network-up boot)",
+    "flipper":       "/opt/jacktheflipper/flipper-bridge.py + udev /dev/flipper symlink (USB 0483:5740)",
+    "install_log":   "/var/log/jacktheflipper-install.log on the Pi"
+  },
+  "first_boot_sequence": [
+    "Phase 1 (~30s): kernel + firstrun.sh — creates peta user, SSH key, hostname, WiFi, enables sshd. Reboots.",
+    "Phase 2 (~8-12 min): jacktheflipper-install.service runs once network is up — apt update + install_raspyjack.sh + Flipper bridge + udev. Reboots once more for SPI dtoverlay.",
+    "Phase 3 (~20s): final boot — RaspyJack ready on LCD HAT, Flipper bridge ready over USB. SSH to peta@jacktheflipper.local."
+  ]
+}
