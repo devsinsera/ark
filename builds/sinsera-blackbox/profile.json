@@ -1,0 +1,43 @@
+{
+  "profile_id":   "sinsera-blackbox",
+  "version":      1,
+  "category":     "raspberry-pi-devices",
+  "name":         "Sinsera Blackbox (RaspyJack + Flipper bridge)",
+  "description":  "RaspyJack + Sinsera Flipper Companion combined onto one Pi Zero 2 W. LCD-driven standalone use (RaspyJack) OR Ark-driven Flipper-Zero bridge over USB — both available simultaneously. Authorization: USE ONLY ON HARDWARE YOU OWN AND NETWORKS YOU HAVE WRITTEN PERMISSION TO TEST.",
+
+  "supported_hardware": ["pi-zero-2-w", "pi-3b-plus", "pi-3b"],
+  "base_image":         "DietPi_RPi2-ARMv7-Trixie.img",
+
+  "default_role":   "portable_node",
+  "default_boot":   "headless",
+  "default_os":     "dietpi",
+  "default_code_package": "local:~/Downloads/Jack/ + flipper-bridge.py",
+
+  "preconfigured": {
+    "hostname":     "SinseraBlackbox",
+    "timezone":     "Australia/Sydney",
+    "locale":       "en_AU.UTF-8",
+    "ssh_server":   "openssh",
+    "ssh_root_pubkey": "ed25519 from operator's ~/.ssh/id_ed25519.pub",
+    "autostart":    "console (normal login)",
+    "wifi":         "baked via ~/.ark/wifi.env",
+    "raspyjack_source": "raspyjack-src.tar.gz (108 MB) — embedded at /opt/ark-extras/",
+    "flipper_bridge":   "/opt/flipper/flipper-bridge.py (~150 lines, pyserial)",
+    "udev_rule":         "/dev/flipper → first Flipper Zero seen by USB ID 0483:5740"
+  },
+
+  "first_boot_sequence": [
+    "DietPi finishes its standard first-boot setup",
+    "Automation_Custom_Script.sh runs",
+    "RaspyJack: extracts raspyjack-src.tar.gz → /opt/raspyjack/ → install_raspyjack.sh",
+    "Flipper: pip3 install pyserial; drops /opt/flipper/flipper-bridge.py; installs udev rule",
+    "system reboots once (so SPI dtoverlay + udev rules take effect)",
+    "after reboot: LCD HAT comes alive; Flipper plugged into the USB hub gets /dev/flipper"
+  ],
+
+  "operator_paths": [
+    "Standalone: walk around with the Pi, use the LCD + joystick to drive RaspyJack",
+    "Ark / Mac: Can't Phish Here → RaspyJack tab dispatches commands via SSH Runner",
+    "Ark / Mac: Can't Phish Here → Flipper tab dispatches Flipper commands (when Flipper is plugged in)"
+  ]
+}
