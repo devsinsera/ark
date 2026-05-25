@@ -41,6 +41,13 @@ if [ -f "$HOME/.ark/wifi.env" ]; then
   source "$HOME/.ark/wifi.env" ; set +a
   : "${WIFI_SSID:=}" ; : "${WIFI_KEY:=}"
 fi
+# Optional Tailscale authkey — substituted into install.sh at bake time.
+# No-op in the install script if empty.
+TAILSCALE_AUTHKEY=""
+if [ -f "$HOME/.ark/tailscale.env" ]; then
+  set -a ; source "$HOME/.ark/tailscale.env" ; set +a
+  : "${TAILSCALE_AUTHKEY:=${AUTHKEY:-}}"
+fi
 
 echo "[jacktheflipper-bake] decompressing base → $OUT_IMG"
 xz -dck "$SRC_XZ" > "$OUT_IMG"
@@ -86,6 +93,7 @@ docker run --rm --privileged \
   -e SSH_PUBKEY="$SSH_PUBKEY" \
   -e WIFI_SSID="$WIFI_SSID" \
   -e WIFI_KEY="$WIFI_KEY" \
+  -e TAILSCALE_AUTHKEY="$TAILSCALE_AUTHKEY" \
   --entrypoint /bin/bash ark-builder:0.1 -c '
     set -e
     IMG=/baking/ark-built.img
@@ -105,7 +113,9 @@ docker run --rm --privileged \
 
     cp /profile/flipper-bridge.py /mnt/root/opt/jacktheflipper/flipper-bridge.py
     chmod 755 /mnt/root/opt/jacktheflipper/flipper-bridge.py
-    cp /profile/install.sh /mnt/root/opt/jacktheflipper/install.sh
+    # Substitute __TAILSCALE_AUTHKEY_PLACEHOLDER__ in install.sh
+    awk -v tskey="$TAILSCALE_AUTHKEY" "{ gsub(/__TAILSCALE_AUTHKEY_PLACEHOLDER__/, tskey); print }" \
+      /profile/install.sh > /mnt/root/opt/jacktheflipper/install.sh
     chmod 755 /mnt/root/opt/jacktheflipper/install.sh
     cp /profile/raspyjack-src.tar.gz /mnt/root/opt/ark-extras/raspyjack-src.tar.gz
 

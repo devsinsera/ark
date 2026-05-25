@@ -32,11 +32,24 @@ for try in 1 2 3; do
   if apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
        python3-pip python3-serial python3-spidev python3-pil python3-smbus python3-smbus2 \
        python3-numpy python3-pyudev python3-rpi.gpio python3-netifaces \
-       i2c-tools git nmap; then
+       i2c-tools git nmap \
+       tor torsocks; then
     APT_OK=1; echo "apt-get install OK on try $try"; break
   fi
   echo "apt-get attempt $try failed; sleeping 15s"; sleep 15
 done
+
+# ── 1b. Tor — start + enable so localhost:9050 is always available ──
+step "Configure + enable tor"
+systemctl enable tor 2>/dev/null || true
+systemctl start  tor 2>/dev/null || true
+# Quick test: does the SOCKS port come up?
+sleep 3
+if ss -ltn 2>/dev/null | grep -q ':9050'; then
+  echo "tor SOCKS proxy listening on 127.0.0.1:9050"
+else
+  echo "WARN: tor not listening yet — may need a moment, or check /var/log/tor/log"
+fi
 if [ "$APT_OK" != 1 ]; then
   echo "WARN: apt-get install never succeeded. Install_raspyjack may still proceed, but expect failures."
 fi
@@ -100,6 +113,23 @@ step "udev reload (for /dev/flipper symlink)"
 udevadm control --reload-rules || true
 udevadm trigger || true
 
+# ── 6b. Tailscale (optional) — joins tailnet so you can SSH from anywhere ──
+# Authkey baked at build time. Empty placeholder → block is a no-op.
+TS_AUTHKEY="__TAILSCALE_AUTHKEY_PLACEHOLDER__"
+if [ -n "$TS_AUTHKEY" ]; then
+  step "Tailscale install + tailnet join"
+  for i in 1 2 3 4 5 6; do
+    curl -fsS -m 10 https://tailscale.com/install.sh -o /tmp/ts.sh && break
+    echo "tailscale fetch retry $i (waiting for network)…"; sleep 10
+  done
+  if [ -f /tmp/ts.sh ]; then
+    sh /tmp/ts.sh
+    tailscale up --auth-key="$TS_AUTHKEY" --hostname="jacktheflipper" --ssh --accept-routes \
+      || echo "tailscale up failed (check authkey + tailnet ACLs)"
+    rm -f /tmp/ts.sh
+  fi
+fi
+
 # ── 7. Disable + remove this service ──
 step "Disable jacktheflipper-install.service"
 systemctl disable jacktheflipper-install.service 2>/dev/null || true
@@ -125,6 +155,10 @@ cat > /etc/motd <<'EOF'
   ║  Drive from Ark on your Mac:                                  ║
   ║    https://sinsera.co/ark/#security/raspyjack                 ║
   ║    https://sinsera.co/ark/#security/flipper                   ║
+  ║                                                               ║
+  ║  Tor:                                                         ║
+  ║    SOCKS proxy at 127.0.0.1:9050  (sudo systemctl status tor) ║
+  ║    Route any command:  torsocks <cmd>                         ║
   ║                                                               ║
   ║  Authorised use only — own hardware, own networks, written    ║
   ║  permission. The Flipper bridge refuses TX/clone/emulate.     ║
