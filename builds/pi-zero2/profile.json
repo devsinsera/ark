@@ -1,0 +1,15 @@
+{
+  "profile_id":   "pi-zero2",
+  "version":      1,
+  "category":     "raspberry-pi-devices",
+  "name":         "Pi Zero 2 W — Raspberry Pi OS Lite (vanilla)",
+  "description":  "Clean Raspberry Pi OS Lite (Bookworm, 64-bit) for Pi Zero 2 W. WiFi creds + SSH key baked via firstrun.sh on first boot. No other software, no first-boot scripts beyond the user setup. Boots, joins LAN, accepts SSH.",
+  "supported_hardware": ["pi-zero-2-w", "pi-3b-plus", "pi-3b"],
+  "base_image":         "raspios_lite_arm64_latest.img.xz",
+  "preconfigured": {
+    "hostname":      "pi-zero2",
+    "user":          "pi (no password — SSH-key only)",
+    "ssh":           "enabled, root + pi authorized_keys baked",
+    "wifi":          "from ~/.ark/wifi.env via NetworkManager nmconnection"
+  }
+}

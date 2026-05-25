@@ -1,0 +1,15 @@
+{
+  "profile_id":   "pi-five",
+  "version":      1,
+  "category":     "raspberry-pi-devices",
+  "name":         "Pi 5 — Raspberry Pi OS Lite (vanilla)",
+  "description":  "Clean Raspberry Pi OS Lite (Bookworm, 64-bit) for Pi 5. WiFi creds + SSH key baked via firstrun.sh on first boot. No other software, no first-boot scripts beyond the user setup. Boots, joins LAN, accepts SSH.",
+  "supported_hardware": ["pi-5-4gb", "pi-5-8gb", "pi-5-16gb"],
+  "base_image":         "raspios_lite_arm64_latest.img.xz",
+  "preconfigured": {
+    "hostname":      "pi-five",
+    "user":          "pi (no password — SSH-key only)",
+    "ssh":           "enabled, root + pi authorized_keys baked",
+    "wifi":          "from ~/.ark/wifi.env via NetworkManager nmconnection"
+  }
+}
