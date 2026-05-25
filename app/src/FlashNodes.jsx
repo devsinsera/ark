@@ -1026,21 +1026,21 @@ export function LocalFlashDialog({ hubUrl, image, onClose }) {
 
             {disksState.status === 'ok' && disksState.list.length === 0 ? (
               <div style={{ padding: 16, background: 'rgba(245,180,90,0.06)', border: `1px solid ${COLORS.warning}`, borderRadius: 8, color: COLORS.warning, fontSize: 13, marginBottom: 12, lineHeight: 1.7 }}>
-                No external disks detected. Insert an SD card (or USB SD reader) into this Mac and click
-                <strong> Refresh</strong>. (Internal / boot disks are filtered out for safety.)
+                No removable disks detected. Insert an SD card (built-in slot or USB SD reader works) into this Mac and click
+                <strong> Refresh</strong>. (Boot disk + fixed internal SSDs are filtered out for safety.)
               </div>
             ) : disksState.status === 'ok' ? (
               <>
-                <label style={{ fontSize: 11, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>External disk</label>
+                <label style={{ fontSize: 11, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Removable disk</label>
                 <select value={picked} onChange={(e) => { setPicked(e.target.value); setConfirmText(''); }} style={{
                   display: 'block', width: '100%', marginTop: 4, marginBottom: 12,
                   padding: '8px 10px', background: '#040608', color: COLORS.textPrimary,
                   border: `1px solid ${COLORS.border}`, borderRadius: 6, fontFamily: FONT_MONO, fontSize: 13,
                 }}>
-                  <option value="">— pick an external disk —</option>
+                  <option value="">— pick a disk —</option>
                   {disksState.list.map(d => (
                     <option key={d.device} value={d.device}>
-                      {d.device} · {prettyBytes(d.size_bytes)}{d.name ? ` · "${d.name}"` : ''}{d.content ? ` · ${d.content}` : ''}
+                      {d.device} · {prettyBytes(d.size_bytes)}{d.name ? ` · "${d.name}"` : ''}{d.content ? ` · ${d.content}` : ''}{d.internal ? ' · built-in SD slot' : d.protocol === 'USB' ? ' · USB' : ''}
                     </option>
                   ))}
                 </select>

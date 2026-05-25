@@ -776,12 +776,14 @@ const server = createServer(async (req, res) => {
         const img = flash.getImage(image_id);
         if (!img) return json(res, { ok: false, error: 'image not found' }, 404);
         if (!img.source_path || !existsSync(img.source_path)) return json(res, { ok: false, error: 'image file missing on disk' }, 404);
-        // Target safety: must be /dev/diskN where N >= 1 (boot disk = disk0)
+        // Target safety: must be /dev/diskN where N >= 1 (boot disk = disk0).
         if (!/^\/dev\/disk[1-9][0-9]*$/.test(target)) return json(res, { ok: false, error: `invalid target: ${target}` }, 400);
-        // Verify target is in the external-disks list (defensive double-check)
-        const externalDisks = await listLocalDisks();
-        if (!externalDisks.some(d => d.device === target)) {
-          return json(res, { ok: false, error: `target ${target} not in external-disks list — refusing` }, 400);
+        // Defensive double-check: listLocalDisks already filters out the
+        // boot disk + Apple Fabric SoC SSD + fixed internal disks, so
+        // membership in this list is the canonical safe-to-write signal.
+        const safeDisks = await listLocalDisks();
+        if (!safeDisks.some(d => d.device === target)) {
+          return json(res, { ok: false, error: `target ${target} is not in the safe-to-write disks list — refusing` }, 400);
         }
         const result = await runLocalFlash(img.source_path, target);
         return json(res, result);
@@ -1264,26 +1266,80 @@ function getOwnHostHint() {
 // Returns [{device:'/dev/diskN', size_bytes, content, name, removable}]
 async function listLocalDisks() {
   if (process.platform !== 'darwin') return [];
-  const plist = await new Promise((resolve, reject) => {
-    execFile('diskutil', ['list', '-plist', 'external', 'physical'], (err, stdout) => {
+  // List ALL physical disks (drop the 'external' filter — Macs with a
+  // built-in SD slot present the card as "internal physical", which
+  // diskutil's 'external' filter excludes). We then call diskutil
+  // info -plist per disk to read RemovableMedia + Internal and only
+  // return whole disks that are either removable, on USB, or
+  // explicitly NOT the boot disk. The boot disk (disk0 on Apple
+  // Silicon; varies elsewhere) is always excluded.
+  const listPlist = await new Promise((resolve, reject) => {
+    execFile('diskutil', ['list', '-plist', 'physical'], (err, stdout) => {
       if (err) return reject(err);
       resolve(stdout);
     });
   });
-  // Parse via python3 (always present on macOS)
   const py = `
-import plistlib, sys, json
+import plistlib, subprocess, sys, json, re
 d = plistlib.loads(sys.stdin.read().encode())
+
+# Boot-disk identification: try the Whole flag from diskutil info /,
+# but also unconditionally exclude disk0 (always the boot disk on
+# stock Mac configs) and any 'Apple Fabric' device (the integrated
+# SoC SSD on Apple Silicon).
+boot_whole = 'disk0'  # safe default
+try:
+    info_raw = subprocess.run(['diskutil', 'info', '-plist', '/'],
+                              check=True, capture_output=True).stdout
+    info = plistlib.loads(info_raw)
+    pdi = info.get('ParentWholeDisk') or info.get('APFSContainerStore', '') or ''
+    if pdi:
+        boot_whole = pdi
+except Exception:
+    pass
+
 out = []
 for disk in d.get('AllDisksAndPartitions', []):
+    dev_id = disk.get('DeviceIdentifier', '')
+    if not dev_id:
+        continue
+    # Hard-block disk0 + the diagnosed boot disk.
+    if dev_id == boot_whole or dev_id == 'disk0':
+        continue
+    # Refuse anything that's not /dev/disk<N> where N >= 1 (would
+    # match the runLocalFlash target-path regex anyway, but be strict
+    # here too so we never return a non-flashable name).
+    if not re.match(r'^disk[1-9][0-9]*$', dev_id):
+        continue
+    try:
+        det_raw = subprocess.run(['diskutil', 'info', '-plist', dev_id],
+                                 check=True, capture_output=True).stdout
+        det = plistlib.loads(det_raw)
+    except Exception:
+        det = {}
+    removable = bool(det.get('RemovableMedia') or det.get('Removable'))
+    internal  = bool(det.get('Internal'))
+    protocol  = det.get('BusProtocol') or ''
+    # Apple Fabric = on-package SoC SSD on M-series Macs — never an
+    # SD card, never safe to flash. Exclude regardless of other flags.
+    if protocol == 'Apple Fabric':
+        continue
+    # Skip clearly-fixed internal disks (not the built-in SD slot).
+    # The Mac's built-in SD slot reports Internal=True + Removable=True;
+    # USB drives report Internal=False; a fixed PCIe SSD reports
+    # Internal=True + Removable=False — that's what we want to filter.
+    if internal and not removable:
+        continue
     parts = disk.get('Partitions', []) or []
     label = next((p.get('VolumeName') for p in parts if p.get('VolumeName')), None)
     out.append({
-        'device': '/dev/' + disk.get('DeviceIdentifier', ''),
-        'size_bytes': disk.get('Size', 0),
-        'content': disk.get('Content', ''),
-        'name': label,
-        'removable': True,
+        'device':      '/dev/' + dev_id,
+        'size_bytes':  disk.get('Size', 0),
+        'content':     disk.get('Content', ''),
+        'name':        label,
+        'removable':   removable,
+        'internal':    internal,
+        'protocol':    str(protocol),
     })
 print(json.dumps(out))
 `.trim();
@@ -1293,7 +1349,7 @@ print(json.dumps(out))
     p.stdout.on('data', d => out += d);
     p.stderr.on('data', d => err += d);
     p.on('close', code => code === 0 ? resolve(out) : reject(new Error(err || 'python3 exit ' + code)));
-    p.stdin.end(plist);
+    p.stdin.end(listPlist);
   });
   return JSON.parse(jsonText);
 }
