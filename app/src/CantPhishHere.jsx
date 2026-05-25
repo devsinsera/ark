@@ -1221,6 +1221,73 @@ function Output({ title, body, colour }) {
 }
 
 // ── Settings ────────────────────────────────────────────────────
+// Browser notifications opt-in panel — surfaces the global alert
+// notifier so the operator can grant permission + toggle it. Stored
+// state matches the keys the useAlertNotifier hook in App.jsx reads.
+function BrowserAlertsToggle() {
+  const ENABLED_KEY = 'ark.alertNotifier.enabled';
+  const [perm, setPerm] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
+  const [enabled, setEnabled] = useState(() => {
+    try { return window.localStorage.getItem(ENABLED_KEY) === '1'; } catch { return false; }
+  });
+  const supported = typeof Notification !== 'undefined';
+
+  async function enable() {
+    if (!supported) return;
+    if (Notification.permission === 'default') {
+      const p = await Notification.requestPermission();
+      setPerm(p);
+      if (p !== 'granted') return;
+    }
+    if (Notification.permission === 'granted') {
+      window.localStorage.setItem(ENABLED_KEY, '1');
+      setEnabled(true);
+      try {
+        new Notification('Ark · browser alerts enabled', {
+          body: 'You\'ll get a popup when a new CPH alert fires.',
+          tag: 'ark-alerts-enabled-test',
+        });
+      } catch {}
+    }
+  }
+  function disable() {
+    window.localStorage.setItem(ENABLED_KEY, '0');
+    setEnabled(false);
+  }
+
+  return (
+    <section style={{ background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 14 }}>
+      <h3 style={{ margin: '0 0 6px', fontFamily: FONT_HEADING, fontSize: 16, color: COLORS.textPrimary }}>Browser alerts</h3>
+      <p style={{ margin: '0 0 10px', fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>
+        OS-level desktop popups when a new CPH alert fires. The Ark tab doesn't have to be in focus —
+        the hook polls in the background every 30 s.
+      </p>
+      {!supported ? (
+        <div style={{ fontSize: 12, color: COLORS.warning }}>This browser doesn't support the Notification API.</div>
+      ) : perm === 'denied' ? (
+        <div style={{ fontSize: 12, color: COLORS.error }}>
+          Notifications are blocked for this site. Enable in browser settings (Chrome: lock icon → Site settings → Notifications),
+          then refresh.
+        </div>
+      ) : enabled && perm === 'granted' ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ padding: '3px 9px', fontSize: 11, borderRadius: 4, background: 'rgba(34,197,94,0.15)', color: COLORS.success, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>on</span>
+          <button onClick={disable} style={{ padding: '6px 14px', background: 'transparent', color: COLORS.textSecondary, border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>turn off</button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button onClick={enable} style={{ padding: '6px 14px', background: COLORS.bgActive, color: COLORS.accentBright, border: `1px solid ${COLORS.accentBorder}`, borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>
+            Enable browser alerts
+          </button>
+          <span style={{ fontSize: 11, color: COLORS.textMuted }}>
+            Browser will prompt for permission. You can revoke any time from the lock icon.
+          </span>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function SettingsTab({ hubUrl }) {
   const [hosts, setHosts] = useState([]);
   const [form, setForm]   = useState({ label: '', mac: '', ip_pattern: '', notes: '' });
@@ -1245,6 +1312,7 @@ function SettingsTab({ hubUrl }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <BrowserAlertsToggle/>
       <section style={{ background: COLORS.bgPanel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 14 }}>
         <h3 style={{ margin: '0 0 10px', fontFamily: FONT_HEADING, fontSize: 18, color: COLORS.textPrimary }}>Approved hosts</h3>
         <p style={{ margin: '0 0 12px', fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>

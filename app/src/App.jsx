@@ -292,6 +292,13 @@ export default function App() {
     return () => clearTimeout(handle);
   }, [manifests]);
   useEffect(() => { if (activeId) saveActiveId(activeId); }, [activeId]);
+  // Global new-alert notifier — polls the Hub every 30s and fires a
+  // browser Notification when a never-before-seen alert id arrives.
+  // Persists last-seen id in localStorage so a refresh doesn't
+  // re-notify. Gated on Notification.permission === 'granted'; the
+  // permission prompt is triggered from the CPH Settings tab via the
+  // "Enable browser alerts" button.
+  useAlertNotifier();
   useEffect(() => { writeJSON(UI_NAV_KEY, nav); },                 [nav]);
   useEffect(() => { writeJSON(UI_LAYERS_KEY, openLayers); },        [openLayers]);
   useEffect(() => { writeJSON(UI_DRAWER_OPEN_KEY, drawerOpen); },   [drawerOpen]);
@@ -579,6 +586,61 @@ function Sidebar({ nav, setNav, count, onCollapse }) {
 // re-reads on its next tick. Critical when running the Ark UI on a
 // different computer from the Hub — the default localhost:7400 is
 // only valid for the machine running the Hub itself.
+// Global new-alert notifier. Mounted once at the App level so it
+// fires regardless of which tab the user is on. Polls every 30 s;
+// only notifies for alerts created AFTER the last-seen id stored in
+// localStorage (so a refresh doesn't re-pop everything).
+const ALERT_LAST_SEEN_KEY = 'ark.alertNotifier.lastId';
+const ALERT_NOTIFY_ENABLED_KEY = 'ark.alertNotifier.enabled';
+export function useAlertNotifier() {
+  useEffect(() => {
+    // Bail if the operator hasn't opted in or the browser doesn't
+    // support Notifications.
+    if (typeof window === 'undefined' || typeof Notification === 'undefined') return;
+    const hubUrl = (() => {
+      try { return (window.localStorage.getItem('ark.hubUrl') || 'http://localhost:7400').replace(/\/+$/, ''); }
+      catch { return 'http://localhost:7400'; }
+    })();
+    let stopped = false;
+    const tick = async () => {
+      if (stopped) return;
+      const enabled = window.localStorage.getItem(ALERT_NOTIFY_ENABLED_KEY) === '1';
+      if (!enabled || Notification.permission !== 'granted') return;
+      try {
+        const r = await fetch(`${hubUrl}/api/cph/alerts?limit=20`, { cache: 'no-cache' });
+        if (!r.ok) return;
+        const j = await r.json();
+        const alerts = (j.alerts || []).filter(a => !a.resolved_at);
+        if (alerts.length === 0) return;
+        const lastSeen = Number(window.localStorage.getItem(ALERT_LAST_SEEN_KEY) || 0);
+        const fresh = alerts.filter(a => a.id > lastSeen);
+        if (fresh.length === 0) return;
+        const maxId = Math.max(...alerts.map(a => a.id));
+        window.localStorage.setItem(ALERT_LAST_SEEN_KEY, String(maxId));
+        // Group: 1 alert → single notification; >1 → summary
+        if (fresh.length === 1) {
+          const a = fresh[0];
+          const sev = (a.severity || 'info').toUpperCase();
+          new Notification(`Ark · ${sev}: ${a.kind}`, {
+            body: a.subject,
+            tag: `ark-alert-${a.id}`,
+            icon: '/ark/favicon.svg',
+          });
+        } else {
+          new Notification(`Ark · ${fresh.length} new alerts`, {
+            body: fresh.slice(0, 3).map(a => `${a.severity}: ${a.subject}`).join('\n'),
+            tag: `ark-alert-batch`,
+            icon: '/ark/favicon.svg',
+          });
+        }
+      } catch { /* offline — try again next tick */ }
+    };
+    tick();
+    const t = setInterval(tick, 30000);
+    return () => { stopped = true; clearInterval(t); };
+  }, []);
+}
+
 function HubUrlWidget() {
   const [url, setUrl]     = useState(() => {
     try { return (window.localStorage.getItem('ark.hubUrl') || 'http://localhost:7400').replace(/\/+$/, ''); }
@@ -587,6 +649,10 @@ function HubUrlWidget() {
   const [reach, setReach] = useState('checking');
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(url);
+  // What /api/config reports — used to surface the LAN URL so the
+  // operator can point a Pi (or another browser on the LAN) at the
+  // Hub without hunting for the Mac's IP manually.
+  const [hubConfig, setHubConfig] = useState(null);
 
   // Probe the Hub on mount + every 8s so the dot reflects current state
   useEffect(() => {
@@ -595,9 +661,17 @@ function HubUrlWidget() {
       try {
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), 2500);
-        const r = await fetch(url + '/api/health', { signal: ctrl.signal, cache: 'no-cache' });
+        const [h, c] = await Promise.all([
+          fetch(url + '/api/health', { signal: ctrl.signal, cache: 'no-cache' }),
+          fetch(url + '/api/config', { signal: ctrl.signal, cache: 'no-cache' }).catch(() => null),
+        ]);
         clearTimeout(t);
-        if (!cancelled) setReach(r.ok ? 'ok' : 'down');
+        if (!cancelled) {
+          setReach(h.ok ? 'ok' : 'down');
+          if (c && c.ok) {
+            try { setHubConfig(await c.json()); } catch {}
+          }
+        }
       } catch {
         if (!cancelled) setReach('down');
       }
@@ -647,9 +721,27 @@ function HubUrlWidget() {
           <button onClick={save} style={{ flex: 1, padding: '4px 8px', background: COLORS.bgActive, color: COLORS.accentBright, border: `1px solid ${COLORS.accentBorder}`, borderRadius: 4, fontSize: 11, cursor: 'pointer' }}>save</button>
           <button onClick={() => setEditing(false)} style={{ flex: 1, padding: '4px 8px', background: 'transparent', color: COLORS.textMuted, border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11, cursor: 'pointer' }}>cancel</button>
         </div>
+        {hubConfig?.lan_url && (
+          <div style={{ marginTop: 2, padding: '6px 8px', background: 'rgba(34,197,94,0.06)', border: `1px solid ${COLORS.success}33`, borderRadius: 4 }}>
+            <div style={{ color: COLORS.success, fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 }}>
+              LAN-reachable
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <code style={{ flex: 1, color: COLORS.textPrimary, fontFamily: FONT_MONO, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {hubConfig.lan_url}
+              </code>
+              <button onClick={() => setDraft(hubConfig.lan_url)} title="Use this URL — other devices on the LAN can talk to the Hub here" style={{
+                padding: '3px 8px', fontSize: 10,
+                background: COLORS.bgActive, color: COLORS.accentBright,
+                border: `1px solid ${COLORS.accentBorder}`, borderRadius: 3,
+                cursor: 'pointer', fontFamily: FONT_BODY,
+              }}>use</button>
+            </div>
+          </div>
+        )}
         <div style={{ color: COLORS.textMuted, fontSize: 10, lineHeight: 1.5 }}>
           The Hub runs locally. Default <code>http://localhost:7400</code> works on the same machine. On another device,
-          point this at the host running the Hub — e.g. <code>http://192.168.4.167:7400</code>.
+          point this at the host running the Hub — e.g. <code>{hubConfig?.lan_url || 'http://192.168.4.167:7400'}</code>.
         </div>
       </div>
     );
