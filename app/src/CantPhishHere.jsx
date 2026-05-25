@@ -5,7 +5,7 @@
 // against unapproved hosts. Recommendations only.
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { Shield, AlertTriangle, Check, X, Plus, Trash2, Activity, Settings as SettingsIcon, ScrollText, Crosshair, Play, History, Square, Zap } from 'lucide-react';
+import { Shield, AlertTriangle, Check, X, Plus, Trash2, Activity, Settings as SettingsIcon, ScrollText, Crosshair, Play, History, Square, Zap, Globe } from 'lucide-react';
 import { COLORS, FONT_HEADING, FONT_BODY, FONT_MONO } from './lib/theme.js';
 
 const HUB_KEY = 'ark.hubUrl';
@@ -23,6 +23,7 @@ const VIEWS = [
   { id: 'hardening', label: 'Hardening', icon: Check },
   { id: 'raspyjack', label: 'RaspyJack', icon: Crosshair },
   { id: 'flipper',   label: 'Flipper',   icon: Zap },
+  { id: 'ragnar',    label: 'Ragnar',    icon: Globe },
   { id: 'settings',  label: 'Settings',  icon: SettingsIcon },
 ];
 
@@ -88,6 +89,7 @@ export default function CantPhishHere() {
       {view === 'hardening' && <HardeningTab hubUrl={hubUrl}/>}
       {view === 'raspyjack' && <RaspyJackTab hubUrl={hubUrl}/>}
       {view === 'flipper'   && <FlipperTab hubUrl={hubUrl}/>}
+      {view === 'ragnar'    && <RagnarTab hubUrl={hubUrl}/>}
       {view === 'settings'  && <SettingsTab hubUrl={hubUrl}/>}
     </div>
   );
@@ -1202,6 +1204,75 @@ function FlipperTab({ hubUrl }) {
           <p style={{ margin: 0, color: COLORS.textMuted, fontSize: 13, lineHeight: 1.7 }}>
             The Flipper tab drives a Pi that's been flashed with the <code>sinsera-flipper</code> image and has a Flipper Zero plugged in.
             Open the <strong>SSH Runner</strong> nav, register that Pi (e.g. <code>root@SinseraFlipper.local</code>), then come back here.
+          </p>
+        </div>
+      }
+    />
+  );
+}
+
+// ── Ragnar tab — drives the vendored PierreGode/Ragnar stack on a Pi
+// that has the JackTheFlipper image (RaspyJack tree includes vendor/
+// ragnar/). The /usr/local/bin/ragnar wrapper handles start/stop/
+// status/log over SSH. Web dashboard at http://<pi-ip>:8091.
+const RAGNAR_TOOLS = [
+  {
+    id:      'status',
+    label:   'Status + dashboard URL',
+    kind:    'passive',
+    risk:    'safe',
+    desc:    'Check whether the Ragnar service is running, what port it listens on, and surface the http://<pi-ip>:8091 dashboard URL so you can click through.',
+    command: 'ragnar status',
+  },
+  {
+    id:      'start',
+    label:   'Start Ragnar',
+    kind:    'active',
+    risk:    'low',
+    desc:    'Spawn the Ragnar headless web stack (python3 vendor/ragnar/raspyjack_headless.py) on port 8091. Idempotent — does nothing if already running.',
+    command: 'ragnar start',
+  },
+  {
+    id:      'stop',
+    label:   'Stop Ragnar',
+    kind:    'active',
+    risk:    'low',
+    desc:    'Kill the running Ragnar process. Safe; just stops the service.',
+    command: 'ragnar stop',
+  },
+  {
+    id:      'log',
+    label:   'Recent log (tail 50)',
+    kind:    'passive',
+    risk:    'safe',
+    desc:    'Last 50 lines of /opt/raspyjack/loot/Ragnar/ragnar.log — useful when start fails or scans seem stuck.',
+    command: 'ragnar log',
+  },
+];
+
+function RagnarTab({ hubUrl }) {
+  return (
+    <CompanionRunnerTab
+      hubUrl={hubUrl}
+      tools={RAGNAR_TOOLS}
+      reason="ragnar"
+      intro={
+        <div style={{ padding: 12, background: 'rgba(6,182,212,0.06)', border: `1px solid ${COLORS.accentBorder}`, borderRadius: 8, fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.7 }}>
+          <strong style={{ color: COLORS.accentBright }}>Ragnar — vendored PierreGode/Ragnar autonomous recon stack.</strong>
+          {' '}A fork of the Bjorn project; runs a headless web UI for network discovery, vulnerability assessment, and
+          credential / file extraction. On JackTheFlipper it's installed by RaspyJack's installer at
+          <code> /opt/raspyjack/vendor/ragnar/</code> and launched by the <code>ragnar</code> wrapper script (or via the LCD
+          HAT → Payload → Utilities → Ragnar). Once started, open <code>http://&lt;pi-ip&gt;:8091</code> in a browser
+          for the full dashboard. Authorized testing only — on networks you own + have written permission to assess.
+        </div>
+      }
+      emptyState={
+        <div style={{ padding: 22, background: COLORS.bgPanel, border: `1px dashed ${COLORS.border}`, borderRadius: 10 }}>
+          <h3 style={{ margin: '0 0 6px', fontFamily: FONT_HEADING, fontSize: 16, color: COLORS.textPrimary }}>No managed hosts</h3>
+          <p style={{ margin: 0, color: COLORS.textMuted, fontSize: 13, lineHeight: 1.7 }}>
+            Ragnar lives on a Pi flashed with the <code>jacktheflipper</code> image (it ships in the bundled RaspyJack
+            tree at <code>/opt/raspyjack/vendor/ragnar/</code>). Open the <strong>SSH Runner</strong> nav, register that
+            Pi (e.g. <code>peta@jacktheflipper.local</code>), then come back here.
           </p>
         </div>
       }
