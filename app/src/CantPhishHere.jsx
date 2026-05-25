@@ -725,6 +725,77 @@ const RASPYJACK_TOOLS = [
     desc:    'Probe attached I²C devices (PiSugar, OLED, sensors). Useful for confirming HAT hardware. Never touches the network.',
     command: 'cd /opt/raspyjack && timeout 10 python3 payloads/hardware/i2c_scanner.py 2>&1 | head -100',
   },
+
+  // ── OFFENSIVE TOOLS — authorised testing only ───────────────────
+  // These were previously excluded from Ark's catalogue. Per operator
+  // authorisation for own-network testing, they're now dispatchable.
+  // ALL of these can degrade WiFi service or capture credentials when
+  // targeted at random networks — that is illegal. Use only against
+  // hardware you own + networks where you have written permission.
+  {
+    id:      'wifi-deauth',
+    label:   'WiFi deauth (forced reconnect)',
+    kind:    'active-attack',
+    risk:    'attack',
+    desc:    'Deauthenticates clients from a target AP, forcing them to reconnect. Used to capture WPA handshakes during the reconnect. Visible: drops every client off the target SSID for a few seconds.',
+    command: 'cd /opt/raspyjack && sudo timeout 30 python3 payloads/wifi/deauth.py 2>&1 | head -100',
+  },
+  {
+    id:      'wifi-handshake-hunter',
+    label:   'WPA handshake hunter',
+    kind:    'active-attack',
+    risk:    'attack',
+    desc:    'Walks all reachable APs, deauths any clients, captures the WPA 4-way handshake when they reconnect. Output handshakes land in /opt/raspyjack/loot/ for offline cracking.',
+    command: 'cd /opt/raspyjack && sudo timeout 60 python3 payloads/wifi/handshake_hunter.py 2>&1 | head -100',
+  },
+  {
+    id:      'wifi-pmkid',
+    label:   'PMKID grab (modern WPA hash recovery)',
+    kind:    'active-attack',
+    risk:    'attack',
+    desc:    'Grabs the PMKID from the first packet of the WPA association — no client deauth needed, much quieter than handshake_hunter. Targets the AP directly.',
+    command: 'cd /opt/raspyjack && sudo timeout 60 python3 payloads/wifi/pmkid_grab.py 2>&1 | head -100',
+  },
+  {
+    id:      'wifi-evil-twin',
+    label:   'Evil twin AP (clone target SSID)',
+    kind:    'active-attack',
+    risk:    'attack',
+    desc:    'Clones a target AP’s SSID + BSSID, broadcasts a stronger signal to attract clients. Pair with a captive portal for credential capture. Highly disruptive.',
+    command: 'cd /opt/raspyjack && sudo timeout 30 python3 payloads/wifi/evil_twin.py 2>&1 | head -100',
+  },
+  {
+    id:      'cred-sniffer',
+    label:   'Passive credential sniffer (multi-protocol)',
+    kind:    'passive-attack',
+    risk:    'attack',
+    desc:    'Read-only LAN sniffer for HTTP basic auth, FTP, SMTP, SNMP community strings, telnet, etc. Doesn’t inject anything — purely tcpdump-style listening on wlan0 / eth0.',
+    command: 'cd /opt/raspyjack && sudo timeout 60 python3 payloads/credentials/cred_sniffer_multi.py 2>&1 | head -100',
+  },
+  {
+    id:      'cred-ssh-brute',
+    label:   'SSH brute-force (controlled wordlist)',
+    kind:    'active-attack',
+    risk:    'attack',
+    desc:    'Attempts known default/common credentials against an SSH service. Triggers lockouts on hosts that have them. Specify target via env vars.',
+    command: 'cd /opt/raspyjack && sudo timeout 60 python3 payloads/credentials/ssh_bruteforce.py 2>&1 | head -50',
+  },
+  {
+    id:      'dns-spoof',
+    label:   'DNS spoof (LAN MITM)',
+    kind:    'active-attack',
+    risk:    'attack',
+    desc:    'Replies to LAN DNS queries with spoofed answers. Used to redirect captive-portal-grade traffic. Combine with an evil twin or rogue AP for full credential capture.',
+    command: 'cd /opt/raspyjack && sudo timeout 30 python3 DNSSpoof/dnsspoof.py 2>&1 | head -50',
+  },
+  {
+    id:      'responder',
+    label:   'Responder (LLMNR/NBT-NS/MDNS poisoner)',
+    kind:    'active-attack',
+    risk:    'attack',
+    desc:    'Listens for LLMNR / NetBIOS / mDNS broadcast queries from Windows machines, responds with spoofed answers to capture NTLM hashes. Cornerstone of internal pentests.',
+    command: 'cd /opt/raspyjack && sudo timeout 60 python3 Responder/Responder.py -I wlan0 2>&1 | head -50',
+  },
 ];
 
 const RISK_COLOUR = {
@@ -732,7 +803,10 @@ const RISK_COLOUR = {
   low:                 COLORS.warning,
   'local-hardware':    COLORS.accent,
   'active-but-light':  COLORS.warning,
+  'passive-attack':    COLORS.warning,
+  'active-attack':     COLORS.error,
   passive:             COLORS.success,
+  attack:              COLORS.error,
 };
 
 // ── Parts list — data + checkbox component ─────────────────────────
@@ -1161,11 +1235,12 @@ function RaspyJackTab({ hubUrl }) {
       parts={RASPYJACK_PARTS}
       intro={
         <div style={{ padding: 12, background: 'rgba(6,182,212,0.06)', border: `1px solid ${COLORS.accentBorder}`, borderRadius: 8, fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.7 }}>
-          <strong style={{ color: COLORS.accentBright }}>Defensive recon only — from Ark.</strong> The Ark RaspyJack tab dispatches the 6 scripts listed below, all from
-          <code> payloads/reconnaissance/</code> and <code>payloads/hardware/</code>. Ark refuses to call anything from <code>payloads/wifi/</code>,
-          <code> payloads/credentials/</code>, <code>DNSSpoof/</code>, or <code>Responder/</code> — those trees were excluded from the .img we ship.
-          The Pi itself runs the full upstream RaspyJack LCD UI (<code>python3 /opt/raspyjack/raspyjack.py</code>) when you SSH in; Ark is a defensive
-          lens, not a cage. Run ONLY against hardware + networks you own.
+          <strong style={{ color: COLORS.accentBright }}>Full RaspyJack toolkit — authorised testing only.</strong> Ark now exposes both the defensive recon
+          scripts (top of the list, green/yellow badges) AND the offensive payloads from <code>payloads/wifi/</code>, <code>payloads/credentials/</code>,
+          <code> DNSSpoof/</code>, and <code>Responder/</code> (red <strong>attack</strong> badge). The offensive ones can deauth clients, capture
+          handshakes, sniff credentials, spoof DNS, and poison LLMNR — they are <em>illegal to point at networks you do not own or have written permission
+          to test</em>. The Pi itself runs the full upstream RaspyJack LCD UI (<code>python3 /opt/raspyjack/raspyjack.py</code>) when you SSH in; Ark
+          is a remote control, not a cage. <strong>Use ONLY on hardware + networks you own.</strong>
         </div>
       }
       emptyState={
