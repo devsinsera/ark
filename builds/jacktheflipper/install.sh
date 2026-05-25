@@ -46,11 +46,15 @@ apt-get -y autoclean   || true
 step "apt-get install base deps"
 APT_OK=0
 for try in 1 2 3; do
+  # Python deps with --no-install-recommends (we know what we need)
+  # Tor + torsocks WITH recommends — bare tor pkg ships only the bin,
+  # the .service file + /etc/tor/torrc come from tor-instance which is
+  # a recommendation. Without it the daemon never starts.
   if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
        python3-pip python3-serial python3-spidev python3-pil python3-smbus python3-smbus2 \
        python3-numpy python3-pyudev python3-rpi.gpio python3-netifaces \
        i2c-tools git nmap \
-       tor torsocks; then
+     && DEBIAN_FRONTEND=noninteractive apt-get install -y tor torsocks; then
     APT_OK=1; echo "apt-get install OK on try $try"; break
   fi
   echo "apt-get attempt $try failed; sleeping 15s"; sleep 15
