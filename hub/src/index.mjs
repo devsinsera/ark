@@ -1115,8 +1115,54 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // ── Static UI serving ──
+  // Serve the Ark UI (app/dist/) directly from the Hub so the
+  // operator can open http://<hub-host>:7400/ as a same-origin app.
+  // This is the recommended path when the deployed sinsera.co/ark/
+  // can't reach the Hub due to mixed-content blocking (HTTPS page
+  // calling HTTP Hub on a LAN IP).
+  if (req.method === 'GET' && !url.pathname.startsWith('/api/')) {
+    const DIST_DIR = path.join(REPO_ROOT, 'app', 'dist');
+    if (existsSync(DIST_DIR)) {
+      // Map / → index.html, and any non-API path to the matching file
+      // under dist/ (or fall back to index.html for SPA routes).
+      let relPath = url.pathname === '/' ? '/index.html' : url.pathname;
+      // Prevent traversal.
+      if (relPath.includes('..')) {
+        res.writeHead(400); return res.end('bad path');
+      }
+      const filePath = path.join(DIST_DIR, relPath);
+      if (existsSync(filePath) && statSync(filePath).isFile()) {
+        const ext = path.extname(filePath).toLowerCase();
+        const mime = ext === '.html' ? 'text/html; charset=utf-8'
+                   : ext === '.js'   ? 'application/javascript; charset=utf-8'
+                   : ext === '.css'  ? 'text/css; charset=utf-8'
+                   : ext === '.svg'  ? 'image/svg+xml'
+                   : ext === '.json' ? 'application/json'
+                   : ext === '.png'  ? 'image/png'
+                   : ext === '.ico'  ? 'image/x-icon'
+                   : 'application/octet-stream';
+        // Hash-named assets cache forever; everything else no-cache.
+        const cache = /\/assets\/[^/]+-[A-Za-z0-9]{6,}\./.test(filePath)
+                    ? 'public, max-age=31536000, immutable'
+                    : 'no-cache';
+        res.writeHead(200, { 'content-type': mime, 'cache-control': cache });
+        return createReadStream(filePath).pipe(res);
+      }
+      // SPA fallback: any unmatched non-asset GET → index.html
+      if (!url.pathname.startsWith('/assets/') && !ext_looksLikeFile(url.pathname)) {
+        const indexFile = path.join(DIST_DIR, 'index.html');
+        if (existsSync(indexFile)) {
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+          return createReadStream(indexFile).pipe(res);
+        }
+      }
+    }
+  }
+
   // ── Default help page ──
-  if (req.method === 'GET' && url.pathname === '/') {
+  // Only reached if app/dist/ isn't present (dev environment).
+  if (req.method === 'GET' && url.pathname === '/_help') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     return res.end(`<!doctype html><meta charset="utf-8">
 <title>Ark Hub</title>
@@ -1312,6 +1358,13 @@ function shQuote(s) {
 // non-loopback IPv4 the kernel has bound. Used for both startup logs
 // and the URL the Hub hands to Flash Agents so they can fetch images
 // back from the Hub.
+// Heuristic: does a path look like a request for an actual file
+// (has an extension) vs an SPA route? Used to decide whether the
+// SPA fallback to index.html applies.
+function ext_looksLikeFile(p) {
+  return /\.[a-zA-Z0-9]{1,8}$/.test(p);
+}
+
 function lanIpHint() {
   try {
     const ifaces = networkInterfaces();
