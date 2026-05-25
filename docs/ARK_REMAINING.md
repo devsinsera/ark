@@ -1,16 +1,84 @@
 # Ark — remaining work
 
-Snapshot as of 2026-05-25 09:30 AEST. Read top-to-bottom; the order is
+Snapshot as of 2026-05-25 10:30 AEST. Read top-to-bottom; the order is
 my honest recommendation for what to do next. Update or delete entries
 as they ship.
 
 ---
 
-## 🚦 Gated on real hardware (the four 🟡 from ARCHITECTURE.md)
+## ✅ Shipped this session (live + committed)
 
-Everything in Ark that's still 🟡 yellow comes down to **one thing**:
-flash a Pi and let it phone home. Until then the Hub-side code can't
-be validated end-to-end.
+| # | What | Commit |
+|---|---|---|
+| 1 | Manifest ghost-resurrection fix (`ark.manifests.seeded.v1` flag) | `1d20523` |
+| 2 | `sinsera-installer` image profile + build pipeline + image (1.2 GB xz) | `1ff48dd` |
+| 3 | `docs/SESSION_PLAN_2026-05-25.md` + `docs/ARK_REMAINING.md` | `e42bcd5` / `3de2e75` |
+| 4 | Auto-scan `builds/*/out/` for new images; `GET /api/builds/<name>/download`; ↓ download button on BuildCard; auto-rescan on Images tab mount | `611f739` |
+| 5 | WiFi creds bake-in via `~/.ark/wifi.env` + `builder/lib/bake-creds.sh`; installer rebuilt with `Obi-Lan Kenobi` baked in (sha `a2b4f8c718c0…`) | `fce18df` |
+
+---
+
+## 🟡 HALF-DONE — pick up here in the next session
+
+### Local "Flash SD from Ark" (UI side missing)
+
+Hub side is **already wired and tested**:
+
+| Endpoint | What it does | Status |
+|---|---|---|
+| `GET /api/local/disks` | Returns external Mac disks via `diskutil list -plist` | ✅ live |
+| `POST /api/local/flash` | Runs `xz -dc <image> \| dd of=/dev/rdiskN` via `osascript with administrator privileges` (single Mac auth prompt). Validates target is in the external-disks list, refuses anything matching `/dev/disk0` (boot disk), uses `rdiskN` for speed | ✅ live |
+
+The endpoints aren't committed yet — they're in `hub/src/index.mjs` locally but the file hasn't been `git add`'d. **First thing the next session should do**: `cd ~/Dev-Sinsera/Ark && git add hub/src/index.mjs && git commit + push`.
+
+**UI side — not started.** What's needed:
+
+1. New button on each row in **Flash Nodes → Images** table: `↗ Flash to Mac SD` (and probably also on the `Builds` cards)
+2. Click → modal opens. Modal needs:
+   - `GET /api/local/disks` on open → renders a list of external Mac disks (size, name, device path)
+   - "Insert an SD card and click refresh" empty state when zero disks
+   - User picks one disk
+   - Big destructive-action warning: `ALL DATA ON /dev/diskN ("<name>") WILL BE DESTROYED`
+   - "Type the disk name to confirm" input (matches `diskN`)
+   - Flash button → calls `POST /api/local/flash` with `{image_id, target:'/dev/diskN'}`
+   - Loading spinner with "macOS will prompt for your password. Flashing takes ~3-5 min — do not unplug."
+   - On success: green checkmark + "Done. Eject the SD safely and insert it into your Pi."
+   - On error: red text with the stderr from the endpoint
+
+**Estimated effort**: 30-45 min. The Hub side is the hard part and it's done.
+
+### Sinsera-installer ALSO needs the auto-install Flash Node Agent
+
+So the workflow becomes truly zero-touch (no SSH, even ignoring the SD-from-Ark UI above):
+
+1. Flash SD with sinsera-installer (via Ark UI → SD button OR via Pi Imager)
+2. Insert SD, power on
+3. Pi joins WiFi (already baked in ✓)
+4. Pi auto-installs Flash Node Agent on first boot (← **not done yet**)
+5. Pi registers itself with the Hub (Hub needs to be reachable at the Pi's network — see "Hub bind" below)
+6. Pi appears in Ark → Flash Nodes → Nodes tab
+7. Operator opens Ark → picks an image → picks the attached NVMe → click Flash
+8. Hub dispatches flash job to the Pi via HTTP
+9. Pi runs flash, reports back complete
+10. Operator power-cycles the Pi (or sends `poweroff` via Ark)
+
+**What's needed**:
+- Modify `builds/sinsera-installer/install-template.sh` to auto-install the flash agent in the first-boot script (run `bash /opt/ark-extras/agent/install-flash-agent.sh` if present, with `HUB_URL` baked in)
+- Bake the Hub URL into the install plan: take `lanIpHint()` from the Hub at build time (or the user's choice) and pass into the template as `__HUB_URL_PLACEHOLDER__`. Update `bake-creds.sh` to substitute it.
+- Make the Hub bind to `0.0.0.0` (currently `127.0.0.1` only — Pi can't reach it). Set `ARK_HUB_BIND_HOST=0.0.0.0` before starting the Hub. **Note this exposes the Hub to your LAN — fine for a home LAN but think about it.**
+
+**Estimated effort**: 30 min.
+
+---
+
+## 🚦 Hardware-gated phases (the four 🟡 from ARCHITECTURE.md)
+
+All unblocked by flashing the first Pi. The workflow is now ~4 manual steps:
+
+1. Hard-refresh sinsera.co/ark/, go to Imaging → Builds, click `↓ download` on `sinsera-installer`
+2. Open Raspberry Pi Imager, write the downloaded .img.xz to an SD card (**don't** open the OS Customisation dialog — image has everything baked in already)
+3. Insert SD into Pi 5, power on, wait ~60 s
+4. SSH in: `ssh root@SinseraInstaller.local`, run `sudo flash-to-nvme`, pick `sinsera-vanilla` (or whatever), pick the NVMe, confirm, walk away ~3 min, `sudo poweroff`, pull SD, power on
 
 | 🟡 Marker | Unblocks once… |
 |---|---|
@@ -19,112 +87,76 @@ be validated end-to-end.
 | **Phase 6.2** Flash Node Agent | A Pi running `agent/install-flash-agent.sh` registers as a Flash Node |
 | **Phase 7.3** Passive monitor | Pi-side `journalctl` tail reports defensive observations |
 
-**The fastest unblock**: flash `~/Dev-Sinsera/Ark/builds/sinsera-installer/out/ark-built.img.xz` onto your spare SD card, boot the Pi, edit `/boot/dietpi.txt` for WiFi, run `flash-to-nvme` to write `sinsera-vanilla` onto the NVMe, set Pi 5 BOOT_ORDER=NVMe-first, reboot. ~20 min total.
-
 ---
 
 ## 🟡 Open features (named, not yet built)
 
-### A — Network-layer device intelligence
-**Status**: spec'd, not started. Three pieces:
+### A — LAN device intelligence
+3 pieces:
+1. More columns in Network → Devices (OS fingerprint, open ports, vendor lookup, IP history per MAC) — ~45 min
+2. mDNS / Bonjour fingerprinting — identify HomePods, eero devices, the Flipper companion, Apple TVs, printers — ~45 min
+3. Browser notifications when new_device alerts fire — Notifications API + permission prompt — ~30 min
 
-1. **More columns in Network → Devices**: OS fingerprint (TTL + window size heuristic), open ports (TCP SYN scan on a small allow-list — 22/80/443/445/8080), vendor lookup expansion, IP-history per MAC.
-2. **mDNS / Bonjour fingerprinting**: identify HomePods (`_airplay._tcp`, `_raop._tcp`, `_hap._tcp` for HomeKit), eero devices, Apple TVs, Chromecasts, network printers. Surface in the devices table as a "Discovered as" column.
-3. **`new_device` alert → desktop notification**: Notifications API + user permission prompt in CPH Settings. Sound when severity ≥ warn.
+### B — Tailscale baked into images
+Each Pi auto-joins your Tailnet. ~1 hr.
 
-**Effort**: A1 = 45 min, A2 = 45 min, A3 = 30 min. Can be shipped independently.
+### C — Send-file-to-Pi UI surface
+Backend already has `runner.pushFile()`. UI surface missing — most natural fit inside SSH Runner page. ~25 min.
 
-### B — Tailscale / mesh VPN in the sinsera-* images
-**Status**: discussed, not started.
+### D — Hardening baseline
+Run 8 checks once against a registered host. ~5 min on a registered Pi.
 
-- Each `install-template.sh` gains a Tailscale install step + `tailscale up --auth-key=$TS_AUTH_KEY`
-- Auth key per-image: operator drops `/boot/ark-tailscale-auth.key` before flashing
-- Hub: SSH Runner accepts `*.ts.net` hostnames same as `*.local`
-- New CPH tab "VPN" — shows which Pis are on the Tailnet, peers, last-seen status, read via `tailscale status --json` over SSH
+### E — Fleet hardware columns
+Agent reports flashed-image sha + HATs detected + boot-disk-type on heartbeat. ~45 min, touches Agent code.
 
-**Effort**: ~1 hr end-to-end including a re-bake of all 5 image profiles.
-
-### C — Cross-app "Send file to Pi" surface
-**Status**: backend exists (`runner.pushFile()` in `hub/src/runner.mjs`), UI missing.
-
-- New surface — most natural fit is inside SSH Runner page
-- File picker → host picker → remote path → progress
-- Wraps the existing `pushFile`; no Hub changes needed beyond a new POST endpoint that accepts multipart upload + forwards to `pushFile`
-
-**Effort**: ~25 min. Currently the only way to push a non-build file is `scp` from terminal.
-
-### D — Hardening baseline establishment
-**Status**: 8 checks defined, 0 findings recorded — the weekly pulse can't be meaningful yet.
-
-- Needs at least one SSH Runner host registered
-- One-time: `POST /api/cph/hardening/run` for each of the 8 checks against that host
-- Findings get stored; weekly CPH pulse compares against history going forward
-- Operator job (or `/loop` automation): run weekly across all registered hosts
-
-**Effort**: 5 min once a Pi is registered. Gated on the Pi-flash unblock above.
-
-### E — Fleet hardware columns + "current image" tracking
-**Status**: discussed, deferred.
-
-- Agent on Pi reports flashed-image sha256 + HATs detected (i2c probe) + boot-disk type (SD vs NVMe vs USB) on heartbeat
-- Fleet roster gains columns: Hardware HATs · Boot from · Image SHA · Operator notes (editable)
-- Lets you actually answer "which Pi has which image" without SSH-ing in
-
-**Effort**: ~45 min, BUT touches the Agent which means every Pi needs to update. Worth a dedicated session after Pi 1 is live.
-
-### F — "My Pis" inventory page (Devices + Manifests merge)
-**Status**: discussed, deferred.
-
-- Phase-2 nav consolidation: merge the current "Device editor" (LAYERS form) + "Manifests" (list) into one page with list-on-the-left, editor-on-the-right
-- Same data, less context-switching, mirrors how every modern app does it
-- Optionally bring Fleet into the same surface (manifest = spec, Fleet entry = physical Pi running that spec)
-
-**Effort**: ~1.5 hr; substantial UI work. Lower priority than A or D.
+### F — Devices+Manifests merge
+Phase-2 nav consolidation. ~1.5 hr.
 
 ---
 
-## 🩹 Known UX rough edges (small, fix-when-noticed)
+## 🩹 Known UX rough edges
 
 | Item | Severity | Notes |
 |---|---|---|
-| **Disabled flash button has no explanation** | annoying | Currently shows gray "flash →" with `cursor: not-allowed`. Should explain why (no flash node) + link to Nodes setup guide. ~10 min. |
-| **Bundled-image registry doesn't auto-register installer** | minor | The new `sinsera-installer.img.xz` needs a Hub restart to appear in Flash Nodes → Images. ~5 min — add to the seed-on-startup scan. |
-| **`/api/images` vs `/api/flash/images` confusion** | medium | The top-nav "Images" page reads `/api/images` (filesystem) while Flash Nodes → Images reads `/api/flash/images` (registered). Same concept, two endpoints. Either merge or rename the top-nav. |
-| **TypeScript / type safety on the manifest model** | nice-to-have | `manifest.js` is plain JS. Mistakes there (wrong shape, missing field) bite at chroot-time. Could port to `.ts` like Habitat. ~30 min. |
+| Disabled "flash →" button has no explanation when nodes.length === 0 | annoying | Should explain why + link to Nodes setup |
+| `/api/images` vs `/api/flash/images` confusion | medium | Same concept, two endpoints |
+| TypeScript on manifest model | nice-to-have | `manifest.js` is plain JS |
 
 ---
 
-## 🧪 Tests we don't have yet
+## 📦 Local state worth knowing for the next session
 
-- **Smoke build**: a CI job that runs the 5 image builds end-to-end weekly. Catches regressions like the Wall-Hunter / install.plan.sh-overwrite class of bugs before they hit you mid-session.
-- **Hub integration test**: spin up the Hub, register a mock agent via the public API, run one flash-job dry-run, assert the job logs are sensible.
-- **Flash-to-nvme dry-run flag**: `flash-to-nvme --dry-run` that prints the plan without `dd`-ing. Useful for first-time users.
+**Built images on disk** (gitignored — `builds/*/out/`):
+
+| Build | Size (.img.xz) | sha256 (first 12) |
+|---|---|---|
+| sinsera-vanilla | 192 MB | (check via `/api/flash/images`) |
+| sinsera-kiosk | 192 MB | `c007f8f99668` |
+| claude-cli-pi | 192 MB | `435597ce…` |
+| sinsera-raspyjack | 256 MB | `b5f21d18…` |
+| sinsera-flipper | 208 MB | `04079d8c…` |
+| **sinsera-installer** (latest, WiFi baked) | **1.2 GB** | **`a2b4f8c718c0…`** |
+
+**Hub state**:
+- Running locally at `http://localhost:7400` (PID changes; check via `pgrep -lf hub/src/index.mjs`)
+- Currently binding to 127.0.0.1 only — needs `ARK_HUB_BIND_HOST=0.0.0.0` to be reachable from Pis
+- Auto-rescans `builds/*/out/` on startup (logs `[hub] flash image scan: …`)
+- Approved hosts: 35 (24 added via this session's weekly CPH pulse)
+- Open alerts: 27 warn / 3 info, 10 of them are the "real MAC, no OUI match" unknowns Cluster 3 still needs the operator's eye
+
+**Files in `~/.ark/`**:
+- `wifi.env` — `Obi-Lan Kenobi` + password (mode 600, owner-only)
+- `ark-hub.db` — Hub SQLite store
+- `vault.master.key` — vault encryption key
+- `flash-images/` — content-addressable .img stash
 
 ---
 
-## 📦 Currently in the world
+## 🧭 Suggested order for the next session
 
-For context, what's already live:
+1. **First minute**: `git status` in `~/Dev-Sinsera/Ark` — the new `/api/local/disks` + `/api/local/flash` endpoints in `hub/src/index.mjs` are uncommitted. Commit + push them so the work survives a clean clone.
+2. **First 30 min**: Build the UI for "Flash SD from Mac" (modal triggered from Images table). Hub side is done — just wire the React.
+3. **Next 30 min**: Auto-install Flash Node Agent in the installer image + bake Hub URL. Rebuild installer.
+4. **Then**: Flash a real Pi end-to-end. That single act unblocks the 4 🟡 phases above.
 
-- **Live UI at https://sinsera.co/ark/** — 13-item sidebar grouped into Discover / Imaging / Operate / Ops
-- **5 pre-built images** registered in the Hub: vanilla, kiosk, claude-cli-pi, raspyjack, flipper
-- **1 installer image** that bundles all 5 — boot from SD, run `flash-to-nvme`, walk away
-- **Can't Phish Here** with 7 sub-tabs (RaspyJack + Flipper companion tabs both ship)
-- **Hash-routing deeplinks** — `sinsera.co/ark/#security/raspyjack` opens straight to that tab
-- **Ghost-manifest fix** shipped this session — deleting now sticks across refresh
-
----
-
-## 🧭 Suggested order
-
-If you want one path forward without thinking about it:
-
-1. **Flash a Pi from `sinsera-installer`** (20 min, manual). This single act unblocks Phase 4.2 + 5.3 + 6.2 + 7.3 + makes the hardening baseline meaningful.
-2. **A1 (more device columns) + A3 (browser notifications)** — biggest visible win without new hardware. ~75 min.
-3. **C (Send file UI)** — quick polish, common-need surface. ~25 min.
-4. **B (Tailscale baking)** — once you've flashed once, you'll want every future flash to auto-join the mesh. ~1 hr; requires a re-bake.
-5. **D (hardening baseline)** — easy on a registered host. 5 min.
-6. **E (Fleet hardware columns)** — wait until you have 2+ Pis online. ~45 min.
-7. **F (Devices+Manifests merge)** — last; touches more of the UI. ~1.5 hr.
-
-Or just say "what's next" and I'll pick.
+Or say "what's next" and I'll pick.

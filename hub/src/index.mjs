@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawn, execFile } from 'node:child_process';
 import { arpScan, mdnsBrowse, mergeSources, wifiScan, detectCurrentNetwork } from './scan.mjs';
 import { openStore } from './store.mjs';
 import { openVault } from './vault.mjs';
@@ -687,6 +688,40 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
+  // ── Local Mac flash — write an image to an SD card attached to
+  // this Mac directly. macOS-only; uses osascript with administrator
+  // privileges so the user gets a single auth prompt (same UX as
+  // Raspberry Pi Imager).
+  if (req.method === 'GET' && url.pathname === '/api/local/disks') {
+    return listLocalDisks()
+      .then(disks => json(res, { disks }))
+      .catch(e => json(res, { ok: false, error: e.message, disks: [] }, 500));
+  }
+  if (req.method === 'POST' && url.pathname === '/api/local/flash') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', async () => {
+      try {
+        const { image_id, target } = JSON.parse(body);
+        const img = flash.getImage(image_id);
+        if (!img) return json(res, { ok: false, error: 'image not found' }, 404);
+        if (!img.source_path || !existsSync(img.source_path)) return json(res, { ok: false, error: 'image file missing on disk' }, 404);
+        // Target safety: must be /dev/diskN where N >= 1 (boot disk = disk0)
+        if (!/^\/dev\/disk[1-9][0-9]*$/.test(target)) return json(res, { ok: false, error: `invalid target: ${target}` }, 400);
+        // Verify target is in the external-disks list (defensive double-check)
+        const externalDisks = await listLocalDisks();
+        if (!externalDisks.some(d => d.device === target)) {
+          return json(res, { ok: false, error: `target ${target} not in external-disks list — refusing` }, 400);
+        }
+        const result = await runLocalFlash(img.source_path, target);
+        return json(res, result);
+      } catch (e) {
+        return json(res, { ok: false, error: e.message }, 500);
+      }
+    });
+    return;
+  }
+
   // POST /api/flash/images/rescan — walk builds/*/out/ and register
   // any new .img.xz / .img files into the flash registry. Idempotent;
   // skip-if-unchanged-size so re-running is cheap. Called automatically
@@ -1105,6 +1140,102 @@ async function dispatchQueuedFlashJobs() {
 
 function getOwnHostHint() {
   return process.env.ARK_HUB_PUBLIC_HOST || lanIpHint() || '127.0.0.1';
+}
+
+// ── Local Mac flash helpers ─────────────────────────────────────────
+// Walk macOS's external + physical disks via diskutil. Parses the
+// plist via the bundled python3 to avoid shipping a JS plist parser.
+// Returns [{device:'/dev/diskN', size_bytes, content, name, removable}]
+async function listLocalDisks() {
+  if (process.platform !== 'darwin') return [];
+  const plist = await new Promise((resolve, reject) => {
+    execFile('diskutil', ['list', '-plist', 'external', 'physical'], (err, stdout) => {
+      if (err) return reject(err);
+      resolve(stdout);
+    });
+  });
+  // Parse via python3 (always present on macOS)
+  const py = `
+import plistlib, sys, json
+d = plistlib.loads(sys.stdin.read().encode())
+out = []
+for disk in d.get('AllDisksAndPartitions', []):
+    parts = disk.get('Partitions', []) or []
+    label = next((p.get('VolumeName') for p in parts if p.get('VolumeName')), None)
+    out.append({
+        'device': '/dev/' + disk.get('DeviceIdentifier', ''),
+        'size_bytes': disk.get('Size', 0),
+        'content': disk.get('Content', ''),
+        'name': label,
+        'removable': True,
+    })
+print(json.dumps(out))
+`.trim();
+  const jsonText = await new Promise((resolve, reject) => {
+    const p = spawn('python3', ['-c', py]);
+    let out = '', err = '';
+    p.stdout.on('data', d => out += d);
+    p.stderr.on('data', d => err += d);
+    p.on('close', code => code === 0 ? resolve(out) : reject(new Error(err || 'python3 exit ' + code)));
+    p.stdin.end(plist);
+  });
+  return JSON.parse(jsonText);
+}
+
+// Flash <imagePath> onto <target> (e.g. /dev/disk4) via dd, with the
+// admin auth prompt routed through osascript so the user sees the
+// standard macOS "Ark wants to make changes" dialog. Image can be
+// .img or .img.xz — xz is auto-decompressed on the fly.
+//
+// Synchronous: the HTTP request blocks until dd completes (typically
+// 3-5 min). The UI must show a "flashing…" spinner for the duration.
+async function runLocalFlash(imagePath, target) {
+  if (process.platform !== 'darwin') {
+    return { ok: false, error: 'local flash is macOS-only (diskutil + dd via osascript)' };
+  }
+  // Use rdiskN (raw character device) instead of diskN — order of
+  // magnitude faster on macOS (no buffer cache).
+  const rawTarget = target.replace(/^\/dev\/disk/, '/dev/rdisk');
+  const isXz = imagePath.endsWith('.xz');
+  // Build the shell command. xz piped into dd; unmount target first.
+  // Don't include status=progress — older macOS dd doesn't support it
+  // and there's no progress streaming here anyway (sync HTTP).
+  const inner = isXz
+    ? `/usr/bin/diskutil unmountDisk ${target}; /usr/bin/xz -dc ${shQuote(imagePath)} | /bin/dd of=${rawTarget} bs=4m`
+    : `/usr/bin/diskutil unmountDisk ${target}; /bin/dd if=${shQuote(imagePath)} of=${rawTarget} bs=4m`;
+  // osascript "do shell script" string-escapes via doubled backslashes
+  // and escaped double quotes. Build a heredoc to avoid that escaping
+  // nightmare — write the script to a tempfile and exec it.
+  const scriptPath = `/tmp/ark-local-flash-${Date.now()}.sh`;
+  await new Promise((resolve, reject) => {
+    const w = createWriteStream(scriptPath, { mode: 0o755 });
+    w.write('#!/bin/bash\nset -euo pipefail\n' + inner + '\n');
+    w.end();
+    w.on('finish', resolve);
+    w.on('error', reject);
+  });
+  try {
+    const ascript = `do shell script "/bin/bash ${scriptPath}" with administrator privileges`;
+    const t0 = Date.now();
+    await new Promise((resolve, reject) => {
+      execFile('osascript', ['-e', ascript], { maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+        if (err) {
+          // osascript exits non-zero if the user cancelled the auth prompt
+          if ((stderr || '').includes('-128')) return reject(new Error('cancelled by user'));
+          return reject(new Error(stderr || err.message));
+        }
+        resolve(stdout);
+      });
+    });
+    const dur = Math.round((Date.now() - t0) / 1000);
+    return { ok: true, duration_s: dur, target, raw_target: rawTarget };
+  } finally {
+    try { await unlink(scriptPath); } catch {}
+  }
+}
+
+function shQuote(s) {
+  return "'" + String(s).replaceAll("'", "'\\''") + "'";
 }
 
 // Find this host's primary LAN IPv4. Best-effort — picks the first
