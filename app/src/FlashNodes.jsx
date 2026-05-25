@@ -808,19 +808,38 @@ function ImagesTab({ hubUrl }) {
                   <td style={{ ...td, fontFamily: FONT_MONO, fontSize: 10, color: COLORS.textMuted }}>{i.sha256.slice(0, 12)}…</td>
                   <td style={td}>{i.compression}</td>
                   <td style={td}>
-                    <a
-                      href={`${hubUrl}/api/flash/images/${encodeURIComponent(i.image_id)}/download`}
-                      download={i.build_name || `${i.image_id}.img`}
-                      title="Download to this device"
+                    <button
+                      onClick={async (e) => {
+                        // Fetch → Blob → saveAs (mixed-content workaround)
+                        e.preventDefault();
+                        const target = `${hubUrl}/api/flash/images/${encodeURIComponent(i.image_id)}/download`;
+                        try {
+                          const r = await fetch(target);
+                          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                          const blob = await r.blob();
+                          const blobUrl = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = blobUrl;
+                          a.download = i.build_name || `${i.image_id}.img`;
+                          document.body.appendChild(a);
+                          a.click();
+                          a.remove();
+                          setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+                        } catch (err) {
+                          alert(`Download failed: ${err.message}. Try opening this URL directly:\n${target}`);
+                        }
+                      }}
+                      title="Download to this device (streamed via fetch → blob)"
                       style={{
                         display: 'inline-flex', alignItems: 'center', gap: 3,
                         padding: '4px 10px', fontSize: 11,
                         background: 'transparent', color: COLORS.accent,
                         border: `1px solid ${COLORS.border}`, borderRadius: 4,
-                        textDecoration: 'none', cursor: 'pointer', marginRight: 6,
+                        cursor: 'pointer', marginRight: 6,
+                        fontFamily: FONT_BODY,
                       }}>
                       <Download size={10}/> download
-                    </a>
+                    </button>
                     <button
                       onClick={() => setLocalFlash({ image: i })}
                       title="Flash this image to an SD card plugged into this Mac (macOS only)"

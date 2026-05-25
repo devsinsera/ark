@@ -140,18 +140,38 @@ function BuildCard({ b, hubUrl, image, onDeleted }) {
         {hasOk('manifest') && <SmallLink href={`#`} onClick={(e) => { e.preventDefault(); window.open(`${hubUrl}/api/builds/${encodeURIComponent(b.name)}`, '_blank'); }}>manifest</SmallLink>}
         {hasOk('install_log') && <SmallLink href={`#`} onClick={(e) => { e.preventDefault(); window.location.hash = `#logs/build/${encodeURIComponent(b.name)}`; }}>log</SmallLink>}
         {hasOk('built_img') && (
-          <a
-            href={`${hubUrl}/api/builds/${encodeURIComponent(b.name)}/download`}
-            download={`${b.name}.img.xz`}
-            title="Download the built .img.xz to your Mac"
+          <button
+            onClick={async (e) => {
+              // Fetch → Blob → saveAs. Avoids the silent mixed-content
+              // drop browsers apply to <a download> linking from
+              // https://sinsera.co/ to http://localhost:7400/.
+              e.preventDefault();
+              const target = `${hubUrl}/api/builds/${encodeURIComponent(b.name)}/download`;
+              try {
+                const r = await fetch(target);
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const blob = await r.blob();
+                const blobUrl = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = `${b.name}.img.xz`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+              } catch (err) {
+                alert(`Download failed: ${err.message}. If Hub is reachable, try opening this directly:\n${target}`);
+              }
+            }}
+            title="Download the built .img.xz to your Mac (streamed via fetch → blob to dodge mixed-content silent drop)"
             style={{
               padding: '4px 10px', fontSize: 11, borderRadius: 4,
               background: COLORS.bgActive, color: COLORS.accentBright,
-              border: `1px solid ${COLORS.accentBorder}`, textDecoration: 'none',
+              border: `1px solid ${COLORS.accentBorder}`, cursor: 'pointer',
               fontFamily: FONT_MONO, display: 'inline-flex', alignItems: 'center', gap: 4,
             }}>
             ↓ download
-          </a>
+          </button>
         )}
         {hasOk('built_img') && image && (
           <button
