@@ -55,17 +55,25 @@ if [ "$APT_OK" != 1 ]; then
 fi
 
 # ── 2. Extract RaspyJack source ──
-step "Extract /opt/ark-extras/raspyjack-src.tar.gz → /opt/raspyjack"
-mkdir -p /opt/raspyjack /var/lib/raspyjack
+# Upstream install_raspyjack.sh has /root/Raspyjack/ hardcoded as the
+# install location (it writes gui_conf.json, expects the source layout
+# there). We extract to BOTH /opt/raspyjack (operator-friendly path)
+# and /root/Raspyjack (what the installer expects). Symlink-aware so
+# they share data.
+step "Extract /opt/ark-extras/raspyjack-src.tar.gz → /opt/raspyjack + /root/Raspyjack"
+mkdir -p /opt/raspyjack /root/Raspyjack /var/lib/raspyjack
 if [ -f /opt/ark-extras/raspyjack-src.tar.gz ]; then
   tar -xzf /opt/ark-extras/raspyjack-src.tar.gz -C /opt/raspyjack
+  # Stage at the installer's expected location too
+  rsync -aH /opt/raspyjack/ /root/Raspyjack/
   cp /opt/ark-extras/raspyjack-src.tar.gz /var/lib/raspyjack/source.tar.gz
-  echo "extracted $(ls /opt/raspyjack | wc -l) entries"
+  echo "extracted $(ls /opt/raspyjack | wc -l) entries to both /opt/raspyjack and /root/Raspyjack"
 else
   echo "WARN: /opt/ark-extras/raspyjack-src.tar.gz not present — falling back to upstream clone"
   git clone --depth=1 https://github.com/7h30th3r0n3/Raspyjack /opt/raspyjack-tmp \
-    && mv /opt/raspyjack-tmp/* /opt/raspyjack/ \
-    && mv /opt/raspyjack-tmp/.* /opt/raspyjack/ 2>/dev/null \
+    && cp -r /opt/raspyjack-tmp/. /opt/raspyjack/ \
+    && cp -r /opt/raspyjack-tmp/. /root/Raspyjack/ \
+    && rm -rf /opt/raspyjack-tmp \
     || echo "git clone failed"
 fi
 
@@ -106,6 +114,26 @@ if [ -x /opt/jacktheflipper/flipper-bridge.py ]; then
   /opt/jacktheflipper/flipper-bridge.py list || true
 else
   echo "ERROR: /opt/jacktheflipper/flipper-bridge.py not executable or missing"
+fi
+
+# ── 5a. Ensure SPI + I2C dtparams are in config.txt (defensive, RaspyJack's
+# installer should already have done this but belt-and-braces in case it
+# didn't or partially failed). Without these, the LCD HAT and the UPS HAT
+# both stay dark even after a reboot.
+step "Ensure SPI + I2C are enabled in config.txt"
+CFG=/boot/firmware/config.txt
+[ -f "$CFG" ] || CFG=/boot/config.txt
+if [ -f "$CFG" ]; then
+  for p in "dtparam=spi=on" "dtparam=i2c_arm=on" "dtparam=i2c1=on" "dtoverlay=spi0-2cs"; do
+    if ! grep -qxF "$p" "$CFG"; then
+      echo "$p" >> "$CFG"
+      echo "  appended: $p"
+    else
+      echo "  already present: $p"
+    fi
+  done
+else
+  echo "WARN: config.txt not found at /boot/firmware or /boot — skipping"
 fi
 
 # ── 5b. UPS CLI — install + try a one-shot read so the log shows what's detected ──

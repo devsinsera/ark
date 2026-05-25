@@ -147,7 +147,11 @@ sed -i "s/127.0.1.1.*/127.0.1.1\tjacktheflipper/g" /etc/hosts
 if ! id peta >/dev/null 2>&1; then
   useradd -m -s /bin/bash -G adm,dialout,cdrom,sudo,audio,video,plugdev,games,users,input,render,netdev,gpio,i2c,spi peta
 fi
-passwd -l peta
+# Set a random, locked password so the Pi OS first-run wizard sees a
+# password is set (it triggers when password is empty/locked) — then
+# lock it so password auth is impossible. SSH-key only.
+echo "peta:!!" | chpasswd -e 2>/dev/null || passwd -l peta
+
 echo "peta ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/010_peta-nopasswd
 chmod 440 /etc/sudoers.d/010_peta-nopasswd
 
@@ -168,6 +172,32 @@ chmod 600 /root/.ssh/authorized_keys
 
 systemctl enable ssh
 systemctl start ssh
+
+# ── Kill the Pi OS Bookworm first-run wizard ──
+# userconfig.service prompts for username/password on every boot
+# until satisfied. We already created peta, so disable + mask the
+# service AND remove the trigger files Pi OS uses to gate it.
+systemctl disable userconfig.service 2>/dev/null || true
+systemctl mask    userconfig.service 2>/dev/null || true
+systemctl disable userconfig-pi.service 2>/dev/null || true
+systemctl mask    userconfig-pi.service 2>/dev/null || true
+rm -f /var/lib/userconf-pi/needs-userconf
+rm -f /etc/userconf.firstboot
+rm -f /etc/xdg/autostart/piwiz.desktop 2>/dev/null
+
+# ── Autologin peta on tty1 ──
+# Boot straight to a peta shell on HDMI, no login prompt. SSH still
+# needs the key. Write the drop-in via a nested heredoc with double
+# quotes to avoid single-quoting issues that close the outer docker
+# -c quoting.
+mkdir -p /etc/systemd/system/getty@tty1.service.d
+cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf <<AUTOLOGIN
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin peta --noclear %I \\\$TERM
+AUTOLOGIN
+systemctl daemon-reload
+systemctl enable getty@tty1.service
 
 if [ -n "${WIFI_SSID}" ] && [ -n "${WIFI_KEY}" ]; then
   cat > /etc/NetworkManager/system-connections/preconfigured.nmconnection <<NMCFG
