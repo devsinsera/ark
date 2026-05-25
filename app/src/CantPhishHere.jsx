@@ -1240,6 +1240,20 @@ function BrowserAlertsToggle() {
       if (p !== 'granted') return;
     }
     if (Notification.permission === 'granted') {
+      // Anchor lastSeenId to the current max so the first poll after
+      // enabling doesn't fire a storm of notifications for every
+      // existing unresolved alert. Only NEW alerts (id greater than
+      // this anchor) will pop.
+      try {
+        const hubUrl = (window.localStorage.getItem('ark.hubUrl') || 'http://192.168.4.167:7400').replace(/\/+$/, '');
+        const r = await fetch(`${hubUrl}/api/cph/alerts?limit=50`, { cache: 'no-cache' });
+        if (r.ok) {
+          const j = await r.json();
+          const ids = (j.alerts || []).map(a => a.id);
+          const maxId = ids.length > 0 ? Math.max(...ids) : 0;
+          window.localStorage.setItem('ark.alertNotifier.lastId', String(maxId));
+        }
+      } catch { /* if the anchor fetch fails, worst case is the first-poll storm */ }
       window.localStorage.setItem(ENABLED_KEY, '1');
       setEnabled(true);
       try {

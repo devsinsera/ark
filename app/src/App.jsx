@@ -577,19 +577,41 @@ function Sidebar({ nav, setNav, count, onCollapse }) {
 
       <div style={{ flex: 1 }}/>
       <HubUrlWidget/>
+      <HubHelpLink/>
     </aside>
   );
 }
 
-// Persistent Hub URL setting in the sidebar footer. Visible from
-// every view; changing it updates localStorage and every panel
-// re-reads on its next tick. Critical when running the Ark UI on a
-// different computer from the Hub — the default localhost:7400 is
-// only valid for the machine running the Hub itself.
+// Tiny footer link to the Hub's debug page (route inventory + store
+// stats). Only useful when something looks off — keeps it out of
+// the main nav but discoverable.
+function HubHelpLink() {
+  const hubUrl = (() => {
+    try { return (window.localStorage.getItem('ark.hubUrl') || 'http://192.168.4.167:7400').replace(/\/+$/, ''); }
+    catch { return 'http://192.168.4.167:7400'; }
+  })();
+  return (
+    <a
+      href={`${hubUrl}/_help`}
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Hub debug page — route inventory, store path, vault fingerprint"
+      style={{
+        marginTop: 6, padding: '4px 8px',
+        fontFamily: FONT_MONO, fontSize: 10,
+        color: COLORS.textMuted, textDecoration: 'none',
+        textAlign: 'center', letterSpacing: 0.5,
+      }}
+    >hub debug ↗</a>
+  );
+}
+
 // Global new-alert notifier. Mounted once at the App level so it
 // fires regardless of which tab the user is on. Polls every 30 s;
 // only notifies for alerts created AFTER the last-seen id stored in
-// localStorage (so a refresh doesn't re-pop everything).
+// localStorage (so a refresh doesn't re-pop everything). The
+// last-seen anchor is set when the operator first toggles "Browser
+// alerts" on in CPH → Settings, so existing alerts don't storm in.
 const ALERT_LAST_SEEN_KEY = 'ark.alertNotifier.lastId';
 const ALERT_NOTIFY_ENABLED_KEY = 'ark.alertNotifier.enabled';
 export function useAlertNotifier() {
@@ -641,6 +663,11 @@ export function useAlertNotifier() {
   }, []);
 }
 
+// Persistent Hub URL setting in the sidebar footer. Visible from
+// every view; changing it updates localStorage and every panel
+// re-reads on its next tick. Critical when running the Ark UI on a
+// different computer from the Hub — the default localhost:7400 is
+// only valid for the machine running the Hub itself.
 function HubUrlWidget() {
   const [url, setUrl]     = useState(() => {
     try { return (window.localStorage.getItem('ark.hubUrl') || 'http://192.168.4.167:7400').replace(/\/+$/, ''); }
