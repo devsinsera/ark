@@ -173,6 +173,16 @@ chmod 600 /root/.ssh/authorized_keys
 systemctl enable ssh
 systemctl start ssh
 
+# ── Set WiFi country + unblock rfkill ──
+# Pi OS Bookworm soft-blocks wlan0 via rfkill until a country code is
+# explicitly set. cmdline.txt has cfg80211.ieee80211_regdom=AU from
+# the base image but that alone is not enough; we also need to
+# persist the country via raspi-config (writes /etc/wpa_supplicant)
+# and clear the rfkill soft-block.
+raspi-config nonint do_wifi_country AU 2>/dev/null || true
+rfkill unblock all 2>/dev/null || true
+iw reg set AU 2>/dev/null || true
+
 # ── Kill the Pi OS Bookworm first-run wizard ──
 # userconfig.service prompts for username/password on every boot
 # until satisfied. We already created peta, so disable + mask the

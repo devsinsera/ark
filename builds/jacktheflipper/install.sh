@@ -25,11 +25,28 @@ echo "════════════════════════�
 
 step() { echo ""; echo "── $(date -u +%H:%M:%S) · $* ──"; }
 
-# ── 1. apt update + base deps ──
-step "apt-get update + base deps"
+# ── 1. apt update + full system upgrade + base deps ──
+# First boot: bring the whole OS to current Bookworm patch level
+# before installing anything else. Prevents the situation where
+# RaspyJack pulls in a Python package that needs a newer libc/etc.
+step "apt-get update + full system upgrade (this takes a while on Pi Zero 2 W)"
+for try in 1 2 3; do
+  if apt-get update -y; then
+    echo "apt-get update OK on try $try"; break
+  fi
+  echo "apt-get update attempt $try failed; sleeping 15s"; sleep 15
+done
+DEBIAN_FRONTEND=noninteractive apt-get -y \
+  -o Dpkg::Options::="--force-confdef" \
+  -o Dpkg::Options::="--force-confold" \
+  full-upgrade || echo "WARN: full-upgrade had non-fatal issues; continuing"
+apt-get -y autoremove || true
+apt-get -y autoclean   || true
+
+step "apt-get install base deps"
 APT_OK=0
 for try in 1 2 3; do
-  if apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+  if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
        python3-pip python3-serial python3-spidev python3-pil python3-smbus python3-smbus2 \
        python3-numpy python3-pyudev python3-rpi.gpio python3-netifaces \
        i2c-tools git nmap \
