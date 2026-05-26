@@ -148,6 +148,64 @@ else
   echo "WARN: install_ragnar_port.sh not found — Ragnar may fail to start"
 fi
 
+# ── 4a-pre. Tor LAN SOCKS5 (LAN policy, all interfaces) ──
+# Bind tor's SOCKS port on 0.0.0.0 (not a specific IP) so it survives
+# DHCP lease changes. Older versions of this script wrote the wlan IP
+# at bake time which broke after every IP renewal.
+step "Configure Tor LAN SOCKS5 (binds 0.0.0.0:9050, LAN-only policy)"
+TORRC=/etc/tor/torrc
+if [ -f "$TORRC" ]; then
+  # Strip any stale IP-specific SocksPort lines from previous installs
+  sed -i '/^SocksPort 192\.168\.[0-9]\+\.[0-9]\+:9050/d' "$TORRC"
+  if ! grep -q '^SocksPort 0.0.0.0:9050' "$TORRC"; then
+    cat >> "$TORRC" <<TORRC
+
+# Sinsera — LAN SOCKS5 (operator-controlled network only)
+SocksPort 0.0.0.0:9050
+SocksPolicy accept 192.168.0.0/16
+SocksPolicy accept 10.0.0.0/8
+SocksPolicy reject *
+TORRC
+  fi
+  systemctl enable tor@default 2>/dev/null || true
+  systemctl restart tor@default 2>/dev/null || true
+fi
+
+# ── 4a-bis. Patch Ragnar's AP-client detection ──
+# Upstream Ragnar serves a "WiFi Setup" captive portal to ANY client
+# whose IP starts with 192.168.4.x — but that's a very common home
+# LAN subnet. On a normal LAN where the Pi is just a regular client,
+# every browser request gets misidentified as an AP client and never
+# reaches the main dashboard. Patch is_ap_client_request() to also
+# check that hostapd is actually running, not just the subnet match.
+step "Patch Ragnar is_ap_client_request to require hostapd actually running"
+WEBAPP=/opt/raspyjack/vendor/ragnar/webapp_modern.py
+if [ -f "$WEBAPP" ] && ! grep -q "pgrep.*hostapd" "$WEBAPP"; then
+  python3 - <<PY
+import re
+p = open("$WEBAPP").read()
+new = re.sub(
+    r"def is_ap_client_request\(\):.*?return False",
+    """def is_ap_client_request():
+    \"\"\"AP client only if hostapd is actually running (LAN may overlap 192.168.4.x).\"\"\"
+    try:
+        import subprocess as _sp
+        if _sp.run(["pgrep", "hostapd"], capture_output=True).returncode != 0:
+            return False
+        client_ip = request.environ.get("REMOTE_ADDR", "")
+        return client_ip.startswith("192.168.4.") and client_ip != "192.168.4.1"
+    except Exception:
+        return False""",
+    p, count=1, flags=re.DOTALL,
+)
+open("$WEBAPP","w").write(new)
+print("patched" if new != p else "no change (already patched?)")
+PY
+  systemctl restart ragnar.service 2>/dev/null || true
+else
+  echo "skip — ragnar webapp not present or already patched"
+fi
+
 # ── 4b. RaspyJack LCD daemon auto-start ──
 # Make the 1.44" Waveshare LCD HAT come up on every boot. install_
 # raspyjack.sh may install its own systemd unit (raspyjack.service);

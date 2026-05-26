@@ -8,6 +8,10 @@
 exec > /tmp/kiosk-xinit.log 2>&1
 set -x
 
+# Keyboard layout — US (matches the Satechi). Override with KB_LAYOUT
+# env var if you ever swap in a GB/AU/etc. keyboard.
+setxkbmap "${KB_LAYOUT:-us}" 2>/dev/null || true
+
 # Stop screen blanking + power saving — kiosk should never sleep.
 xset s off
 xset -dpms
@@ -28,17 +32,20 @@ openbox &
 # Wait for WM
 sleep 1
 
-# Chromium kiosk pointed at the launcher.
-KIOSK_URL="${KIOSK_URL:-http://192.168.4.167:7400/launcher}"
+# Chromium pointed at the launcher. Fullscreen-on-boot but NOT --kiosk:
+# operator keeps the address bar + tabs + F11 toggle, so it's usable
+# as a real browser (Ctrl+T opens a new tab, type any URL, etc.).
+# The launcher is just the home page.
+KIOSK_URL="${KIOSK_URL:-https://sinsera.co/thehauntedbrocoli/}"
 exec chromium \
-  --kiosk \
+  --start-fullscreen \
   --noerrdialogs \
   --disable-infobars \
   --disable-features=TranslateUI \
   --disable-translate \
   --no-first-run \
+  --no-default-browser-check \
   --check-for-update-interval=31536000 \
   --password-store=basic \
-  --start-fullscreen \
   --enable-features=OverlayScrollbar \
   "$KIOSK_URL"

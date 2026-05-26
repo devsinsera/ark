@@ -70,6 +70,31 @@
     font-size: 13px; line-height: 1.55; color: #94a3b8;
     margin-top: 4px;
   }
+  .quicklinks {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    justify-content: center;
+    margin-top: 8px;
+  }
+  .quicklinks .ql-label {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.2em;
+    color: #475569; align-self: center; margin-right: 4px;
+  }
+  .quicklinks a {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px; color: #cbd5e1;
+    padding: 6px 12px;
+    background: rgba(15,23,42,0.5);
+    border: 1px solid rgba(148,163,184,0.18);
+    border-radius: 999px;
+    text-decoration: none;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  .quicklinks a:hover {
+    background: rgba(15,23,42,0.9);
+    border-color: #475569;
+    color: #f1f5f9;
+  }
   footer {
     margin-top: auto; padding-top: 24px;
     color: #475569; font-family: ui-monospace, Menlo, monospace; font-size: 11px;
@@ -86,6 +111,13 @@
 
   <div class="grid" id="grid"></div>
 
+  <div class="quicklinks">
+    <span class="ql-label">Quick links</span>
+    <a href="https://github.com" target="_blank" rel="noopener">github.com</a>
+    <a href="https://supabase.com" target="_blank" rel="noopener">supabase.com</a>
+    <a href="https://vercel.com" target="_blank" rel="noopener">vercel.com</a>
+  </div>
+
   <footer>
     <span id="host">…</span>
     <span class="dot">·</span>
@@ -99,15 +131,18 @@ const TILES = [
   {
     title: 'Claude',
     badge: 'AI · terminal',
-    desc:  'Claude Code CLI in a web terminal (ttyd, port 7777). Full keyboard, tabs, copy/paste.',
+    desc:  'Claude Code CLI in a dedicated pop-out window (ttyd, port 7777). Looks + feels like a native app.',
     href:  'http://localhost:7777',
     colour: '#22c55e',
+    popup: true,
+    width: 1400,
+    height: 900,
   },
   {
     title: 'Ark',
     badge: 'fleet + recon',
     desc:  'Pi fleet, manifests, network scans, alerts, and the Can’t Phish Here recon tools (Flipper / RaspyJack / Ragnar tabs).',
-    href:  'http://192.168.4.167:7400/',
+    href:  'https://sinsera.co/ark/',
     colour: '#06b6d4',
   },
   {
@@ -160,8 +195,19 @@ function render() {
   const grid = document.getElementById('grid');
   grid.innerHTML = TILES.map(t => {
     const dis = t.disabled ? ' disabled' : '';
-    const href = t.disabled ? '' : `href="${t.href}"`;
-    return `<a ${href} class="tile${dis}" style="--ac:${t.colour}">
+    // Default: open in a new tab (target=_blank). Tiles can opt into a
+    // pop-out app window via `popup: true` — opens as a standalone
+    // window with no tabs/address bar, like a native app.
+    let attrs;
+    if (t.disabled) {
+      attrs = '';
+    } else if (t.popup) {
+      const features = `popup=yes,width=${t.width||1400},height=${t.height||900},resizable=yes,scrollbars=yes`;
+      attrs = `href="${t.href}" onclick="event.preventDefault(); window.open(this.href, '${t.title}', '${features}'); return false;"`;
+    } else {
+      attrs = `href="${t.href}" target="_blank" rel="noopener"`;
+    }
+    return `<a ${attrs} class="tile${dis}" style="--ac:${t.colour}">
       <div class="title-row">
         <span class="title">${t.title}</span>
         <span class="badge">${t.badge}</span>

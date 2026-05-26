@@ -1,0 +1,24 @@
+[Unit]
+Description=JackTheFlipper HDMI launcher kiosk (Chromium via X on tty7)
+After=network-online.target graphical.target
+Wants=network-online.target
+Conflicts=getty@tty7.service
+
+[Service]
+Type=simple
+User=jacktheflipper
+PAMName=login
+TTYPath=/dev/tty7
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+Environment=HOME=/home/jacktheflipper XAUTHORITY=/home/jacktheflipper/.Xauthority
+WorkingDirectory=/home/jacktheflipper
+ExecStart=/usr/bin/startx /home/jacktheflipper/.xinitrc -- :1 vt7 -nolisten tcp -noreset
+Restart=on-failure
+RestartSec=8
+
+[Install]
+WantedBy=multi-user.target

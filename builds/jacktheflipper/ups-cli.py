@@ -82,14 +82,41 @@ def _swap16(v):
     return ((v & 0xFF) << 8) | ((v >> 8) & 0xFF)
 
 def detect(bus):
-    """Try each known address. Return (handler, addr) or (None, None)."""
-    for addr, handler in [(INA219_ADDR, read_ina219), (IP5306_ADDR, read_ip5306)]:
+    """Try each known UPS-HAT address. Return (handler, addr) or (None, None).
+
+    INA219 strap bits give 16 possible addresses 0x40-0x4F; Waveshare
+    UPS HATs typically use 0x43 (A0+A1 bridged) or 0x40 (default).
+    SC8815-based Waveshare UPS HAT (B) sits at 0x74. PiSugar = 0x75.
+    """
+    candidates = [
+        (0x43, read_ina219),
+        (0x40, read_ina219),
+        (0x41, read_ina219),
+        (0x44, read_ina219),
+        (0x45, read_ina219),
+        (0x74, read_sc8815),
+        (0x75, read_ip5306),
+    ]
+    for addr, handler in candidates:
         try:
             bus.read_byte(addr)
             return handler, addr
         except OSError:
             continue
     return None, None
+
+def read_sc8815(bus):
+    """Waveshare UPS HAT (B) — SC8815. Minimal probe; install Waveshare
+    sc8815.py for full telemetry."""
+    try:
+        bus.read_byte_data(0x74, 0x03)  # VBAT_SET register
+        return {
+            "chip":       "SC8815",
+            "model_hint": "Waveshare UPS HAT (B)",
+            "note":       "minimal probe — telemetry needs Waveshare sc8815.py driver",
+        }
+    except Exception as e:
+        return {"ok": False, "error": f"SC8815 read failed: {e}"}
 
 def main():
     ap = argparse.ArgumentParser()
@@ -105,7 +132,7 @@ def main():
     def one_shot():
         handler, addr = detect(bus)
         if not handler:
-            return {"ok": False, "error": "no known UPS HAT chip found at 0x43 or 0x75 on /dev/i2c-1. `i2cdetect -y 1` to see what's present."}
+            return {"ok": False, "detected": False, "error": "no UPS HAT chip on /dev/i2c-1. Tried INA219 (0x40-0x45), SC8815 (0x74), IP5306 (0x75). Check the switch on the HAT, battery installed, GPIO pins seated. Run `i2cdetect -y 1` to see what's actually on the bus."}
         try:
             data = handler(bus)
             data["ok"] = True

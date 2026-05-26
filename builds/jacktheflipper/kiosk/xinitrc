@@ -1,0 +1,37 @@
+#!/bin/bash
+# X session entrypoint for JackTheFlipper HDMI launcher kiosk.
+# Pi Zero 2 W: single HDMI, single DRM card (card0). Chromium will be
+# noticeably slow with 512 MB RAM — swap into cog/wpe if it gets bad.
+
+exec > /tmp/kiosk-xinit.log 2>&1
+set -x
+
+# Keyboard layout — US by default (Satechi-friendly).
+setxkbmap "${KB_LAYOUT:-us}" 2>/dev/null || true
+
+# Never let the kiosk sleep.
+xset s off
+xset -dpms
+xset s noblank
+
+unclutter -idle 2 -root &
+
+openbox &
+sleep 1
+
+# Same launcher as the Pi 5. URL can be overridden by service env.
+KIOSK_URL="${KIOSK_URL:-https://sinsera.co/thehauntedbrocoli/}"
+exec chromium \
+  --start-fullscreen \
+  --noerrdialogs \
+  --disable-infobars \
+  --disable-features=TranslateUI \
+  --disable-translate \
+  --no-first-run \
+  --no-default-browser-check \
+  --check-for-update-interval=31536000 \
+  --password-store=basic \
+  --process-per-site \
+  --disk-cache-size=33554432 \
+  --enable-features=OverlayScrollbar \
+  "$KIOSK_URL"

@@ -10,7 +10,7 @@ WorkingDirectory=/home/brocoli
 Environment=HOME=/home/brocoli TERM=xterm-256color
 # -W = writable (accept stdin). -t titleFixed= sets window title.
 # Bind on all interfaces so the LAN can also reach it.
-ExecStart=/usr/local/bin/ttyd -W -p 7777 -t titleFixed=Claude /usr/local/bin/claude
+ExecStart=/usr/local/bin/ttyd -W -p 7777 -t titleFixed=Claude /usr/local/bin/claude-launch
 Restart=on-failure
 RestartSec=4
 
