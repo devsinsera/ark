@@ -42,6 +42,11 @@ export const URL_PRESETS = [
   { id: 'core',     label: 'Sinsera Core home', url: 'https://sinsera.co' },
   { id: 'darkhaus', label: 'DarkHaus admin',    url: 'https://sinsera.co/darkhaus' },
   { id: 'payroll',  label: 'Payroll dashboard', url: 'https://sinsera.co/payroll' },
+  // Local-first companion app — runs on the Pi itself via thb.service
+  // (see TheHauntedBrocoli/pi5/install.sh). The Pi kiosks against
+  // itself, no internet required at boot.
+  { id: 'thb',      label: 'Haunted Broccoli (on-Pi iOS grimoire)', url: 'http://localhost:3003',
+    hint: 'Requires THB installed on the Pi — drop pi5/Automation_Custom_Script.sh on the boot partition.' },
 ];
 
 export function emptyManifest(name = 'ark-device-01') {
