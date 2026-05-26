@@ -1,0 +1,18 @@
+[Unit]
+Description=Claude CLI exposed as web terminal (ttyd)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=brocoli
+WorkingDirectory=/home/brocoli
+Environment=HOME=/home/brocoli TERM=xterm-256color
+# -W = writable (accept stdin). -t titleFixed= sets window title.
+# Bind on all interfaces so the LAN can also reach it.
+ExecStart=/usr/local/bin/ttyd -W -p 7777 -t titleFixed=Claude /usr/local/bin/claude
+Restart=on-failure
+RestartSec=4
+
+[Install]
+WantedBy=multi-user.target

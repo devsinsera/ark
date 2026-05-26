@@ -1,0 +1,15 @@
+[Unit]
+Description=TheHauntedBrocoli phase-2 install (Claude CLI)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/brocoli/install.sh
+
+[Service]
+Type=oneshot
+ExecStart=/opt/brocoli/install.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

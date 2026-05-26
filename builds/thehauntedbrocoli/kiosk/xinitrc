@@ -1,0 +1,44 @@
+#!/bin/bash
+# X session entrypoint for Pi 5 HDMI 2 launcher kiosk.
+# Runs Chromium fullscreen on HDMI-2, leaves HDMI-1 to the tty1
+# framebuffer (Claude). xrandr names vary on Pi OS: try HDMI-1/HDMI-2
+# (newer naming) then HDMI-A-1/HDMI-A-2 (older Xorg naming).
+
+# Logs for debugging.
+exec > /tmp/kiosk-xinit.log 2>&1
+set -x
+
+# Stop screen blanking + power saving — kiosk should never sleep.
+xset s off
+xset -dpms
+xset s noblank
+
+# Hide the mouse cursor after 2s idle.
+unclutter -idle 2 -root &
+
+# Make sure HDMI-2 (or HDMI-A-2) is on, HDMI-1 left alone (Claude tty1
+# framebuffer keeps painting it). xrandr will silently skip names it
+# doesn't recognise.
+xrandr --output HDMI-2   --auto --primary 2>/dev/null
+xrandr --output HDMI-A-2 --auto --primary 2>/dev/null
+
+# Minimal WM — keeps Chromium key bindings + lets us steal Alt-F4 etc.
+openbox &
+
+# Wait for WM
+sleep 1
+
+# Chromium kiosk pointed at the launcher.
+KIOSK_URL="${KIOSK_URL:-http://192.168.4.167:7400/launcher}"
+exec chromium \
+  --kiosk \
+  --noerrdialogs \
+  --disable-infobars \
+  --disable-features=TranslateUI \
+  --disable-translate \
+  --no-first-run \
+  --check-for-update-interval=31536000 \
+  --password-store=basic \
+  --start-fullscreen \
+  --enable-features=OverlayScrollbar \
+  "$KIOSK_URL"

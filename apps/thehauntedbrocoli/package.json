@@ -1,0 +1,16 @@
+{
+  "name": "thehauntedbrocoli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Unified launcher app for the TheHauntedBrocoli Pi 5 kiosk.",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev":   "node server.mjs",
+    "deploy": "bash deploy.sh"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

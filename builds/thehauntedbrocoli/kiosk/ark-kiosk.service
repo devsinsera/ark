@@ -1,0 +1,25 @@
+[Unit]
+Description=Ark launcher kiosk on HDMI 2 (Chromium via X on tty7)
+After=network-online.target graphical.target
+Wants=network-online.target
+# Don't fight tty1 (Claude autologin lives there)
+Conflicts=getty@tty7.service
+
+[Service]
+Type=simple
+User=brocoli
+PAMName=login
+TTYPath=/dev/tty7
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+Environment=HOME=/home/brocoli XAUTHORITY=/home/brocoli/.Xauthority
+WorkingDirectory=/home/brocoli
+ExecStart=/usr/bin/startx /home/brocoli/.xinitrc -- :1 vt7 -nolisten tcp -noreset
+Restart=on-failure
+RestartSec=8
+
+[Install]
+WantedBy=multi-user.target

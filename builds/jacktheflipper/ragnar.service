@@ -1,0 +1,21 @@
+[Unit]
+Description=Ragnar headless dashboard (RaspyJack vendored)
+Documentation=https://github.com/PierreGode/Ragnar
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/raspyjack/vendor/ragnar
+Environment=PYTHONPATH=/opt/raspyjack/vendor/ragnar
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/opt/raspyjack/vendor/ragnar/.env
+ExecStart=/usr/bin/python3 /opt/raspyjack/vendor/ragnar/raspyjack_headless.py --port 8091
+Restart=on-failure
+RestartSec=8
+StandardOutput=append:/opt/raspyjack/loot/Ragnar/ragnar.log
+StandardError=append:/opt/raspyjack/loot/Ragnar/ragnar.log
+
+[Install]
+WantedBy=multi-user.target

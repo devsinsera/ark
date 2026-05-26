@@ -1,0 +1,16 @@
+[Unit]
+Description=TheHauntedBrocoli launcher app (Express-less Node server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=brocoli
+WorkingDirectory=/opt/brocoli-app
+Environment=NODE_ENV=production PORT=8080 HOST=0.0.0.0
+ExecStart=/usr/bin/node /opt/brocoli-app/server.mjs
+Restart=on-failure
+RestartSec=4
+
+[Install]
+WantedBy=multi-user.target

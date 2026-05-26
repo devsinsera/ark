@@ -8,7 +8,7 @@
 
 import { createServer } from 'node:http';
 import { readFile, stat, rename, mkdir, unlink } from 'node:fs/promises';
-import { existsSync, createReadStream, createWriteStream, statSync } from 'node:fs';
+import { existsSync, createReadStream, createWriteStream, statSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir, networkInterfaces } from 'node:os';
 import path from 'node:path';
@@ -1117,6 +1117,14 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // ── /launcher ── homepage with tiles for Ark, Ragnar, Payroll, etc.
+  // Used as the Chromium-kiosk landing page on Pi 5 HDMI 2 + future
+  // JackTheFlipper HDMI. Single static page so we only edit one place.
+  if (req.method === 'GET' && (url.pathname === '/launcher' || url.pathname === '/launcher/')) {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+    return res.end(renderLauncherHtml());
+  }
+
   // ── Static UI serving ──
   // Serve the Ark UI (app/dist/) directly from the Hub so the
   // operator can open http://<hub-host>:7400/ as a same-origin app.
@@ -1373,8 +1381,8 @@ async function runLocalFlash(imagePath, target) {
   // Don't include status=progress — older macOS dd doesn't support it
   // and there's no progress streaming here anyway (sync HTTP).
   const inner = isXz
-    ? `/usr/bin/diskutil unmountDisk ${target}; /usr/bin/xz -dc ${shQuote(imagePath)} | /bin/dd of=${rawTarget} bs=4m`
-    : `/usr/bin/diskutil unmountDisk ${target}; /bin/dd if=${shQuote(imagePath)} of=${rawTarget} bs=4m`;
+    ? `/usr/sbin/diskutil unmountDisk ${target}; /usr/bin/xz -dc ${shQuote(imagePath)} | /bin/dd of=${rawTarget} bs=4m`
+    : `/usr/sbin/diskutil unmountDisk ${target}; /bin/dd if=${shQuote(imagePath)} of=${rawTarget} bs=4m`;
   // osascript "do shell script" string-escapes via doubled backslashes
   // and escaped double quotes. Build a heredoc to avoid that escaping
   // nightmare — write the script to a tempfile and exec it.
@@ -1408,6 +1416,20 @@ async function runLocalFlash(imagePath, target) {
 
 function shQuote(s) {
   return "'" + String(s).replaceAll("'", "'\\''") + "'";
+}
+
+// Launcher homepage — served at /launcher. Source of truth is the
+// thehauntedbrocoli app at apps/thehauntedbrocoli/public/index.html;
+// the Hub reads that file at request time so there's no drift between
+// Mac preview and the Pi kiosk.
+function renderLauncherHtml() {
+  const appHtml = path.join(REPO_ROOT, 'apps', 'thehauntedbrocoli', 'public', 'index.html');
+  if (existsSync(appHtml)) {
+    return readFileSync(appHtml, 'utf8');
+  }
+  return `<!doctype html><meta charset="utf-8"><title>Launcher</title>
+<p style="font:14px/1.6 ui-monospace,Menlo,monospace;color:#cbd5e1;background:#060a10;padding:30px">
+TheHauntedBrocoli launcher source not found at <code>${appHtml}</code>.</p>`;
 }
 
 // Find this host's primary LAN IPv4. Best-effort — picks the first
