@@ -835,7 +835,7 @@ const FLIPPER_PARTS = {
   rows: [
     { part: 'Flipper Zero',                       spec: <>The hardware itself. Official from <code>flipperzero.one</code>. Make sure the firmware is updated via qFlipper before connecting to the Pi — Ark expects a recent CLI surface.</>,                                                  price: '$240 – $290' },
     { part: 'Raspberry Pi',                       spec: <>Any of Pi 5 / Pi 4 / Pi Zero 2 W. The bridge script is ~6 KB of Python — zero strain on hardware. Pi Zero 2 W is the move if you want it pocket-sized.</>,                                                                          price: '$30 – $130' },
-    { part: 'microSD card',                       spec: <>32 GB+, A1 / A2 rated. Flash with <code>sinsera-flipper.img.xz</code> from the Images tab (once it builds — current build is in-flight).</>,                                                                                       price: '$15 – $25' },
+    { part: 'microSD card',                       spec: <>32 GB+, A1 / A2 rated. Flash with <code>jacktheflipper.img.xz</code> from the Builds page.</>,                                                                                       price: '$15 – $25' },
     { part: 'USB-A to USB-C cable',               spec: <>Connects Pi → Flipper. Data-capable, NOT a charge-only cable. The Flipper's USB-C port is the data interface.</>,                                                                                                                  price: '$5 – $15' },
     { part: 'USB-C power for Pi',                 spec: <>5 V 3 A wall PSU or a 10 000 mAh+ power bank if you want it untethered.</>,                                                                                                                                                         price: '$25 – $50' },
     { part: 'Case (optional)',                    spec: <>Pi sits next to the Flipper, so a small Pi-only case works. The Flipper has its own enclosure.</>,                                                                                                                                  price: '$10 – $30' },
@@ -902,9 +902,9 @@ function PartsList({ data }) {
 }
 
 // ── Flipper tools — defensive, READ-ONLY commands dispatched via SSH ──
-// Calls the bridge script the sinsera-flipper image drops at
-// /opt/flipper/flipper-bridge.py. The bridge itself has a hard
-// allow-list (see builds/sinsera-flipper/install-template.sh).
+// Calls the bridge through /usr/local/bin/flipper which the
+// jacktheflipper image drops in place — wraps the actual bridge at
+// /opt/jacktheflipper/flipper-bridge.py with its READ_ONLY allow-list.
 const FLIPPER_TOOLS = [
   {
     id:      'info',
@@ -912,7 +912,7 @@ const FLIPPER_TOOLS = [
     kind:    'passive',
     risk:    'safe',
     desc:    'Firmware version, hardware name, region, battery health. Confirms the Flipper is connected at /dev/flipper.',
-    command: 'python3 /opt/flipper/flipper-bridge.py info --timeout 4',
+    command: 'flipper info --timeout 4',
   },
   {
     id:      'power',
@@ -920,7 +920,7 @@ const FLIPPER_TOOLS = [
     kind:    'passive',
     risk:    'safe',
     desc:    'Battery level, USB power state, charging current. Useful for confirming the Flipper has enough juice for longer scans.',
-    command: 'python3 /opt/flipper/flipper-bridge.py power --timeout 4',
+    command: 'flipper power --timeout 4',
   },
   {
     id:      'ble-scan',
@@ -928,7 +928,7 @@ const FLIPPER_TOOLS = [
     kind:    'passive',
     risk:    'safe',
     desc:    'Enumerate Bluetooth LE advertisements in range. Pure listener — Flipper sends nothing.',
-    command: 'python3 /opt/flipper/flipper-bridge.py ble-scan --timeout 10',
+    command: 'flipper ble-scan --timeout 10',
   },
   {
     id:      'subghz-listen',
@@ -936,7 +936,7 @@ const FLIPPER_TOOLS = [
     kind:    'passive',
     risk:    'safe',
     desc:    'Read sub-GHz activity on default channel (433 / 868 / 915 depending on region). Receive-only — detects rogue ISM-band devices, garage-door / TPMS / weather-station chatter.',
-    command: 'python3 /opt/flipper/flipper-bridge.py subghz-listen --timeout 15',
+    command: 'flipper subghz-listen --timeout 15',
   },
   {
     id:      'nfc-detect',
@@ -944,7 +944,7 @@ const FLIPPER_TOOLS = [
     kind:    'active-but-light',
     risk:    'low',
     desc:    'Detect NFC tags currently in proximity of the Flipper. Read-only — does NOT emulate or clone. Useful for defensive audit of cards an attacker might be carrying.',
-    command: 'python3 /opt/flipper/flipper-bridge.py nfc-detect --timeout 6',
+    command: 'flipper nfc-detect --timeout 6',
   },
 ];
 
@@ -1266,19 +1266,19 @@ function FlipperTab({ hubUrl }) {
       parts={FLIPPER_PARTS}
       intro={
         <div style={{ padding: 12, background: 'rgba(6,182,212,0.06)', border: `1px solid ${COLORS.accentBorder}`, borderRadius: 8, fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.7 }}>
-          <strong style={{ color: COLORS.accentBright }}>Read-only Flipper bridge.</strong> The Ark Flipper tab dispatches only the 5 commands listed below
-          via the <code>/opt/flipper/flipper-bridge.py</code> script on a Pi that's been flashed with the <code>sinsera-flipper</code> image
-          AND has a Flipper Zero plugged in via USB. The bridge has a hard allow-list: transmit-capable operations (sub-GHz TX, BadUSB,
-          NFC emulation, IR TX) are never called from Ark — those stay on the Flipper's physical UI. Use only on RF + NFC environments you own
-          or have written permission to monitor.
+          <strong style={{ color: COLORS.accentBright }}>Read-only Flipper bridge.</strong> The Ark Flipper tab dispatches only the 5 commands
+          below via the <code>flipper</code> CLI wrapper (which calls <code>/opt/jacktheflipper/flipper-bridge.py</code> under the hood) on a Pi
+          flashed with the <code>jacktheflipper</code> image AND a Flipper Zero plugged in via USB. The bridge has a hard allow-list: transmit-capable
+          operations (sub-GHz TX, BadUSB, NFC emulation, IR TX) are never called from Ark — those stay on the Flipper's physical UI.
+          Use only on RF + NFC environments you own or have written permission to monitor.
         </div>
       }
       emptyState={
         <div style={{ padding: 22, background: COLORS.bgPanel, border: `1px dashed ${COLORS.border}`, borderRadius: 10 }}>
           <h3 style={{ margin: '0 0 6px', fontFamily: FONT_HEADING, fontSize: 16, color: COLORS.textPrimary }}>No managed hosts</h3>
           <p style={{ margin: 0, color: COLORS.textMuted, fontSize: 13, lineHeight: 1.7 }}>
-            The Flipper tab drives a Pi that's been flashed with the <code>sinsera-flipper</code> image and has a Flipper Zero plugged in.
-            Open the <strong>SSH Runner</strong> nav, register that Pi (e.g. <code>root@SinseraFlipper.local</code>), then come back here.
+            The Flipper tab drives a Pi that's been flashed with the <code>jacktheflipper</code> image and has a Flipper Zero plugged in.
+            Open the <strong>SSH Runner</strong> nav, register that Pi (e.g. <code>jacktheflipper@jacktheflipper.local</code>), then come back here.
           </p>
         </div>
       }
