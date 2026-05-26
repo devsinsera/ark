@@ -63,10 +63,14 @@ docker run --rm --privileged \
     losetup -d "$LOOP"
   '
 
+APP_DIR="$REPO_ROOT/apps/thehauntedbrocoli"
+[ -d "$APP_DIR" ] || { echo "ERROR: launcher app not found at $APP_DIR" >&2; exit 1; }
+
 echo "[brocoli-bake] mounting + writing customizations..."
 docker run --rm --privileged \
   -v "$OUT_DIR:/baking" \
   -v "$PROFILE_DIR:/profile:ro" \
+  -v "$APP_DIR:/app:ro" \
   -e SSH_PUBKEY="$SSH_PUBKEY" \
   -e WIFI_SSID="$WIFI_SSID" \
   -e WIFI_KEY="$WIFI_KEY" \
@@ -92,6 +96,20 @@ docker run --rm --privileged \
     mkdir -p /mnt/root/etc/systemd/system/multi-user.target.wants
     ln -sf ../brocoli-install.service \
       /mnt/root/etc/systemd/system/multi-user.target.wants/brocoli-install.service
+
+    echo "[bake] embedding launcher app to /opt/brocoli-app"
+    mkdir -p /mnt/root/opt/brocoli-app
+    cp -a /app/. /mnt/root/opt/brocoli-app/
+    rm -rf /mnt/root/opt/brocoli-app/node_modules /mnt/root/opt/brocoli-app/.git 2>/dev/null || true
+    # Owner gets set to brocoli (uid 1001) on first boot by install.sh
+    cp /app/thehauntedbrocoli-app.service /mnt/root/etc/systemd/system/
+
+    echo "[bake] installing kiosk units (ttyd + X + Chromium)"
+    cp /profile/kiosk/ttyd-claude.service /mnt/root/etc/systemd/system/
+    cp /profile/kiosk/ark-kiosk.service   /mnt/root/etc/systemd/system/
+    mkdir -p /mnt/root/home/brocoli
+    cp /profile/kiosk/xinitrc /mnt/root/home/brocoli/.xinitrc
+    chmod 755 /mnt/root/home/brocoli/.xinitrc
 
     # Marker file in /boot so the SD is identifiable on any host
     echo "TheHauntedBrocoli" > /mnt/boot/TheHauntedBrocoli

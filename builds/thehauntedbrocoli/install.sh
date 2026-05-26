@@ -1,7 +1,14 @@
 #!/bin/bash
 # Phase-2 installer for TheHauntedBrocoli. Runs once on first boot
-# (after firstrun.sh creates user + brings up WiFi) and installs the
-# Claude CLI so it auto-launches on the HDMI console.
+# (after firstrun.sh creates the brocoli user + brings up WiFi).
+#
+# Sets up the whole runtime stack:
+#   - Node + Claude CLI
+#   - Tor + torsocks (LAN-exposed SOCKS5)
+#   - X11 (modesetting) + Chromium + openbox
+#   - ttyd (web terminal for Claude)
+#   - TheHauntedBrocoli launcher app at /opt/brocoli-app
+#   - Pinned kernel 6.12 + RTL8821AU AC600 DKMS driver
 #
 # Disables itself when done.
 
@@ -21,19 +28,21 @@ done
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 
-# --- node 20 + tooling for AC600 driver build ---
+# --- core packages: node, dkms toolchain, wifi tools, X stack ---
 apt-get install -y -q --no-install-recommends \
   nodejs npm \
   dkms git build-essential bc \
   iw wireless-tools rfkill \
   linux-headers-rpi-v8 linux-headers-rpi-2712 \
+  xserver-xorg-core xserver-xorg-input-libinput \
+  xserver-xorg-video-modesetting xserver-xorg-legacy \
+  xinit x11-xserver-utils \
+  openbox unclutter fonts-dejavu-core \
+  chromium chromium-common \
   || true
 
-# --- Tor + torsocks ---
-# Debian 13 split the tor package — needs recommends for the actual
-# tor-instance to install, so do NOT pass --no-install-recommends here.
+# --- Tor + torsocks (recommends required on Debian 13) ---
 apt-get install -y tor torsocks || true
-# LAN-exposed SOCKS5 (operator-controlled network only)
 if ! grep -q "^SocksPort 0.0.0.0:9050" /etc/tor/torrc 2>/dev/null; then
   cat >> /etc/tor/torrc <<TORRC
 
@@ -47,7 +56,7 @@ fi
 systemctl enable tor 2>/dev/null || true
 systemctl restart tor@default 2>/dev/null || systemctl restart tor 2>/dev/null || true
 
-# Fallback to NodeSource if apt nodejs is too old
+# --- node fallback to nodesource if apt version is too old ---
 if ! command -v node >/dev/null 2>&1; then
   curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
   apt-get install -y -q nodejs
@@ -55,14 +64,20 @@ fi
 node --version || true
 npm --version || true
 
-# --- claude code CLI ---
+# --- claude code CLI (global) ---
 npm install -g @anthropic-ai/claude-code || true
 which claude || true
 
+# --- ttyd static binary (not in Debian Trixie apt) ---
+if [ ! -x /usr/local/bin/ttyd ]; then
+  TTYD_URL=$(curl -fsSL https://api.github.com/repos/tsl0922/ttyd/releases/latest \
+    | grep browser_download_url | grep aarch64 | head -1 \
+    | sed 's/.*"\(https:[^"]*\)".*/\1/')
+  curl -fsSL "$TTYD_URL" -o /usr/local/bin/ttyd
+  chmod 755 /usr/local/bin/ttyd
+fi
+
 # --- Pin kernel to 6.12 BEFORE building the AC600 driver ---
-# The morrownr/aircrack-ng RTL8811AU drivers do not yet compile against
-# kernel 6.18 (released 2026); pin to 6.12 (still supported) so the
-# DKMS build succeeds. Hold all kernel packages to keep it pinned.
 if dpkg -l | grep -q "^ii\s\+linux-image-6.12.75"; then
   cp /boot/firmware/kernel_2712.img /boot/firmware/kernel_2712.6.18.bak 2>/dev/null || true
   cp /boot/firmware/initramfs_2712 /boot/firmware/initramfs_2712.6.18.bak 2>/dev/null || true
@@ -75,9 +90,6 @@ if dpkg -l | grep -q "^ii\s\+linux-image-6.12.75"; then
 fi
 
 # --- AC600 / Archer T2U Nano (RTL8811AU) DKMS driver ---
-# Adds wlan1 with monitor mode support. Skips silently if already present.
-# Driver is built against the CURRENTLY RUNNING kernel — after the kernel
-# pin above, the post-reboot kernel will be 6.12 and DKMS will rebuild.
 if ! modinfo 8821au >/dev/null 2>&1; then
   cd /usr/src
   [ -d 8821au-20210708 ] && rm -rf 8821au-20210708
@@ -85,36 +97,41 @@ if ! modinfo 8821au >/dev/null 2>&1; then
     >> /var/log/brocoli-install.log 2>&1 || true
   if [ -d /usr/src/8821au-20210708 ]; then
     cd /usr/src/8821au-20210708
-    bash ./install-driver.sh NoPrompt \
-      >> /var/log/brocoli-install.log 2>&1 || true
+    bash ./install-driver.sh NoPrompt >> /var/log/brocoli-install.log 2>&1 || true
   fi
 fi
 
-# --- ensure HDMI console (getty@tty1) is enabled ---
-# Pi OS Lite Bookworm with cloud-init sometimes leaves getty@tty1.service
-# in 'disabled' state, so the autologin drop-in never fires and HDMI
-# shows only stale boot scrollback. Explicit enable fixes this.
+# --- X server config: allow brocoli user to start X, force modesetting ---
+mkdir -p /etc/X11
+cat > /etc/X11/Xwrapper.config <<EOF
+allowed_users=anybody
+needs_root_rights=yes
+EOF
+mkdir -p /etc/X11/xorg.conf.d
+cat > /etc/X11/xorg.conf.d/20-modesetting.conf <<EOF
+Section "Device"
+  Identifier "Pi5GPU"
+  Driver "modesetting"
+  Option "kmsdev" "/dev/dri/card1"
+EndSection
+EOF
+
+# --- HDMI console getty (Bookworm + cloud-init can leave it disabled) ---
 systemctl enable getty@tty1.service 2>/dev/null || true
 
-# --- autolaunch claude on tty1 for user brocoli ---
-mkdir -p /home/brocoli
-if ! grep -q "CLAUDE_AUTOSTART" /home/brocoli/.bashrc 2>/dev/null; then
-  cat >> /home/brocoli/.bashrc <<'BRC'
+# --- Strip any leftover Claude tty1 autostart in .bashrc ---
+# The launcher kiosk now owns the screen; Claude is served via ttyd
+# inside the launcher (Claude tile → web terminal). Don't double-launch.
+sed -i '/# CLAUDE_AUTOSTART/,/^fi$/d' /home/brocoli/.bashrc 2>/dev/null || true
 
-# CLAUDE_AUTOSTART — run Claude CLI on HDMI console only
-if [ -z "$CLAUDE_AUTOSTARTED" ] && [ "$(tty)" = "/dev/tty1" ]; then
-  export CLAUDE_AUTOSTARTED=1
-  echo
-  echo "  TheHauntedBrocoli"
-  echo "  ---"
-  echo "  Launching Claude. Type /help for commands, /quit to exit."
-  echo
-  sleep 1
-  exec claude
-fi
-BRC
-fi
-chown brocoli:brocoli /home/brocoli/.bashrc
+# --- Enable launcher app + ttyd + kiosk services (units installed by bake) ---
+systemctl daemon-reload
+systemctl enable thehauntedbrocoli-app.service 2>/dev/null || true
+systemctl enable ttyd-claude.service           2>/dev/null || true
+systemctl enable ark-kiosk.service             2>/dev/null || true
+
+# Ensure /opt/brocoli-app/server.mjs is owned correctly (bake copies it)
+[ -d /opt/brocoli-app ] && chown -R brocoli:brocoli /opt/brocoli-app
 
 # --- marker file ---
 echo "TheHauntedBrocoli — $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /home/brocoli/TheHauntedBrocoli
@@ -125,7 +142,7 @@ systemctl disable brocoli-install.service 2>/dev/null || true
 
 echo "[brocoli-install] done $(date)"
 
-# reboot so autologin → claude takes effect cleanly
+# Reboot — kernel pin + driver bind + kiosk all need clean start.
 ( sleep 3 ; systemctl reboot ) &
 
 exit 0
