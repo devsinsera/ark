@@ -1,13 +1,13 @@
 #!/bin/bash
-# thehauntedbrocoli-bake.sh — build the TheHauntedBrocoli image.
+# the-hive-bake.sh — build the The Hive image (Pi 5).
 #
 # Pi OS Lite (Bookworm, 64-bit) + two-phase install:
 #   Phase 1 (cmdline systemd.run=): firstrun.sh — user/SSH/WiFi/hostname/autologin.
-#   Phase 2 (systemd oneshot): apt-installs nodejs + Claude Code CLI,
-#     configures bashrc autostart, drops marker file.
+#   Phase 2 (systemd oneshot): the-hive-install.service installs nodejs +
+#     Claude CLI + Tor + X + Chromium + ttyd + The Comb launcher app.
 #
-# Identity: brocoli (no peta, no sinsera, no ark references on-Pi).
-# Hostname: thehauntedbrocoli
+# Identity: brocoli user (no peta/sinsera references on-Pi).
+# Hostname: thehive  (mDNS: thehive.local)
 
 set -euo pipefail
 
@@ -16,18 +16,18 @@ set -euo pipefail
 # heredoc. See memory: project_pi_image_gotchas.md.
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-PROFILE_DIR="$REPO_ROOT/builds/thehauntedbrocoli"
+PROFILE_DIR="$REPO_ROOT/builds/the-hive"
 OUT_DIR="$PROFILE_DIR/out"
 OUT_IMG="$OUT_DIR/ark-built.img"
 SRC_XZ="$REPO_ROOT/Os/raspios_lite_arm64_latest.img.xz"
 
 [ -f "$SRC_XZ" ] || { echo "ERROR: base image not found: $SRC_XZ" >&2; exit 1; }
-for f in install.sh brocoli-install.service; do
+for f in install.sh the-hive-install.service; do
   [ -f "$PROFILE_DIR/$f" ] || { echo "ERROR: missing $PROFILE_DIR/$f"; exit 1; }
 done
 mkdir -p "$OUT_DIR"
 
-# Operator SSH key for headless access (no name/email — just the key)
+# Operator SSH key for headless access
 SSH_PUBKEY=""
 [ -f "$HOME/.ssh/id_ed25519.pub" ] && SSH_PUBKEY=$(cat "$HOME/.ssh/id_ed25519.pub")
 [ -n "$SSH_PUBKEY" ] || { echo "ERROR: ~/.ssh/id_ed25519.pub not present" >&2; exit 1; }
@@ -39,11 +39,11 @@ if [ -f "$HOME/.ark/wifi.env" ]; then
   : "${WIFI_SSID:=}" ; : "${WIFI_KEY:=}"
 fi
 
-echo "[brocoli-bake] decompressing base -> $OUT_IMG"
+echo "[the-hive-bake] decompressing base -> $OUT_IMG"
 xz -dck "$SRC_XZ" > "$OUT_IMG"
 
 # Expand rootfs by 200 MB for npm install + node_modules
-echo "[brocoli-bake] expanding image + rootfs (+200 MB)"
+echo "[the-hive-bake] expanding image + rootfs (+200 MB)"
 docker run --rm --privileged \
   -v "$OUT_DIR:/baking" \
   --entrypoint /bin/bash ark-builder:0.1 -c '
@@ -63,10 +63,10 @@ docker run --rm --privileged \
     losetup -d "$LOOP"
   '
 
-APP_DIR="$REPO_ROOT/apps/thehauntedbrocoli"
-[ -d "$APP_DIR" ] || { echo "ERROR: launcher app not found at $APP_DIR" >&2; exit 1; }
+APP_DIR="$REPO_ROOT/apps/the-comb"
+[ -d "$APP_DIR" ] || { echo "ERROR: The Comb app not found at $APP_DIR" >&2; exit 1; }
 
-echo "[brocoli-bake] mounting + writing customizations..."
+echo "[the-hive-bake] mounting + writing customizations..."
 docker run --rm --privileged \
   -v "$OUT_DIR:/baking" \
   -v "$PROFILE_DIR:/profile:ro" \
@@ -89,30 +89,32 @@ docker run --rm --privileged \
     mount "$PART2" /mnt/root
 
     echo "[bake] installing phase-2 script + service"
-    mkdir -p /mnt/root/opt/brocoli
-    cp /profile/install.sh /mnt/root/opt/brocoli/install.sh
-    chmod 755 /mnt/root/opt/brocoli/install.sh
-    cp /profile/brocoli-install.service /mnt/root/etc/systemd/system/
+    mkdir -p /mnt/root/opt/the-hive
+    cp /profile/install.sh /mnt/root/opt/the-hive/install.sh
+    chmod 755 /mnt/root/opt/the-hive/install.sh
+    cp /profile/the-hive-install.service /mnt/root/etc/systemd/system/
     mkdir -p /mnt/root/etc/systemd/system/multi-user.target.wants
-    ln -sf ../brocoli-install.service \
-      /mnt/root/etc/systemd/system/multi-user.target.wants/brocoli-install.service
+    ln -sf ../the-hive-install.service \
+      /mnt/root/etc/systemd/system/multi-user.target.wants/the-hive-install.service
 
-    echo "[bake] embedding launcher app to /opt/brocoli-app"
-    mkdir -p /mnt/root/opt/brocoli-app
-    cp -a /app/. /mnt/root/opt/brocoli-app/
-    rm -rf /mnt/root/opt/brocoli-app/node_modules /mnt/root/opt/brocoli-app/.git 2>/dev/null || true
+    echo "[bake] embedding The Comb app to /opt/the-comb"
+    mkdir -p /mnt/root/opt/the-comb
+    cp -a /app/. /mnt/root/opt/the-comb/
+    rm -rf /mnt/root/opt/the-comb/node_modules /mnt/root/opt/the-comb/.git 2>/dev/null || true
     # Owner gets set to brocoli (uid 1001) on first boot by install.sh
-    cp /app/thehauntedbrocoli-app.service /mnt/root/etc/systemd/system/
+    cp /app/the-comb.service /mnt/root/etc/systemd/system/
 
     echo "[bake] installing kiosk units (ttyd + X + Chromium)"
     cp /profile/kiosk/ttyd-claude.service /mnt/root/etc/systemd/system/
     cp /profile/kiosk/ark-kiosk.service   /mnt/root/etc/systemd/system/
+    cp /profile/kiosk/claude-launch.sh    /mnt/root/usr/local/bin/claude-launch
+    chmod 755 /mnt/root/usr/local/bin/claude-launch
     mkdir -p /mnt/root/home/brocoli
     cp /profile/kiosk/xinitrc /mnt/root/home/brocoli/.xinitrc
     chmod 755 /mnt/root/home/brocoli/.xinitrc
 
     # Marker file in /boot so the SD is identifiable on any host
-    echo "TheHauntedBrocoli" > /mnt/boot/TheHauntedBrocoli
+    echo "TheHive" > /mnt/boot/TheHive
 
     cat > /mnt/boot/firstrun.sh <<FIRSTRUN
 #!/bin/bash
@@ -120,8 +122,8 @@ set +e
 exec > /var/log/firstrun.log 2>&1
 set -x
 
-echo "thehauntedbrocoli" > /etc/hostname
-sed -i "s/127.0.1.1.*/127.0.1.1\tthehauntedbrocoli/g" /etc/hosts
+echo "thehive" > /etc/hostname
+sed -i "s/127.0.1.1.*/127.0.1.1\tthehive/g" /etc/hosts
 
 if ! id brocoli >/dev/null 2>&1; then
   useradd -m -s /bin/bash -G adm,dialout,cdrom,sudo,audio,video,plugdev,games,users,input,render,netdev brocoli
@@ -180,7 +182,7 @@ NMCFG
   chmod 600 /etc/NetworkManager/system-connections/preconfigured.nmconnection
 fi
 
-# Autologin brocoli on tty1 so Claude can run on HDMI console
+# Autologin brocoli on tty1 so the kiosk + ttyd can run on HDMI
 mkdir -p /etc/systemd/system/getty@tty1.service.d
 cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf <<AUTO
 [Service]
@@ -188,7 +190,7 @@ ExecStart=
 ExecStart=-/sbin/agetty --autologin brocoli --noclear %I \$TERM
 AUTO
 
-systemctl enable brocoli-install.service 2>/dev/null || true
+systemctl enable the-hive-install.service 2>/dev/null || true
 
 rm -f /boot/firstrun.sh /boot/firmware/firstrun.sh
 sed -i "s| systemd.run.*||g" /boot/firmware/cmdline.txt 2>/dev/null
@@ -209,13 +211,14 @@ FIRSTRUN
     umount /mnt/boot
     kpartx -d "$LOOP" 2>/dev/null || true
     losetup -d "$LOOP"
-    echo "[brocoli-bake] customizations written"
+    echo "[the-hive-bake] customizations written"
   '
 
-echo "[brocoli-bake] DONE — image at $OUT_IMG"
+echo "[the-hive-bake] DONE — image at $OUT_IMG"
 SZ=$(du -h "$OUT_IMG" | awk '{print $1}')
 echo "  size: $SZ"
-echo "  hostname: thehauntedbrocoli"
+echo "  hostname: thehive (mDNS: thehive.local)"
 echo "  user: brocoli (password brocoli, NOPASSWD sudo)"
-echo "  ssh:    $(echo "$SSH_PUBKEY" | cut -c1-30)..."
-echo "  wifi:   ${WIFI_SSID:-MISSING}"
+echo "  app:  /opt/the-comb  (The Comb launcher on :8080)"
+echo "  ssh:  $(echo "$SSH_PUBKEY" | cut -c1-30)..."
+echo "  wifi: ${WIFI_SSID:-MISSING}"

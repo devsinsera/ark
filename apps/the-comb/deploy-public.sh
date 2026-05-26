@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Deploy the TheHauntedBrocoli launcher to sinsera.co/thehauntedbrocoli/
-# via lftp. Reads FTP creds from /Ark/app/.env.local (same creds as the
-# Ark deploy uses).
+# Deploy The Comb launcher to sinsera.co/the-comb/ via lftp.
+# Reads FTP creds from /Ark/app/.env.local (same creds as Ark deploy).
 #
 # Usage:  bash deploy-public.sh
 
@@ -21,7 +20,7 @@ fi
 : "${SINSERA_FTP_USER:?SINSERA_FTP_USER not set in app/.env.local}"
 : "${SINSERA_FTP_PASS:?SINSERA_FTP_PASS not set in app/.env.local}"
 
-REMOTE_DIR="/thehauntedbrocoli"
+REMOTE_DIR="/the-comb"
 
 echo "→ Mirroring public/ → ${SINSERA_FTP_HOST}:${REMOTE_DIR}"
 lftp -c "

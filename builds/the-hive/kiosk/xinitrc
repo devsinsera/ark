@@ -36,7 +36,7 @@ sleep 1
 # operator keeps the address bar + tabs + F11 toggle, so it's usable
 # as a real browser (Ctrl+T opens a new tab, type any URL, etc.).
 # The launcher is just the home page.
-KIOSK_URL="${KIOSK_URL:-https://sinsera.co/thehauntedbrocoli/}"
+KIOSK_URL="${KIOSK_URL:-https://sinsera.co/the-comb/}"
 exec chromium \
   --start-fullscreen \
   --noerrdialogs \

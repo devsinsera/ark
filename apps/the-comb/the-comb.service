@@ -1,14 +1,14 @@
 [Unit]
-Description=TheHauntedBrocoli launcher app (Express-less Node server)
+Description=The Comb launcher app (zero-dep Node server)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=brocoli
-WorkingDirectory=/opt/brocoli-app
+WorkingDirectory=/opt/the-comb
 Environment=NODE_ENV=production PORT=8080 HOST=0.0.0.0
-ExecStart=/usr/bin/node /opt/brocoli-app/server.mjs
+ExecStart=/usr/bin/node /opt/the-comb/server.mjs
 Restart=on-failure
 RestartSec=4
 

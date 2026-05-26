@@ -1,0 +1,29 @@
+{
+  "profile_id":   "the-hive",
+  "version":      2,
+  "category":     "raspberry-pi-devices",
+  "name":         "The Hive (Pi 5 — The Comb launcher kiosk)",
+  "description":  "Pi OS Lite (Bookworm, 64-bit) + two-phase first-boot install. Phase 1 sets up brocoli user + SSH/WiFi/hostname + tty1 autologin. Phase 2 installs Node 20, the @anthropic-ai/claude-code CLI, Tor with LAN SOCKS5, X11 + Chromium + openbox, ttyd, the RTL8821AU DKMS driver for AC600 dongles (kernel pinned to 6.12 for driver compat), and the The Comb launcher app at /opt/the-comb. After two reboots the HDMI auto-shows The Comb fullscreen pointing at https://sinsera.co/the-comb/. Marker file `TheHive` at /boot and /home/brocoli.",
+  "supported_hardware": ["pi-5-4gb", "pi-5-8gb", "pi-5-16gb", "pi-4-4gb", "pi-4-8gb"],
+  "base_image":         "raspios_lite_arm64_latest.img.xz",
+  "preconfigured": {
+    "hostname":      "thehive (mDNS: thehive.local)",
+    "user":          "brocoli (password 'brocoli', NOPASSWD sudo, SSH key + password auth both enabled)",
+    "autologin":     "tty1 → brocoli (HDMI runs X kiosk on tty7)",
+    "ssh":           "enabled, brocoli + root authorized_keys baked",
+    "wifi":          "from ~/.ark/wifi.env via NetworkManager nmconnection",
+    "claude_cli":    "@anthropic-ai/claude-code installed globally via npm",
+    "tor":           "tor + torsocks; SOCKS5 on 0.0.0.0:9050 with LAN-only policy",
+    "the_comb":      "/opt/the-comb served on :8080 by the-comb.service",
+    "ttyd":          "ttyd + claude-launch wrapper on :7777 (cd to /mnt/stick/the-comb if STICK USB plugged in)",
+    "kiosk":         "ark-kiosk.service runs X on tty7 + Chromium --start-fullscreen at https://sinsera.co/the-comb/",
+    "ac600_driver":  "morrownr/8821au-20210708 via DKMS, kernel pinned to 6.12",
+    "marker":        "/boot/TheHive and /home/brocoli/TheHive",
+    "install_log":   "/var/log/the-hive-install.log on the Pi"
+  },
+  "first_boot_sequence": [
+    "Phase 1 (~30s): firstrun.sh sets up brocoli user + SSH + WiFi + hostname + tty1 autologin. Reboots.",
+    "Phase 2 (~5-8 min): apt-installs the runtime stack (Node + X + Chromium + Tor + ttyd), DKMS-builds rtl8821au, configures everything, enables services. Reboots.",
+    "Phase 3 (~15s): HDMI shows The Comb launcher fullscreen. Tiles for Claude / Ark / Ragnar / RaspyJack / Flipper / Jailbreak / Payroll / Tor."
+  ]
+}

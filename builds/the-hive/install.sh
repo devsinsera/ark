@@ -1,5 +1,5 @@
 #!/bin/bash
-# Phase-2 installer for TheHauntedBrocoli. Runs once on first boot
+# Phase-2 installer for The Hive (Pi 5). Runs once on first boot
 # (after firstrun.sh creates the brocoli user + brings up WiFi).
 #
 # Sets up the whole runtime stack:
@@ -7,13 +7,14 @@
 #   - Tor + torsocks (LAN-exposed SOCKS5)
 #   - X11 (modesetting) + Chromium + openbox
 #   - ttyd (web terminal for Claude)
-#   - TheHauntedBrocoli launcher app at /opt/brocoli-app
+#   - The Comb launcher app at /opt/the-comb
+#   - USB STICK auto-mount at /mnt/stick
 #   - Pinned kernel 6.12 + RTL8821AU AC600 DKMS driver
 #
 # Disables itself when done.
 
 set +e
-exec > /var/log/brocoli-install.log 2>&1
+exec > /var/log/the-hive-install.log 2>&1
 set -x
 
 # --- wait for network ---
@@ -94,10 +95,10 @@ if ! modinfo 8821au >/dev/null 2>&1; then
   cd /usr/src
   [ -d 8821au-20210708 ] && rm -rf 8821au-20210708
   git clone --depth 1 https://github.com/morrownr/8821au-20210708.git \
-    >> /var/log/brocoli-install.log 2>&1 || true
+    >> /var/log/the-hive-install.log 2>&1 || true
   if [ -d /usr/src/8821au-20210708 ]; then
     cd /usr/src/8821au-20210708
-    bash ./install-driver.sh NoPrompt >> /var/log/brocoli-install.log 2>&1 || true
+    bash ./install-driver.sh NoPrompt >> /var/log/the-hive-install.log 2>&1 || true
   fi
 fi
 
@@ -110,7 +111,7 @@ EOF
 mkdir -p /etc/X11/xorg.conf.d
 cat > /etc/X11/xorg.conf.d/20-modesetting.conf <<EOF
 Section "Device"
-  Identifier "Pi5GPU"
+  Identifier "TheHiveGPU"
   Driver "modesetting"
   Option "kmsdev" "/dev/dri/card1"
 EndSection
@@ -119,6 +120,16 @@ EOF
 # --- HDMI console getty (Bookworm + cloud-init can leave it disabled) ---
 systemctl enable getty@tty1.service 2>/dev/null || true
 
+# --- USB STICK auto-mount at /mnt/stick ---
+mkdir -p /mnt/stick
+chown brocoli:brocoli /mnt/stick
+if ! grep -q "LABEL=STICK" /etc/fstab; then
+  cat >> /etc/fstab <<EOF
+# Auto-mount the The Comb project USB stick by label (safe if missing)
+LABEL=STICK  /mnt/stick  vfat  defaults,uid=1001,gid=1001,nofail,x-systemd.automount,x-systemd.idle-timeout=60  0  0
+EOF
+fi
+
 # --- Strip any leftover Claude tty1 autostart in .bashrc ---
 # The launcher kiosk now owns the screen; Claude is served via ttyd
 # inside the launcher (Claude tile → web terminal). Don't double-launch.
@@ -126,21 +137,21 @@ sed -i '/# CLAUDE_AUTOSTART/,/^fi$/d' /home/brocoli/.bashrc 2>/dev/null || true
 
 # --- Enable launcher app + ttyd + kiosk services (units installed by bake) ---
 systemctl daemon-reload
-systemctl enable thehauntedbrocoli-app.service 2>/dev/null || true
-systemctl enable ttyd-claude.service           2>/dev/null || true
-systemctl enable ark-kiosk.service             2>/dev/null || true
+systemctl enable the-comb.service     2>/dev/null || true
+systemctl enable ttyd-claude.service  2>/dev/null || true
+systemctl enable ark-kiosk.service    2>/dev/null || true
 
-# Ensure /opt/brocoli-app/server.mjs is owned correctly (bake copies it)
-[ -d /opt/brocoli-app ] && chown -R brocoli:brocoli /opt/brocoli-app
+# Ensure /opt/the-comb is owned correctly (bake copies the source in)
+[ -d /opt/the-comb ] && chown -R brocoli:brocoli /opt/the-comb
 
 # --- marker file ---
-echo "TheHauntedBrocoli — $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /home/brocoli/TheHauntedBrocoli
-chown brocoli:brocoli /home/brocoli/TheHauntedBrocoli
+echo "TheHive — $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /home/brocoli/TheHive
+chown brocoli:brocoli /home/brocoli/TheHive
 
 # --- disable myself ---
-systemctl disable brocoli-install.service 2>/dev/null || true
+systemctl disable the-hive-install.service 2>/dev/null || true
 
-echo "[brocoli-install] done $(date)"
+echo "[the-hive-install] done $(date)"
 
 # Reboot — kernel pin + driver bind + kiosk all need clean start.
 ( sleep 3 ; systemctl reboot ) &

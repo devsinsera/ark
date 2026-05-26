@@ -1419,11 +1419,11 @@ function shQuote(s) {
 }
 
 // Launcher homepage — served at /launcher. Source of truth is the
-// thehauntedbrocoli app at apps/thehauntedbrocoli/public/index.html;
+// The Comb app at apps/the-comb/public/index.html;
 // the Hub reads that file at request time so there's no drift between
 // Mac preview and the Pi kiosk.
 function renderLauncherHtml() {
-  const appHtml = path.join(REPO_ROOT, 'apps', 'thehauntedbrocoli', 'public', 'index.html');
+  const appHtml = path.join(REPO_ROOT, 'apps', 'the-comb', 'public', 'index.html');
   if (existsSync(appHtml)) {
     return readFileSync(appHtml, 'utf8');
   }

@@ -1,9 +1,9 @@
 {
-  "name": "thehauntedbrocoli",
-  "version": "0.1.0",
+  "name": "the-comb",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Unified launcher app for the TheHauntedBrocoli Pi 5 kiosk.",
+  "description": "The Comb — unified launcher app for The Hive Pi 5 kiosk.",
   "main": "server.mjs",
   "scripts": {
     "start": "node server.mjs",

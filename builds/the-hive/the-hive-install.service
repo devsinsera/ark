@@ -1,12 +1,12 @@
 [Unit]
-Description=TheHauntedBrocoli phase-2 install (Claude CLI)
+Description=The Hive phase-2 install (Claude CLI + Tor + X + Chromium + The Comb)
 After=network-online.target
 Wants=network-online.target
-ConditionPathExists=/opt/brocoli/install.sh
+ConditionPathExists=/opt/the-hive/install.sh
 
 [Service]
 Type=oneshot
-ExecStart=/opt/brocoli/install.sh
+ExecStart=/opt/the-hive/install.sh
 RemainAfterExit=yes
 StandardOutput=journal
 StandardError=journal

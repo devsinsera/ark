@@ -1,5 +1,5 @@
 #!/bin/bash
-# deploy.sh — rsync this app to the Pi 5 + restart the service.
+# deploy.sh — rsync The Comb to The Hive + restart the service.
 #
 # Usage:  bash deploy.sh
 #         PI_HOST=192.168.4.169 bash deploy.sh    # override target
@@ -8,8 +8,8 @@
 
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-brocoli@thehauntedbrocoli.local}"
-REMOTE_DIR="/opt/brocoli-app"
+PI_HOST="${PI_HOST:-brocoli@thehive.local}"
+REMOTE_DIR="/opt/the-comb"
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -21,7 +21,7 @@ rsync -avz --delete \
   "$REPO_DIR/" "$PI_HOST:$REMOTE_DIR/"
 
 echo "[deploy] restart service"
-ssh "$PI_HOST" 'sudo -n systemctl restart thehauntedbrocoli-app.service && sudo -n systemctl is-active thehauntedbrocoli-app.service'
+ssh "$PI_HOST" 'sudo -n systemctl restart the-comb.service && sudo -n systemctl is-active the-comb.service'
 
 echo "[deploy] health"
 ssh "$PI_HOST" 'curl -sS --max-time 4 http://localhost:8080/api/health'

@@ -1,9 +1,8 @@
-// thehauntedbrocoli — unified launcher server.
+// The Comb — unified launcher server for The Hive (Pi 5).
 //
 // Serves the launcher SPA + a couple of small JSON endpoints. Runs
-// on the Pi 5 itself (systemd: thehauntedbrocoli-app.service) so
-// Chromium kiosk can hit http://localhost:8080 without depending on
-// the Mac Hub.
+// on the Pi itself (systemd: the-comb.service) so Chromium kiosk can
+// hit http://localhost:8080 without depending on anything external.
 //
 // Standard library only — no deps. Run with: node server.mjs
 
@@ -52,7 +51,7 @@ const server = createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify({
       ok: true,
-      app: 'thehauntedbrocoli',
+      app: 'the-comb',
       version: VERSION,
       host: os.hostname(),
       ip: primaryIp(),
@@ -88,5 +87,5 @@ const server = createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`[thehauntedbrocoli v${VERSION}] listening on http://${HOST}:${PORT} (ip ${primaryIp()})`);
+  console.log(`[the-comb v${VERSION}] listening on http://${HOST}:${PORT} (ip ${primaryIp()})`);
 });
