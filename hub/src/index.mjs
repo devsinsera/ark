@@ -1418,18 +1418,26 @@ function shQuote(s) {
   return "'" + String(s).replaceAll("'", "'\\''") + "'";
 }
 
-// Launcher homepage — served at /launcher. Source of truth is the
-// The Comb app at apps/the-comb/public/index.html;
-// the Hub reads that file at request time so there's no drift between
-// Mac preview and the Pi kiosk.
+// Launcher homepage — served at /launcher. Source of truth is The Comb
+// on the USB Stick (/Volumes/Stick/the-comb/public/index.html). The
+// Comb intentionally lives outside this repo so it can be edited
+// independently; the Hub reads the file at request time. If the Stick
+// isn't plugged in, fall back to the publicly hosted copy at
+// sinsera.co/the-comb/.
 function renderLauncherHtml() {
-  const appHtml = path.join(REPO_ROOT, 'apps', 'the-comb', 'public', 'index.html');
-  if (existsSync(appHtml)) {
-    return readFileSync(appHtml, 'utf8');
+  const candidates = [
+    '/Volumes/Stick/the-comb/public/index.html',
+    process.env.THE_COMB_PATH ? path.join(process.env.THE_COMB_PATH, 'public', 'index.html') : null,
+  ].filter(Boolean);
+  for (const p of candidates) {
+    if (existsSync(p)) return readFileSync(p, 'utf8');
   }
   return `<!doctype html><meta charset="utf-8"><title>Launcher</title>
 <p style="font:14px/1.6 ui-monospace,Menlo,monospace;color:#cbd5e1;background:#060a10;padding:30px">
-TheHauntedBrocoli launcher source not found at <code>${appHtml}</code>.</p>`;
+The Comb source not on the USB Stick.<br>
+Plug in <code>/Volumes/Stick</code> with <code>the-comb/public/index.html</code>,
+or set <code>THE_COMB_PATH</code>, or use the public version at
+<a style="color:#22d3ee" href="https://sinsera.co/the-comb/">sinsera.co/the-comb/</a>.</p>`;
 }
 
 // Find this host's primary LAN IPv4. Best-effort — picks the first

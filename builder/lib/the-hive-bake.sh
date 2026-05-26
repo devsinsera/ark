@@ -63,8 +63,14 @@ docker run --rm --privileged \
     losetup -d "$LOOP"
   '
 
-APP_DIR="$REPO_ROOT/apps/the-comb"
-[ -d "$APP_DIR" ] || { echo "ERROR: The Comb app not found at $APP_DIR" >&2; exit 1; }
+# The Comb lives outside the Ark repo — on the USB Stick by default.
+# Override with THE_COMB_PATH env var if you keep it elsewhere.
+APP_DIR="${THE_COMB_PATH:-/Volumes/Stick/the-comb}"
+if [ ! -d "$APP_DIR" ]; then
+  echo "ERROR: The Comb source not found at $APP_DIR." >&2
+  echo "       Plug in the Stick USB, or export THE_COMB_PATH=/path/to/the-comb" >&2
+  exit 1
+fi
 
 echo "[the-hive-bake] mounting + writing customizations..."
 docker run --rm --privileged \
