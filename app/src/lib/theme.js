@@ -1,62 +1,69 @@
-// Ark's visual tokens. Carries forward the Sinsera dark-on-black
-// palette but swaps the brand accent from orange to cyan/teal so it
-// reads as "a sibling app, not Sinsera Core". Pi Kiosk Builder needs
-// to feel slightly tech-utility (LED-cyan) rather than editorial.
+// Ark's visual tokens — Hellgate palette, matched to the new Sinsera Core.
+// Oxblood, ember, bone, candle gold. Cinzel + Crimson Text + Share Tech Mono.
+//
+// Re-themed 2026-05-27. Token KEY names (accent, gold, bgPrimary, etc.) are
+// preserved so every component that references COLORS.<name> keeps working
+// without component-level edits.
 
 export const COLORS = {
-  // Surfaces
-  bgPrimary:    '#0a0a0a',
-  bgCard:       'rgba(6, 182, 212, 0.06)',
-  bgPanel:      '#0F1620',
+  // Surfaces — dark, blood-tinted
+  bgPrimary:    '#0a0005',                  // matches Sinsera Core --background
+  bgCard:       'rgba(192, 57, 43, 0.06)',  // blood-wash card
+  bgPanel:      '#110008',                  // matches --card
   bgHover:      'rgba(255, 255, 255, 0.05)',
-  bgActive:     'rgba(6, 182, 212, 0.14)',
+  bgActive:     'rgba(192, 57, 43, 0.14)',
 
-  // Borders
-  border:       '#1B2030',
-  borderStrong: '#2A3040',
+  // Borders — dried-blood lines
+  border:       'rgba(139, 0, 0, 0.35)',
+  borderStrong: 'rgba(139, 0, 0, 0.55)',
 
-  // Text
-  textPrimary:  '#ECE7DA',
-  textSecondary:'#B6BBC9',
-  textMuted:    '#7C8499',
+  // Text — bone on dark
+  textPrimary:  '#e8d5c4',
+  textSecondary:'#c9a882',
+  textMuted:    '#7a5c4a',
 
-  // Accent — cyan-teal "tech LED" family
-  accent:       '#06B6D4',
-  accentBright: '#22D3EE',
-  accentDeep:   '#0E7490',
-  accentBorder: 'rgba(6, 182, 212, 0.45)',
+  // Accent — blood / ember
+  accent:       '#c0392b',                  // primary blood
+  accentBright: '#ff4500',                  // ember
+  accentDeep:   '#8b0000',                  // deep oxblood
+  accentBorder: 'rgba(192, 57, 43, 0.45)',
 
-  // Kept as a legacy alias — some carry-over code references COLORS.gold;
-  // map it to the new accent so nothing renders the wrong hue.
-  gold:         '#06B6D4',
-  goldBorder:   'rgba(6, 182, 212, 0.45)',
+  // Legacy alias kept for components that reference COLORS.gold — maps
+  // to the same blood accent so nothing renders the wrong hue.
+  gold:         '#c0392b',
+  goldBorder:   'rgba(192, 57, 43, 0.45)',
 
-  // Status
+  // Sigil / candle highlight (used by some headers + status dots)
+  candle:       '#d4a017',
+
+  // Status — kept readable on dark; tuned slightly for the new palette
   success:      '#22c55e',
   warning:      '#F5B45A',
   error:        '#EF6F5C',
-  info:         '#7BB6D9',
+  info:         '#c0392b',
 };
 
-export const FONT_HEADING = '"Cormorant Garamond", Georgia, serif';
-export const FONT_BODY    = '"Outfit", -apple-system, BlinkMacSystemFont, sans-serif';
-export const FONT_MONO    = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
+// Font stack — mirrors Sinsera Core's "infernal interface" set.
+export const FONT_HEADING = '"Cinzel Decorative", "Cinzel", "Cormorant Garamond", Georgia, serif';
+export const FONT_BODY    = '"Crimson Text", "Cormorant Garamond", Georgia, serif';
+export const FONT_MONO    = '"Share Tech Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
 
 export const btnPrimary = (extra = {}) => ({
   padding: '0.6rem 1.1rem',
   background: `linear-gradient(135deg, ${COLORS.accentDeep} 0%, ${COLORS.accent} 100%)`,
   border: `1px solid ${COLORS.accentBorder}`,
-  borderRadius: '0.5rem',
-  color: '#0a0a0a',
-  fontWeight: 700,
-  fontSize: '0.875rem',
-  fontFamily: FONT_BODY,
-  letterSpacing: '0.02em',
+  borderRadius: '0.25rem',
+  color: COLORS.textPrimary,
+  fontWeight: 600,
+  fontSize: '0.78rem',
+  fontFamily: FONT_MONO,
+  letterSpacing: '0.18em',
+  textTransform: 'uppercase',
   cursor: 'pointer',
   display: 'inline-flex',
   alignItems: 'center',
   gap: 8,
-  transition: 'transform 0.12s ease, box-shadow 0.2s ease, opacity 0.2s ease',
-  boxShadow: '0 1px 0 rgba(255,255,255,0.08) inset, 0 8px 18px rgba(6,182,212,0.18)',
+  transition: 'transform 0.12s ease, box-shadow 0.2s ease, filter 0.15s ease, opacity 0.2s ease',
+  boxShadow: '0 1px 0 rgba(255, 200, 180, 0.18) inset, 0 0 18px rgba(192, 57, 43, 0.35)',
   ...extra,
 });
