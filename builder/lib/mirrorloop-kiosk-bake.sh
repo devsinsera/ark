@@ -304,6 +304,7 @@ if [[ -z "\\\$DISPLAY" && \\\$(tty) == /dev/tty1 ]]; then
 fi
 BP
 chown mirror:mirror /home/mirror/.bash_profile
+chown mirror:mirror /opt/mirror-loop/.env 2>/dev/null || true  # renderer runs as 'mirror' — must read creds
 touch /var/log/mirror-loop.log
 chown mirror:mirror /var/log/mirror-loop.log
 

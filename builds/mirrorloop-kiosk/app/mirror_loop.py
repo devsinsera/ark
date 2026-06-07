@@ -667,17 +667,38 @@ def cinematic_filter(frame, vignette, alpha, beta):
 # ══════════════════════════════════════════════════════════════════
 
 def open_camera(index, w, h):
-    cap = cv2.VideoCapture(index)
-    if not cap.isOpened():
-        raise RuntimeError(
-            f"Cannot open camera (index={index}). "
-            "Check CAMERA_INDEX or connections."
-        )
+    # Non-fatal: returns None if the camera isn't present (e.g. C920 unplugged)
+    # so the renderer can show a standby screen and keep retrying instead of
+    # exiting (which would drop the framebuffer back to the boot console).
+    try:
+        cap = cv2.VideoCapture(index)
+    except Exception:
+        return None
+    if not cap or not cap.isOpened():
+        try: cap.release()
+        except Exception: pass
+        return None
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  w)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
     cap.set(cv2.CAP_PROP_FPS,          TARGET_FPS)
     cap.set(cv2.CAP_PROP_BUFFERSIZE,   1)
     return cap
+
+
+_standby_font = None
+def draw_standby(screen, w, h, msg: str) -> None:
+    """Fullscreen 'waiting for camera' screen so the TV never shows the console
+    when the C920 is absent. pygame keeps owning the framebuffer."""
+    global _standby_font
+    if _standby_font is None:
+        pygame.font.init()
+        _standby_font = pygame.font.Font(None, max(18, h // 12))
+    screen.fill((6, 0, 8))
+    t1 = _standby_font.render("MIRROR LOOP", True, (140, 20, 30))
+    t2 = pygame.font.Font(None, max(12, h // 24)).render(msg, True, (120, 120, 120))
+    screen.blit(t1, t1.get_rect(center=(w // 2, h // 2 - h // 12)))
+    screen.blit(t2, t2.get_rect(center=(w // 2, h // 2 + h // 14)))
+    pygame.display.flip()
 
 
 def init_display(w, h):
@@ -743,10 +764,13 @@ def run(cfg: "InstallationConfig" = None) -> None:  # type: ignore[assignment]
         )
     else:
         motion = _FallbackMotionDetector(MOTION_THRESHOLD, MOTION_BLUR_K)
-    cap      = open_camera(CAMERA_INDEX, W, H)
+    # Claim the display FIRST so the framebuffer is ours immediately (no console
+    # flash), then acquire the camera non-fatally (standby + retry if absent).
     screen   = init_display(W, H)
     clock    = pygame.time.Clock()
     surface  = pygame.Surface((W, H))
+    cap      = open_camera(CAMERA_INDEX, W, H)
+    _last_cam_try = time.monotonic()
 
     sm = StateMachine(buf, glitch, audio, motion, W, H)
 
@@ -819,10 +843,24 @@ def run(cfg: "InstallationConfig" = None) -> None:  # type: ignore[assignment]
                     if event.key == pygame.K_d:
                         sm.force_next()
 
+            # ── Camera (re)acquire + standby ─────────────────────
+            # No camera yet (e.g. C920 unplugged): show standby + retry every 3s.
+            if cap is None:
+                if now - _last_cam_try > 3.0:
+                    cap = open_camera(CAMERA_INDEX, W, H)
+                    _last_cam_try = now
+                draw_standby(screen, W, H, "waiting for camera…")
+                clock.tick(TARGET_FPS)
+                continue
+
             # ── Capture ──────────────────────────────────────────
             ret, raw = cap.read()
             if not ret:
-                print("[Warning] Frame grab failed", flush=True)
+                # Camera dropped mid-run — release and fall back to standby.
+                print("[Warning] Frame grab failed — camera dropped, retrying", flush=True)
+                try: cap.release()
+                except Exception: pass
+                cap = None
                 continue
 
             # Base cinematic filter (mirror + vignette + base contrast)
@@ -866,7 +904,9 @@ def run(cfg: "InstallationConfig" = None) -> None:  # type: ignore[assignment]
             except Exception: pass
         audio.stop_audio()
         motion.stop()
-        cap.release()
+        if cap is not None:
+            try: cap.release()
+            except Exception: pass
         if sm._orchestrator:
             sm._orchestrator.cleanup()
         if net_sync:
