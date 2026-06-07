@@ -31,6 +31,7 @@ for try in 1 2 3; do
        xserver-xorg xserver-xorg-input-libinput xinit \
        x11-xserver-utils \
        openbox \
+       onboard \
        unclutter \
        fonts-liberation \
        ca-certificates; then
@@ -43,6 +44,40 @@ if [ "$APT_OK" != 1 ]; then
   exit 1
 fi
 
+# ── 1a. Ark standard kiosk fixes (canonical: builder/lib/kiosk-fixes.sh) ──
+# Backported 2026-06-07. Mask the RPi-OS first-boot user wizard (the
+# "which username would you like to change?" box) + set WLAN country and an
+# rfkill-unblock boot service (harmless on Pi 5, essential on Zero 2 W).
+step "Ark fixes — mask first-boot wizard + WiFi country/rfkill-unblock"
+systemctl disable userconfig.service 2>/dev/null || true
+systemctl mask    userconfig.service 2>/dev/null || true
+systemctl disable userconf.service   2>/dev/null || true
+systemctl mask    userconf.service   2>/dev/null || true
+raspi-config nonint do_wifi_country AU 2>/dev/null || true
+cat > /usr/local/sbin/ark-wifi-unblock.sh <<'UNBLK'
+#!/bin/bash
+raspi-config nonint do_wifi_country AU 2>/dev/null || true
+rfkill unblock wifi 2>/dev/null || true
+rfkill unblock all  2>/dev/null || true
+nmcli radio wifi on 2>/dev/null || true
+nmcli con up preconfigured 2>/dev/null || true
+exit 0
+UNBLK
+chmod +x /usr/local/sbin/ark-wifi-unblock.sh
+cat > /etc/systemd/system/ark-wifi-unblock.service <<'UNBSVC'
+[Unit]
+Description=Ark: set WLAN country + rfkill-unblock WiFi
+After=NetworkManager.service
+Wants=NetworkManager.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ark-wifi-unblock.sh
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+UNBSVC
+systemctl enable ark-wifi-unblock.service 2>/dev/null || true
+
 # Resolve chromium binary (Debian Trixie has both 'chromium' + 'chromium-browser' names)
 CHROMIUM_BIN=""
 for cand in /usr/bin/chromium /usr/bin/chromium-browser; do
@@ -50,6 +85,31 @@ for cand in /usr/bin/chromium /usr/bin/chromium-browser; do
 done
 [ -z "$CHROMIUM_BIN" ] && CHROMIUM_BIN="/usr/bin/chromium"
 echo "chromium binary: $CHROMIUM_BIN"
+
+# ── 1b. Pi 5 KMS display fix + locale ──
+step "Pi 5 KMS display fix + locale"
+# Pi 5 exposes two DRM nodes: card0 = v3d (render-only, no outputs),
+# card1 = the display (vc4 KMS). Xorg autoconfig otherwise grabs the legacy
+# fbdev driver (fatal: "Cannot run in framebuffer mode") or probes card0
+# ("no screens found"). Remove fbdev and pin modesetting to the display card.
+apt-get purge -y xserver-xorg-video-fbdev 2>/dev/null || true
+mkdir -p /etc/X11/xorg.conf.d
+cat > /etc/X11/xorg.conf.d/99-vc4-kms.conf <<'EOF'
+# Pi 5: force the KMS modesetting driver on the display node (card1).
+# NOTE: DRM card numbering is usually stable (v3d=card0, display=card1) but
+# not guaranteed across firmware updates — if the screen goes black after an
+# update, check which /dev/dri/cardN has connectors and update kmsdev.
+Section "Device"
+  Identifier "Pi5-KMS"
+  Driver     "modesetting"
+  Option     "kmsdev" "/dev/dri/card1"
+EndSection
+EOF
+# en_AU.UTF-8 is referenced by the base image but never generated → the
+# "Cannot set LC_* to default locale: No such file or directory" errors.
+sed -i 's/^# *en_AU.UTF-8 UTF-8/en_AU.UTF-8 UTF-8/' /etc/locale.gen 2>/dev/null || true
+locale-gen 2>/dev/null || true
+update-locale LANG=en_AU.UTF-8 2>/dev/null || true
 
 # ── 2. kiosk user with tty1 autologin ──
 step "kiosk user + autologin"
@@ -61,7 +121,13 @@ if ! id kiosk >/dev/null 2>&1; then
 fi
 
 mkdir -p /etc/systemd/system/getty@tty1.service.d
-cat > /etc/systemd/system/getty@tty1.service.d/ark-autologin.conf <<EOF
+# The base raspios image ships its own autologin.conf for the default user.
+# systemd reads drop-ins alphabetically and the LAST ExecStart wins, so a
+# stray "autologin.conf" (default user) beats "ark-autologin.conf" (kiosk).
+# Remove any pre-existing drop-in and OWN the canonical filename so the kiosk
+# user reliably autologins on tty1.
+rm -f /etc/systemd/system/getty@tty1.service.d/ark-autologin.conf
+cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf <<EOF
 [Service]
 ExecStart=
 ExecStart=-/sbin/agetty --autologin kiosk --noclear %I \$TERM
@@ -92,6 +158,22 @@ xset -dpms
 xset s off
 xset s noblank
 unclutter -idle 0.1 -root &
+# On-screen keyboard — ONLY when NO physical keyboard is attached. A real
+# keyboard wins; onboard is the touchscreen fallback for the sinsera.co login.
+# USB/BT keyboards create a /dev/input/by-path *-event-kbd node.
+if ! ls /dev/input/by-path/*-event-kbd >/dev/null 2>&1; then
+  gsettings set org.onboard.auto-show enabled true 2>/dev/null || true
+  gsettings set org.onboard layout 'Compact' 2>/dev/null || true
+  onboard &
+fi
+# Auto-scale the UI to the detected monitor: 4K -> 2x, ~1440p -> 1.5x,
+# 1080p and below -> 1x. Native resolution is kept (crisp); only page scale
+# changes, so the kiosk is readable on a big TV or the 18.5" touchscreen.
+WIDTH=\$(xrandr 2>/dev/null | awk '/\*/{print \$1}' | head -1 | cut -dx -f1)
+SCALE=1
+if [ "\${WIDTH:-0}" -ge 3000 ]; then SCALE=2
+elif [ "\${WIDTH:-0}" -ge 2400 ]; then SCALE=1.5
+fi
 exec ${CHROMIUM_BIN} \\
   --kiosk \\
   --no-sandbox \\
@@ -104,6 +186,7 @@ exec ${CHROMIUM_BIN} \\
   --autoplay-policy=no-user-gesture-required \\
   --no-first-run \\
   --start-fullscreen \\
+  --force-device-scale-factor=\$SCALE \\
   https://sinsera.co/
 EOF
 chmod +x /home/kiosk/.config/openbox/autostart

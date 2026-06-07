@@ -1,0 +1,41 @@
+#!/bin/bash
+# ark — super-simple front-end to the Ark image bakers.
+#
+#   ./ark profiles          list bakeable profiles
+#   ./ark config            create + edit ~/.ark/ark.conf (the one editable section)
+#   ./ark bake <profile>    build that profile's image → Dev-Sinsera/Builds/
+#
+# Edit-then-build: `./ark config` to set hostname / WiFi / WireGuard wiretunnel /
+# per-profile values, then `./ark bake mirrorloop-kiosk`.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+LIB="$ROOT/builder/lib"
+
+case "${1:-}" in
+  profiles|list|ls)
+    echo "Bakeable profiles:"
+    ls -1 "$LIB" 2>/dev/null | sed -n 's/-bake\.sh$//p' | sed 's/^/  - /'
+    ;;
+  config)
+    mkdir -p "$HOME/.ark"
+    if [ ! -f "$HOME/.ark/ark.conf" ]; then
+      cp "$ROOT/ark.conf.example" "$HOME/.ark/ark.conf"
+      echo "created ~/.ark/ark.conf from template"
+    fi
+    "${EDITOR:-nano}" "$HOME/.ark/ark.conf"
+    ;;
+  bake)
+    P="${2:-}"
+    [ -n "$P" ] || { echo "usage: ark bake <profile>  (see './ark profiles')"; exit 2; }
+    BS="$LIB/${P}-bake.sh"
+    [ -x "$BS" ] || { echo "no baker for '$P' at $BS"; exit 1; }
+    echo "→ baking $P (config: ${HOME}/.ark/ark.conf)…"
+    exec "$BS"
+    ;;
+  *)
+    echo "ark — Ark device image builder"
+    echo "  ./ark profiles        list profiles"
+    echo "  ./ark config          edit ~/.ark/ark.conf (values baked into images)"
+    echo "  ./ark bake <profile>  build → Dev-Sinsera/Builds/"
+    ;;
+esac
