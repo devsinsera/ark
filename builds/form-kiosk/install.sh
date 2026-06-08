@@ -117,9 +117,11 @@ systemctl enable getty@tty1.service   # auto-start unreliable on raspios → ena
 cat > /usr/local/bin/form-kiosk-launch.sh <<KL
 #!/bin/bash
 export XDG_RUNTIME_DIR=/run/user/\$(id -u)
-export WLR_DRM_NO_MODIFIERS=1
-# cog flags: kiosk-ish single-window WPE; cage forces fullscreen.
-exec cage -d -- cog -P drm "$KIOSK_URL" 2>/var/log/form-kiosk.log
+export LIBSEAT_BACKEND=logind
+# cog runs as a WAYLAND CLIENT of cage. Do NOT use -P drm — that makes cog fight
+# cage for DRM master and every page-flip is denied (black screen). cage is the
+# sole DRM master; cog renders into it.
+exec cage -d -- cog "$KIOSK_URL" 2>>/var/log/form-kiosk.log
 KL
 chmod 755 /usr/local/bin/form-kiosk-launch.sh
 # Start the kiosk from the tty1 login shell (real seat/VT → DRM works).
