@@ -59,6 +59,14 @@ try:
 except ImportError:
     MOTION_ENGINE_AVAILABLE = False
     print("[Warning] motion_engine.py not found — using basic MotionDetector.")
+    # Fallbacks for the camera-only build: detect_motion + trigger_experience
+    # normally come from motion_engine. The built-in _FallbackMotionDetector.tick
+    # returns a _FallbackResult with .is_trigger.
+    def detect_motion(engine, frame, dt):
+        return engine.tick(frame, dt)
+    def trigger_experience(sm, result):
+        if getattr(result, "is_trigger", False):
+            sm.trigger()
 
 # config_manager.py lives alongside this file
 try:
@@ -112,6 +120,10 @@ _DEFAULT_CAPTURE_OFFSET  = 2.5
 # them via config_manager — so standalone (no config_manager, no motion_engine)
 # the original NameError'd. Define them here as the camera-only fallback values
 # used by _FallbackMotionDetector and the startup banner. PIR is OFF.
+# open_camera() reads TARGET_FPS as a module global (run() also sets a local of
+# the same name for itself). Only bites once a camera is actually present (the
+# cap.set lines run), which is why it surfaced only after the C920 was plugged in.
+TARGET_FPS           = _DEFAULT_TARGET_FPS
 MOTION_THRESHOLD     = 6.0     # _FallbackMotionDetector: mean frame-diff trigger
 MOTION_BLUR_K        = 21      # gaussian blur kernel (odd)
 MOTION_HYSTERESIS    = 3
@@ -862,6 +874,12 @@ def run(cfg: "InstallationConfig" = None) -> None:  # type: ignore[assignment]
                 except Exception: pass
                 cap = None
                 continue
+
+            # The camera may ignore the requested size (e.g. C920 hands back
+            # 640x360 when we asked for 480x360). Force every frame to the
+            # configured W×H so the vignette/effects arrays always broadcast.
+            if raw.shape[1] != W or raw.shape[0] != H:
+                raw = cv2.resize(raw, (W, H))
 
             # Base cinematic filter (mirror + vignette + base contrast)
             processed = cinematic_filter(
