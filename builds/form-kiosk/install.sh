@@ -37,6 +37,7 @@ step "mask first-boot user wizard"
 systemctl disable userconfig.service 2>/dev/null; systemctl mask userconfig.service 2>/dev/null
 systemctl disable userconf.service 2>/dev/null; systemctl mask userconf.service 2>/dev/null
 rm -f /etc/systemd/system/getty@tty1.service.d/autologin.conf 2>/dev/null
+systemctl disable cloud-init cloud-config cloud-final cloud-init-local cloud-init-main 2>/dev/null; mkdir -p /etc/cloud; touch /etc/cloud/cloud-init.disabled 2>/dev/null
 
 step "WiFi country + rfkill-unblock boot service"
 raspi-config nonint do_wifi_country AU 2>/dev/null
@@ -111,6 +112,7 @@ cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf <<G1
 ExecStart=
 ExecStart=-/sbin/agetty --autologin kiosk --noclear %I \$TERM
 G1
+systemctl enable getty@tty1.service   # auto-start unreliable on raspios → enable explicitly
 # Launcher: cage runs ONE app fullscreen on DRM; cog is the WPE browser.
 cat > /usr/local/bin/form-kiosk-launch.sh <<KL
 #!/bin/bash

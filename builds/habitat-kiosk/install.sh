@@ -38,6 +38,7 @@ step "mask first-boot user wizard (the username box)"
 systemctl disable userconfig.service 2>/dev/null; systemctl mask userconfig.service 2>/dev/null
 systemctl disable userconf.service 2>/dev/null; systemctl mask userconf.service 2>/dev/null
 rm -f /etc/systemd/system/getty@tty1.service.d/autologin.conf 2>/dev/null
+systemctl disable cloud-init cloud-config cloud-final cloud-init-local cloud-init-main 2>/dev/null; mkdir -p /etc/cloud; touch /etc/cloud/cloud-init.disabled 2>/dev/null
 
 step "WiFi country + rfkill-unblock boot service"
 raspi-config nonint do_wifi_country AU 2>/dev/null
@@ -113,6 +114,7 @@ cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf <<G1
 ExecStart=
 ExecStart=-/sbin/agetty --autologin kiosk --noclear %I \$TERM
 G1
+systemctl enable getty@tty1.service   # auto-start unreliable on raspios → enable explicitly
 printf 'if [[ -z "$DISPLAY" && $(tty) == /dev/tty1 ]]; then exec startx; fi\n' > /home/kiosk/.bash_profile
 printf '#!/bin/sh\nexec openbox-session\n' > /home/kiosk/.xinitrc; chmod +x /home/kiosk/.xinitrc
 mkdir -p /home/kiosk/.config/openbox
