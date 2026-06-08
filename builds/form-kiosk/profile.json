@@ -1,0 +1,16 @@
+{
+  "profile_id": "form-kiosk",
+  "version": 1,
+  "category": "raspberry-pi-devices",
+  "name": "Form Kiosk (Pi Zero 2 W → sinsera.co/form on the Bravia 75\")",
+  "description": "Light display-only kiosk: a Pi Zero 2 W boots straight to https://sinsera.co/form/ on the Sony Bravia 75\" using cage (Wayland kiosk compositor) + cog (WPE WebKit) directly on DRM/KMS — no X, no Chromium (too heavy for the 512MB board). Output forced to 1080p. Standard fixes baked: wizard masked, WiFi country + rfkill-unblock, SSH key + NOPASSWD sudo, 1G swap, locale. WiFi.",
+  "supported_hardware": ["pi-zero-2-w", "pi-3", "pi-4"],
+  "base_image": "raspios_lite_arm64_latest.img.xz",
+  "preconfigured": {
+    "hostname": "form-kiosk",
+    "url": "https://sinsera.co/form/",
+    "browser": "cage + cog (WPE on DRM), forced 1080p",
+    "ssh": "peta@form-kiosk.local", "wifi": "from ~/.ark/wifi.env"
+  },
+  "notes": ["UNVERIFIED on hardware. SSH baked so the cage/cog launcher can be tuned live (/usr/local/bin/form-kiosk-launch.sh, log at /var/log/form-kiosk.log).", "If cog -P drm fails, fall back to a Wayland platform under cage or surf."]
+}

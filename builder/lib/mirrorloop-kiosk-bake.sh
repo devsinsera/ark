@@ -27,7 +27,7 @@ OUT_DIR="$PROFILE_DIR/out"
 OUT_IMG="$OUT_DIR/ark-built.img"
 SRC_XZ="$REPO_ROOT/Os/raspios_lite_arm64_latest.img.xz"
 BUILDS_DELIVER_DIR="/Users/petastockdale/Dev-Sinsera/Builds"
-DELIVER_NAME="mirrorloop-kiosk-$(date +%Y-%m-%d).img.xz"
+DELIVER_NAME="mirrorloop-kiosk-pizero2w.img"
 
 [ -f "$SRC_XZ" ] || { echo "ERROR: base image not found: $SRC_XZ" >&2; exit 1; }
 for f in mirror_loop.py telemetry.py run-mirror-loop.sh; do
@@ -379,8 +379,8 @@ xz -T 0 "$OUT_IMG"   # no -k: drop the uncompressed .img, keep only .xz
 
 mkdir -p "$BUILDS_DELIVER_DIR"
 # Single deliverable, per the builds-output-folder rule (no .sha256 sidecar).
-rm -f "$BUILDS_DELIVER_DIR/mirrorloop-kiosk-"*.img "$BUILDS_DELIVER_DIR/mirrorloop-kiosk.img" 2>/dev/null || true
-mv -f "$OUT_DIR/ark-built.img.xz" "$BUILDS_DELIVER_DIR/$DELIVER_NAME"
+rm -f "$BUILDS_DELIVER_DIR/mirrorloop-kiosk"-* "$BUILDS_DELIVER_DIR/mirrorloop-kiosk.img" 2>/dev/null || true
+mv -f "$OUT_IMG" "$BUILDS_DELIVER_DIR/$DELIVER_NAME"
 rm -f "$OUT_DIR/wg0.conf" 2>/dev/null || true   # don't leave the WG conf staged
 
 SZ=$(du -h "$BUILDS_DELIVER_DIR/$DELIVER_NAME" | awk '{print $1}')

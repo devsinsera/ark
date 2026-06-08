@@ -1,41 +1,35 @@
 #!/bin/bash
-# habitat-kiosk-bake.sh — fully self-contained Pi 5 image: same boot as the
-# Sinsera Pi (chromium → sinsera.co on the display) + Claude Code auto-running on
-# the HABITAT USB (tty2 + ttyd) + Build Agent feed. All session learnings baked
-# in (wizard-mask, WiFi rfkill, display auto-detect, screensaver, fan, SSH, etc.).
-# Native-arm64 chroot (Apple Silicon) runs apt/npm at native speed. SD boot, WiFi.
-#
-# Provisioning lives in builds/habitat-kiosk/install.sh (run in the chroot) — this
-# just stages files + secrets and orchestrates. Output → Dev-Sinsera/Builds/.
+# form-kiosk-bake.sh — light Pi Zero 2 W kiosk image: boots straight to
+# https://sinsera.co/form/ on the Bravia 75" via cage+cog (WPE on DRM, no X,
+# no Chromium), forced 1080p. All standard fixes baked. Native-arm64 chroot.
+# Provisioning is in builds/form-kiosk/install.sh. Output → Dev-Sinsera/Builds/.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-PROFILE_DIR="$REPO_ROOT/builds/habitat-kiosk"
+PROFILE_DIR="$REPO_ROOT/builds/form-kiosk"
 OUT_DIR="$PROFILE_DIR/out"
 OUT_IMG="$OUT_DIR/ark-built.img"
 SRC_XZ="$REPO_ROOT/Os/raspios_lite_arm64_latest.img.xz"
 BUILDS_DELIVER_DIR="/Users/petastockdale/Dev-Sinsera/Builds"
-DELIVER_NAME="habitat-kiosk-pi5-8gb.img"
+DELIVER_NAME="form-kiosk-pizero2w.img"
 
 [ -f "$SRC_XZ" ] || { echo "ERROR: base image not found: $SRC_XZ" >&2; exit 1; }
 [ -f "$PROFILE_DIR/install.sh" ] || { echo "ERROR: missing install.sh" >&2; exit 1; }
-mkdir -p "$OUT_DIR"; rm -rf "$PROFILE_DIR/app/__pycache__"
+mkdir -p "$OUT_DIR"
 
 SSH_PUBKEY=""; [ -f "$HOME/.ssh/id_ed25519.pub" ] && SSH_PUBKEY=$(cat "$HOME/.ssh/id_ed25519.pub")
 [ -n "$SSH_PUBKEY" ] || { echo "ERROR: ~/.ssh/id_ed25519.pub missing" >&2; exit 1; }
 WIFI_SSID=""; WIFI_KEY=""
 if [ -f "$HOME/.ark/wifi.env" ]; then set -a; source "$HOME/.ark/wifi.env"; set +a; : "${WIFI_SSID:=}"; : "${WIFI_KEY:=}"; fi
 [ -n "$WIFI_SSID" ] || echo "WARNING: no WiFi (~/.ark/wifi.env) — Pi will be unreachable on WiFi!"
-ENV_PROD="/Users/petastockdale/Dev-Sinsera/Sinsera Core/.env.production"
-ANON_KEY=""; [ -f "$ENV_PROD" ] && ANON_KEY=$(grep -E "^VITE_SUPABASE_ANON_KEY=" "$ENV_PROD" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '\r')
 
-echo "[habitat-bake] decompress base → $OUT_IMG"
+echo "[form-bake] decompress base → $OUT_IMG"
 xz -dck "$SRC_XZ" > "$OUT_IMG"
 
-echo "[habitat-bake] expand rootfs (+2600 MB for chromium + node + claude)"
+echo "[form-bake] expand rootfs (+1200 MB for cage/cog/WPE)"
 docker run --rm --privileged -v "$OUT_DIR:/baking" --entrypoint /bin/bash ark-builder:0.1 -c '
   set -e; IMG=/baking/ark-built.img
-  SZ=$(stat -c%s "$IMG"); truncate -s $((SZ + 2600*1024*1024)) "$IMG"
+  SZ=$(stat -c%s "$IMG"); truncate -s $((SZ + 1200*1024*1024)) "$IMG"
   START=$(parted -s "$IMG" unit s print | awk "\$1==2{print \$2}" | tr -d s)
   parted -s "$IMG" rm 2; parted -s "$IMG" unit s mkpart primary ${START}s 100%
   LOOP=$(losetup -fP --show "$IMG"); P2=${LOOP}p2
@@ -43,9 +37,9 @@ docker run --rm --privileged -v "$OUT_DIR:/baking" --entrypoint /bin/bash ark-bu
   e2fsck -fy "$P2" || true; resize2fs "$P2"; kpartx -d "$LOOP" 2>/dev/null || true; losetup -d "$LOOP"
 '
 
-echo "[habitat-bake] chroot provisioning (apt + node + claude + users + services)…"
+echo "[form-bake] chroot provisioning (cage + cog + fixes)…"
 docker run --rm --privileged -v "$OUT_DIR:/baking" -v "$PROFILE_DIR:/profile:ro" \
-  -e SSH_PUBKEY="$SSH_PUBKEY" -e WIFI_SSID="$WIFI_SSID" -e WIFI_KEY="$WIFI_KEY" -e ANON_KEY="$ANON_KEY" \
+  -e SSH_PUBKEY="$SSH_PUBKEY" -e WIFI_SSID="$WIFI_SSID" -e WIFI_KEY="$WIFI_KEY" \
   --entrypoint /bin/bash ark-builder:0.1 -c '
   set -e; IMG=/baking/ark-built.img
   LOOP=$(losetup -fP --show "$IMG"); P1=${LOOP}p1; P2=${LOOP}p2
@@ -54,32 +48,30 @@ docker run --rm --privileged -v "$OUT_DIR:/baking" -v "$PROFILE_DIR:/profile:ro"
   mount --bind /dev "$R/dev"; mount -t devpts none "$R/dev/pts" 2>/dev/null || mount --bind /dev/pts "$R/dev/pts"
   mount -t proc none "$R/proc"; mount -t sysfs none "$R/sys"; cp /etc/resolv.conf "$R/etc/resolv.conf" 2>/dev/null || true
 
-  mkdir -p "$R/opt/habitat-kiosk"
-  cp /profile/install.sh "$R/opt/habitat-kiosk/install.sh"; chmod 755 "$R/opt/habitat-kiosk/install.sh"
-  cp -r /profile/app "$R/opt/habitat-kiosk/app"
-  cat > "$R/opt/habitat-kiosk/secrets.env" <<SEC
+  mkdir -p "$R/opt/form-kiosk"
+  cp /profile/install.sh "$R/opt/form-kiosk/install.sh"; chmod 755 "$R/opt/form-kiosk/install.sh"
+  cat > "$R/opt/form-kiosk/secrets.env" <<SEC
 SSH_PUBKEY="${SSH_PUBKEY}"
 WIFI_SSID="${WIFI_SSID}"
 WIFI_KEY="${WIFI_KEY}"
-ANON_KEY="${ANON_KEY}"
 SEC
-  chmod 600 "$R/opt/habitat-kiosk/secrets.env"
+  chmod 600 "$R/opt/form-kiosk/secrets.env"
 
   echo "[bake] running install.sh in chroot…"
-  chroot "$R" /bin/bash /opt/habitat-kiosk/install.sh
-  rm -f "$R/opt/habitat-kiosk/secrets.env" "$R/etc/resolv.conf"
+  chroot "$R" /bin/bash /opt/form-kiosk/install.sh
+  rm -f "$R/opt/form-kiosk/secrets.env" "$R/etc/resolv.conf"
 
   sync
   umount "$R/sys" "$R/proc" "$R/dev/pts" "$R/dev" "$R/boot/firmware" "$R" 2>/dev/null || true
   kpartx -d "$LOOP" 2>/dev/null || true; losetup -d "$LOOP"
-  echo "[habitat-bake] provisioning complete"
+  echo "[form-bake] provisioning complete"
 '
 
-echo "[habitat-bake] deliver uncompressed .img"
+echo "[form-bake] deliver uncompressed .img"
 : # deliver uncompressed .img (naming rule: <app>-kiosk-<pi>.img, no date)
 mkdir -p "$BUILDS_DELIVER_DIR"
-rm -f "$BUILDS_DELIVER_DIR/habitat-kiosk"-* "$BUILDS_DELIVER_DIR/habitat-kiosk.img" 2>/dev/null || true
+rm -f "$BUILDS_DELIVER_DIR/form-kiosk"-* "$BUILDS_DELIVER_DIR/form-kiosk.img" 2>/dev/null || true
 mv -f "$OUT_IMG" "$BUILDS_DELIVER_DIR/$DELIVER_NAME"
 SZ=$(du -h "$BUILDS_DELIVER_DIR/$DELIVER_NAME" | awk '{print $1}')
-echo ""; echo "[habitat-bake] DONE — $BUILDS_DELIVER_DIR/$DELIVER_NAME ($SZ)"
-echo "  ssh: peta@habitat-kiosk.local · wifi: ${WIFI_SSID:-MISSING} · anon: $([ -n "$ANON_KEY" ] && echo present || echo MISSING)"
+echo ""; echo "[form-bake] DONE — $BUILDS_DELIVER_DIR/$DELIVER_NAME ($SZ)"
+echo "  url: https://sinsera.co/form/ · ssh: peta@form-kiosk.local · wifi: ${WIFI_SSID:-MISSING}"
