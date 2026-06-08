@@ -838,6 +838,14 @@ def run(cfg: "InstallationConfig" = None) -> None:  # type: ignore[assignment]
         f"  ESC / Q    : quit\n"
     )
 
+    # Optional: push frames to sinsera.co/mirrorloop (STREAM_TO_CLOUD=1).
+    try:
+        from frame_streamer import FrameStreamer
+        _streamer = FrameStreamer()
+    except Exception as _se:   # noqa: BLE001
+        _streamer = None
+        print(f"[stream] disabled: {_se}", flush=True)
+
     prev_time = time.monotonic()
 
     try:
@@ -905,6 +913,10 @@ def run(cfg: "InstallationConfig" = None) -> None:  # type: ignore[assignment]
             # ── State machine tick ────────────────────────────────
             display = sm.update(processed, dt)
 
+            # ── Cloud frame stream (best-effort, throttled in the streamer) ──
+            if _streamer is not None:
+                _streamer.offer(display)
+
             # ── Audio envelope update (very cheap — no decoding here)
             audio.update(dt)
 
@@ -920,6 +932,9 @@ def run(cfg: "InstallationConfig" = None) -> None:  # type: ignore[assignment]
             clock.tick(TARGET_FPS)
 
     finally:
+        if _streamer is not None:
+            try: _streamer.stop()
+            except Exception: pass
         if telemetry is not None:
             try: telemetry.stop()
             except Exception: pass
