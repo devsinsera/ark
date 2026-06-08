@@ -10,24 +10,19 @@ if ! ls /dev/input/by-path/*-event-kbd >/dev/null 2>&1; then
   onboard &
 fi
 
-# ── Display: AUTO-DETECT the connected monitor and drive it at its EDID-native
-# (preferred) mode. Fixes screens that boot at a low fallback — e.g. the Lenovo
-# 27" curved coming up at 1024x768 instead of its native 1920x1080.
-OUT=$(xrandr 2>/dev/null | awk '/ connected/{print $1; exit}')
-[ -n "$OUT" ] && xrandr --output "$OUT" --auto 2>/dev/null
-sleep 1
-Wn=$(xrandr 2>/dev/null | awk '/\*/{print $1}' | head -1 | cut -dx -f1)
-if [ "${Wn:-0}" -lt 1280 ] && [ -n "$OUT" ]; then sleep 2; xrandr --output "$OUT" --auto 2>/dev/null; fi
+# ── Display: auto-detect the connected screen, drive it at EDID-native mode,
+# and pick the optimal UI scale from the optimized display list
+# (/opt/kiosk/display-profiles.conf + kiosk-display.sh). Handles the Sony Bravia
+# 75"/65" (4K→2x), Lenovo 34" ultrawide (3440x1440→1.25x), Lenovo 27" curved &
+# GeeekPi 18.5" touch (1080p→1x), with a resolution fallback for anything else.
+if [ -x /opt/kiosk/kiosk-display.sh ]; then
+  SCALE=$(/opt/kiosk/kiosk-display.sh 2>/dev/null)
+fi
+[ -z "$SCALE" ] && SCALE=1
 
 # ── Screensaver: logo on black after 5 min idle (clears on activity).
 [ -x /opt/kiosk/kiosk-screensaver.sh ] && /opt/kiosk/kiosk-screensaver.sh &
 
-# ── Optimized scale list: 4K -> 2x, ~1440p/QHD -> 1.5x, 1080p & below -> 1x.
-WIDTH=$(xrandr 2>/dev/null | awk '/\*/{print $1}' | head -1 | cut -dx -f1)
-SCALE=1
-if [ "${WIDTH:-0}" -ge 3000 ]; then SCALE=2
-elif [ "${WIDTH:-0}" -ge 2400 ]; then SCALE=1.5
-fi
 exec /usr/bin/chromium \
   --kiosk --no-sandbox --noerrdialogs --disable-infobars \
   --disable-session-crashed-bubble --disable-features=Translate \
