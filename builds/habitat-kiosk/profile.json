@@ -1,0 +1,18 @@
+{
+  "profile_id": "habitat-kiosk",
+  "version": 1,
+  "category": "raspberry-pi-devices",
+  "name": "Habitat Kiosk (Pi 5 8GB — sinsera.co kiosk + Claude builds Habitat USB)",
+  "description": "Same boot as the Sinsera Pi (chromium fullscreen → https://sinsera.co/ on the display, EDID auto-detect + logo screensaver) PLUS Claude Code auto-running on a USB labelled HABITAT (tty2 console + ttyd web terminal) to continue building the Habitat app, with a Build Agent status feed to the dashboard. All session learnings baked: first-boot wizard masked, WiFi country + rfkill-unblock, cooling_fan, SSH key + NOPASSWD sudo, locale, swap. Pi 5 8GB, SD boot (no NVMe yet), PoE HAT, 18.5in touch first display, WiFi.",
+  "supported_hardware": ["pi-5-8gb", "pi-5-16gb", "pi-5-4gb"],
+  "base_image": "raspios_lite_arm64_latest.img.xz",
+  "preconfigured": {
+    "hostname": "habitat-kiosk",
+    "user": "peta (SSH-key, NOPASSWD sudo) + kiosk (chromium tty1) + Claude on tty2/ttyd",
+    "display": "chromium --kiosk https://sinsera.co/ on the 18.5in touch (auto-detect + scale + screensaver)",
+    "claude": "USB HABITAT auto-mount → claude --dangerously-skip-permissions in the Habitat app folder",
+    "ssh": "peta@habitat-kiosk.local", "wifi": "from ~/.ark/wifi.env",
+    "first_boot": "one-time `claude login` (in ttyd/tty2), then: continue the Habitat app"
+  },
+  "notes": ["UNVERIFIED on hardware. Needs the user to run `claude login` once.", "PoE fan needs the fan on the 4-pin header or a PoE HAT overlay (see sinsera-kiosk notes)."]
+}
