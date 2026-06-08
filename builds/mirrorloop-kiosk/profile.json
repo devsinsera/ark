@@ -1,0 +1,31 @@
+{
+  "profile_id":   "mirrorloop-kiosk",
+  "version":      1,
+  "category":     "raspberry-pi-devices",
+  "name":         "Mirror Loop Kiosk (Pi Zero 2 W + C920 → TV)",
+  "description":  "Pi OS Lite (64-bit) + a two-phase first-boot install that runs the DarkHaus Mirror Loop installation: a Pygame renderer showing the Logitech C920 feed with per-phase mirror/glitch/break/capture effects FULLSCREEN on an HDMI TV via SDL kmsdrm (no X, no Chromium — a 512MB Zero 2 W can't run Chromium well). Camera-only motion detection drives the DETECTION->MIRROR->DELAY->GLITCH->BREAK->CAPTURE->RESET state machine; telemetry.py posts heartbeats + sessions + phase events to the shared Supabase so the unit appears live on sinsera.co/mirrorloop. Test target: Pi Zero 2 WH on a Sony Bravia 65-inch.",
+  "supported_hardware": ["pi-zero-2-w", "pi-zero-2-wh", "pi-3b-plus", "pi-4-2gb"],
+  "base_image":         "raspios_lite_arm64_latest.img.xz",
+  "preconfigured": {
+    "hostname":      "mirrorloop-kiosk",
+    "user":          "peta (no password — SSH-key only, sudo NOPASSWD)",
+    "kiosk_user":    "mirror (auto-login on tty1, runs the Pygame renderer via SDL kmsdrm)",
+    "ssh":           "enabled, peta + root authorized_keys baked",
+    "wifi":          "from ~/.ark/wifi.env via NetworkManager nmconnection (Zero 2 W is WiFi-only)",
+    "app":           "/opt/mirror-loop/ (mirror_loop.py + telemetry.py + run-mirror-loop.sh)",
+    "env":           "/opt/mirror-loop/.env — anon key + email baked, MIRROR_PASSWORD BLANK (fill over SSH to enable telemetry)",
+    "display":       "C920 feed + effects, FULLSCREEN on HDMI (SDL kmsdrm, pygame SCALED upscales 480x360 render to TV native res)",
+    "tuning":        "_DEFAULT_RESOLUTION 480x360 @18fps, 3.0s buffer, swap bumped to 512MB — tuned down from Pi 5 defaults",
+    "install_log":   "/var/log/mirrorloop-kiosk-install.log; app log /var/log/mirror-loop.log"
+  },
+  "first_boot_sequence": [
+    "Phase 1 (~30s): firstrun.sh sets up peta user + SSH + WiFi + hostname. Reboots.",
+    "Phase 2 (~10-20 min on a Zero 2 W over WiFi): apt-installs python3-opencv + python3-pygame + numpy + requests + dotenv + SDL2; bumps swap; HDMI force-hotplug; creates 'mirror' user with tty1 autologin → run-mirror-loop.sh. Reboots.",
+    "Phase 3: tty1 autologin launches the Pygame renderer fullscreen on the TV; telemetry posts to sinsera.co/mirrorloop once MIRROR_PASSWORD is set."
+  ],
+  "notes": [
+    "UNVERIFIED ON HARDWARE: built without a Zero 2 W to test on. Likely needs on-Pi tuning over SSH (SDL kmsdrm display, C920 v4l2 index, motion threshold, fps).",
+    "MIRROR_PASSWORD ships BLANK by design — display runs immediately; telemetry stays off until you fill it.",
+    "Disabled for this unit: audio, ZINK printer, GPIO shredder, PIR sensor, config_manager (camera-only via the built-in fallback detector)."
+  ]
+}

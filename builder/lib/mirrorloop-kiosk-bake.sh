@@ -373,10 +373,7 @@ PLAN
     echo "[mirrorloop-kiosk-bake] chroot provisioning complete"
   '
 
-echo "[mirrorloop-kiosk-bake] compressing → .img.xz"
-rm -f "$OUT_DIR/ark-built.img.xz"
-xz -T 0 "$OUT_IMG"   # no -k: drop the uncompressed .img, keep only .xz
-
+echo "[mirrorloop-kiosk-bake] deliver uncompressed .img (naming rule: <app>-kiosk-<pi>.img, no date)"
 mkdir -p "$BUILDS_DELIVER_DIR"
 # Single deliverable, per the builds-output-folder rule (no .sha256 sidecar).
 rm -f "$BUILDS_DELIVER_DIR/mirrorloop-kiosk"-* "$BUILDS_DELIVER_DIR/mirrorloop-kiosk.img" 2>/dev/null || true

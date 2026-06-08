@@ -1,0 +1,17 @@
+[Unit]
+Description=Mirror Loop Kiosk phase-2 install (Python CV/Pygame + autostart)
+Documentation=https://sinsera.co/mirrorloop
+After=network-online.target time-sync.target
+Wants=network-online.target
+ConditionPathExists=/opt/mirrorloop-kiosk/install.sh
+
+[Service]
+Type=oneshot
+ExecStart=/opt/mirrorloop-kiosk/install.sh
+RemainAfterExit=yes
+TimeoutSec=2400
+StandardOutput=append:/var/log/mirrorloop-kiosk-install.log
+StandardError=append:/var/log/mirrorloop-kiosk-install.log
+
+[Install]
+WantedBy=multi-user.target
