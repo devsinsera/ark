@@ -17,7 +17,7 @@ apt-get install -y --no-install-recommends \
   chromium chromium-sandbox xserver-xorg xserver-xorg-input-libinput xinit \
   x11-xserver-utils openbox unclutter onboard feh xprintidle edid-decode \
   fonts-dejavu-core fonts-liberation ca-certificates curl \
-  nodejs npm tmux python3 python3-pip
+  nodejs npm tmux git python3 python3-pip
 CHROMIUM=/usr/bin/chromium; [ -x "$CHROMIUM" ] || CHROMIUM=/usr/bin/chromium-browser
 
 step "ttyd web terminal (arm64 binary)"
