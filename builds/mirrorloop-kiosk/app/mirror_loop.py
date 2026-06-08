@@ -552,7 +552,10 @@ class StateMachine:
         # Select source frame based on phase delay
         delay = PHASE_DELAY_S.get(name, 0.0)
         if delay > 0.0:
-            src = self._buf.get_delayed(delay) or raw_frame
+            # NOTE: `ndarray or raw_frame` raises "truth value ambiguous" — a
+            # delayed frame is a numpy array, so check for None explicitly.
+            _d = self._buf.get_delayed(delay)
+            src = _d if _d is not None else raw_frame
         else:
             src = raw_frame
 
