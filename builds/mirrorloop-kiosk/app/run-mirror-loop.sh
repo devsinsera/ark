@@ -10,7 +10,16 @@
 # Tune perf over SSH: edit _DEFAULT_RESOLUTION / _DEFAULT_TARGET_FPS in
 # mirror_loop.py, or the SDL vars below. Log: /var/log/mirror-loop.log
 
-export SDL_VIDEODRIVER=kmsdrm
+# HDMI out (kmsdrm) by default; MIRROR_HEADLESS=1 in .env → SDL dummy driver so
+# the renderer runs off-screen (no display) and only streams to the cloud — for
+# when nothing is plugged into HDMI. Read just that one key (don't source .env;
+# its values can contain spaces).
+MIRROR_HEADLESS=$(grep -E '^MIRROR_HEADLESS=' /opt/mirror-loop/.env 2>/dev/null | tail -1 | cut -d= -f2 | tr -dc '01')
+if [ "$MIRROR_HEADLESS" = "1" ]; then
+  export SDL_VIDEODRIVER=dummy
+else
+  export SDL_VIDEODRIVER=kmsdrm
+fi
 export SDL_AUDIODRIVER=dummy
 export PYGAME_HIDE_SUPPORT_PROMPT=1
 

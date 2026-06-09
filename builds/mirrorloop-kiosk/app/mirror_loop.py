@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 # ── stdlib ──────────────────────────────────────────────────────
+import os
 import sys
 import time
 import random
@@ -719,9 +720,17 @@ def draw_standby(screen, w, h, msg: str) -> None:
 def init_display(w, h):
     pygame.init()
     pygame.mouse.set_visible(False)
-    screen = pygame.display.set_mode(
-        (w, h), pygame.FULLSCREEN | pygame.NOFRAME | pygame.SCALED
-    )
+    # Headless (no HDMI): SDL dummy driver → render off-screen so the frame
+    # stream to sinsera.co/mirrorloop still works with nothing plugged in.
+    # FULLSCREEN/SCALED are kmsdrm-only; the dummy driver wants a plain surface.
+    headless = os.environ.get("SDL_VIDEODRIVER", "").lower() == "dummy"
+    if headless:
+        screen = pygame.display.set_mode((w, h))
+        print("[display] headless (SDL dummy) — off-screen render, cloud stream only", flush=True)
+    else:
+        screen = pygame.display.set_mode(
+            (w, h), pygame.FULLSCREEN | pygame.NOFRAME | pygame.SCALED
+        )
     pygame.display.set_caption("Mirror Loop")
     return screen
 
