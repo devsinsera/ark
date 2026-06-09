@@ -57,21 +57,13 @@ class _Handler(BaseHTTPRequestHandler):
         p = self.path.split("?")[0]
         if p == "/" or p == "/index.html":
             # snapshot-refresh (works everywhere incl. WPE WebKit/cog, which won't render MJPEG-in-img). /stream stays for chromium.
-            # Camera monitor + a discreet ☰ menu (deliberate 2-tap, so it can't be hit by accident like the old big button).
+            # Camera monitor + a plain BACK button (like the other pages) to exit to the dashboard.
             html = (b"<html><body style='margin:0;background:#000;overflow:hidden;font-family:sans-serif'>"
                     b"<img id=v style='width:100%;height:100vh;object-fit:contain'>"
-                    b"<div onclick=\"document.getElementById('m').style.display='flex'\" "
-                    b"style='position:fixed;top:12px;right:12px;width:50px;height:50px;border-radius:50%;"
-                    b"background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.35);color:#fff;"
-                    b"font-size:27px;text-align:center;line-height:50px;z-index:8'>&#9776;</div>"
-                    b"<div id=m style='display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:9;"
-                    b"flex-direction:column;align-items:center;justify-content:center;gap:20px'>"
-                    b"<a href='https://sinsera.co/?kiosk=1' style='color:#fff;background:#c0392b;padding:16px 36px;"
-                    b"border-radius:8px;text-decoration:none;font-size:20px'>Dashboard</a>"
-                    b"<a href='/' style='color:#fff;background:#333;padding:16px 36px;border-radius:8px;"
-                    b"text-decoration:none;font-size:20px'>Reload camera</a>"
-                    b"<div onclick=\"document.getElementById('m').style.display='none'\" "
-                    b"style='color:#999;padding:12px;font-size:18px'>&#10005; Close</div></div>"
+                    b"<a href=\"javascript:history.length>1?history.back():location.href='https://sinsera.co/?kiosk=1'\" "
+                    b"style='position:fixed;top:12px;left:12px;z-index:9;color:#e8d5c4;background:rgba(0,0,0,.6);"
+                    b"border:1px solid rgba(255,255,255,.35);padding:9px 18px;border-radius:6px;text-decoration:none;"
+                    b"font-size:13px;letter-spacing:2px'>&#8249; BACK</a>"
                     b"<script>var v=document.getElementById('v');function u(){v.src='/snapshot?'+Date.now();}"
                     b"v.onload=function(){setTimeout(u,80)};v.onerror=function(){setTimeout(u,500)};u();</script>"
                     b"</body></html>")
