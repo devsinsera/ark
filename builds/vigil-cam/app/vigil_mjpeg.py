@@ -75,6 +75,7 @@ class _Handler(BaseHTTPRequestHandler):
                     b"v.onload=function(){setTimeout(u,80)};v.onerror=function(){setTimeout(u,500)};u();</script>"
                     b"</body></html>")
             self.send_response(200); self.send_header("Content-Type", "text/html")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
             self.send_header("Content-Length", str(len(html))); self.end_headers(); self.wfile.write(html); return
         if p == "/snapshot":
             buf, _ = LATEST.wait_next(-1, 1.0)
