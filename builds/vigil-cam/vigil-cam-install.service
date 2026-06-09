@@ -1,0 +1,17 @@
+[Unit]
+Description=Vigil security camera phase-2 install (Python CV + headless daemon)
+Documentation=https://sinsera.co/vigil
+After=network-online.target time-sync.target
+Wants=network-online.target
+ConditionPathExists=/opt/vigil-cam/install.sh
+
+[Service]
+Type=oneshot
+ExecStart=/opt/vigil-cam/install.sh
+RemainAfterExit=yes
+TimeoutSec=2400
+StandardOutput=append:/var/log/vigil-cam-install.log
+StandardError=append:/var/log/vigil-cam-install.log
+
+[Install]
+WantedBy=multi-user.target

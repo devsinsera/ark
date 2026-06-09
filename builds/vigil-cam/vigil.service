@@ -1,0 +1,19 @@
+[Unit]
+Description=Vigil — headless security camera (C920 → LAN MJPEG + private cloud)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vigil
+SupplementaryGroups=video
+ExecStart=/opt/vigil/run-vigil.sh
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/vigil.log
+StandardError=append:/var/log/vigil.log
+# Headless camera — keep it lean.
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

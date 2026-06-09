@@ -1,0 +1,24 @@
+{
+  "profile_id":   "vigil-cam",
+  "version":      1,
+  "category":     "raspberry-pi-devices",
+  "name":         "Vigil Security Camera (Pi Zero 2 W + C920, headless)",
+  "description":  "Pi OS Lite 64-bit baked into a FULLY HEADLESS security camera — no display, no X, no pygame/SDL, no HDMI/LCD. Captures the Logitech C920, runs frame-diff motion detection, serves a full-rate LAN MJPEG stream (:8090/stream), and (once VIGIL_PASSWORD is set) uploads PRIVATE owner-only snapshots + motion events to sinsera.co/vigil. opencv-python-headless + numpy via pip; the daemon runs as the 'vigil' systemd service (Restart=always). Same plumbing as Mirror Loop, stripped to pure surveillance and hardened (private bucket, signed-URL only).",
+  "supported_hardware": ["pi-zero-2-w", "pi-zero-2-wh", "pi-3b-plus", "pi-4-2gb"],
+  "base_image":  "raspios_lite_arm64_latest.img.xz",
+  "preconfigured": {
+    "hostname":   "vigil-cam",
+    "user":       "peta (SSH-key only, sudo NOPASSWD)",
+    "service":    "vigil.service (User=vigil, video group) → /opt/vigil/run-vigil.sh",
+    "display":    "NONE — fully headless (gpu_mem=16)",
+    "lan":        "http://vigil-cam.local:8090/stream (full-rate MJPEG, LAN only)",
+    "cloud":      "PRIVATE owner-only frames + motion events to sinsera.co/vigil; VIGIL_PASSWORD BLANK by default (fill over SSH to enable)",
+    "env":        "/opt/vigil/.env — anon key + email baked; VIGIL_PASSWORD blank",
+    "tuning":     "640x480@15 capture, cloud 2fps (4 on motion), JPEG q75, frame-diff motion"
+  },
+  "notes": [
+    "UNVERIFIED ON HARDWARE — built without a Zero 2 W to test on; expect on-Pi tuning (C920 v4l2 index, motion threshold, fps).",
+    "Private by design: cloud frames go to a private Supabase bucket (owner RLS, signed URLs only). VIGIL_PASSWORD blank → cloud off, LAN MJPEG still works.",
+    "Headless: no HDMI/LCD output at all — it's a camera, not a display."
+  ]
+}

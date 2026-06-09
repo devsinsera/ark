@@ -42,3 +42,4 @@ builds/*/*.tar.gz
 
 # Build outputs — large .img files, not version-controlled.
 builds/*/out/
+builds/vigil-cam/out/
