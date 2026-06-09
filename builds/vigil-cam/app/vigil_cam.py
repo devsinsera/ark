@@ -19,6 +19,8 @@ import os
 import time
 import queue
 import threading
+import datetime
+import tempfile
 
 import cv2
 import numpy as np
@@ -39,6 +41,9 @@ MOTION_THRESH= float(os.environ.get("MOTION_THRESHOLD", "5.0"))   # mean abs dif
 MOTION_AREA  = float(os.environ.get("MOTION_MIN_AREA", "0.012"))  # frac of frame changed
 MOTION_COOLDOWN = float(os.environ.get("MOTION_COOLDOWN_S", "8")) # min secs between events
 HEARTBEAT_S  = int(os.environ.get("HEARTBEAT_S", "30"))
+RECORD_SECS  = int(os.environ.get("RECORD_SECS", "8"))            # clip length
+RECORD_ON_MOTION = os.environ.get("RECORD_ON_MOTION", "0") == "1" # auto-record motion clips
+RECORD_DIR   = os.environ.get("RECORD_DIR", "/opt/vigil/recordings")
 
 
 def open_camera():
@@ -70,12 +75,30 @@ def main() -> None:
             cloud.heartbeat(); time.sleep(HEARTBEAT_S)
     threading.Thread(target=beat, daemon=True).start()
 
+    # Background: poll the dashboard's "record" request (when cloud is on).
+    record_req = threading.Event()
+    def poll_req():
+        while True:
+            if cloud.poll_record_request():
+                record_req.set()
+            time.sleep(3)
+    threading.Thread(target=poll_req, daemon=True).start()
+
+    # Background recording uploader (off the capture thread).
+    def upload_rec(path, started, dur, kind):
+        try:
+            with open(path, "rb") as f:
+                cloud.upload_recording(f.read(), started, dur, kind)
+        except Exception:
+            pass
+
     cap = None
     prev_gray = None
     last_cloud = 0.0
     last_motion_event = 0.0
     hot_until = 0.0
     last_cam_try = 0.0
+    writer = None; rec_end = 0.0; rec_t0 = 0.0; rec_started = ""; rec_kind = "motion"; rec_path = ""
 
     while True:
         now = time.time()
@@ -134,6 +157,28 @@ def main() -> None:
                 last_cloud = now
                 try: upq.put_nowait(data)
                 except queue.Full: pass
+
+            # ── Recording: manual (dashboard) or motion (if enabled) ──
+            if writer is None and (record_req.is_set() or (RECORD_ON_MOTION and motion)):
+                rec_kind = "manual" if record_req.is_set() else "motion"; record_req.clear()
+                try:
+                    os.makedirs(RECORD_DIR, exist_ok=True)
+                    rec_started = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    rec_path = os.path.join(RECORD_DIR, rec_started.replace(":", "").replace("-", "")[:15] + ".mp4")
+                    writer = cv2.VideoWriter(rec_path, cv2.VideoWriter_fourcc(*"mp4v"), max(8, CAM_FPS), (W, H))
+                    rec_t0 = now; rec_end = now + RECORD_SECS
+                    print(f"[vigil] REC start ({rec_kind}) → {rec_path}", flush=True)
+                except Exception as e:  # noqa: BLE001
+                    writer = None; print(f"[vigil] REC start failed: {e}", flush=True)
+            if writer is not None:
+                writer.write(frame)
+                if now >= rec_end:
+                    try: writer.release()
+                    except Exception: pass
+                    dur = now - rec_t0; p, st, k = rec_path, rec_started, rec_kind
+                    writer = None
+                    threading.Thread(target=upload_rec, args=(p, st, dur, k), daemon=True).start()
+                    print(f"[vigil] REC done ({k}, {dur:.1f}s)", flush=True)
 
         # Pace the capture loop to the target fps.
         dt = time.time() - now

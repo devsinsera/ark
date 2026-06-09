@@ -24,6 +24,38 @@ from typing import Any, Optional
 def _now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat()
 
+
+def _telemetry() -> dict:
+    """Best-effort battery / charging / connection for the heartbeat."""
+    out: dict = {}
+    # connection type from the default-route interface
+    try:
+        with open("/proc/net/route") as f:
+            for line in f.readlines()[1:]:
+                p = line.split()
+                if len(p) > 1 and p[1] == "00000000":  # default route
+                    ifc = p[0]
+                    out["connection"] = ("wifi" if ifc.startswith("wl") else
+                                         "cell" if ifc.startswith(("ww", "ppp", "wwan")) else "lan")
+                    break
+    except Exception:
+        pass
+    # battery (UPS HAT etc.) — null if none
+    try:
+        import glob
+        for ps in glob.glob("/sys/class/power_supply/*"):
+            try:
+                with open(ps + "/capacity") as f:
+                    out["battery"] = int(f.read().strip())
+                with open(ps + "/status") as f:
+                    out["charging"] = f.read().strip().lower() in ("charging", "full")
+                break
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return out
+
 import requests
 
 try:
@@ -152,6 +184,35 @@ class VigilCloud:
             return
         try:
             self._rest("PATCH", f"vigil_cameras?id=eq.{self.camera_id}",
-                       json_body={"status": "online", "last_seen_at": _now_iso()})
+                       json_body={"status": "online", "last_seen_at": _now_iso(), **_telemetry()})
         except Exception:
             pass
+
+    # Module → Pi: did the dashboard request a clip? (cleared after recording.)
+    def poll_record_request(self) -> bool:
+        if not self.enabled or not self.camera_id:
+            return False
+        try:
+            r = self._rest("GET", "vigil_cameras", params={"id": f"eq.{self.camera_id}", "select": "record_requested"})
+            return bool(r.status_code < 300 and r.json() and r.json()[0].get("record_requested"))
+        except Exception:
+            return False
+
+    def upload_recording(self, mp4_bytes: bytes, started_at: str, duration_s: float, kind: str = "motion") -> None:
+        if not self.enabled or not self.uid:
+            return
+        self._fresh()
+        name = started_at.replace(":", "").replace("-", "").replace(".", "")[:15]
+        path = f"{self.uid}/{CAMERA_SLUG}/{name}.mp4"
+        try:
+            r = requests.post(f"{SUPABASE_URL}/storage/v1/object/vigil-recordings/{path}",
+                              headers=self._h({"Content-Type": "video/mp4", "x-upsert": "true"}),
+                              data=mp4_bytes, timeout=30)
+            if r.status_code < 300:
+                self._rest("POST", "vigil_recordings", json_body={"owner_id": self.uid, "camera_id": self.camera_id,
+                           "path": path, "kind": kind, "started_at": started_at, "duration_s": round(duration_s, 1), "size_bytes": len(mp4_bytes)})
+                # clear the request flag after a manual capture
+                if kind == "manual":
+                    self._rest("PATCH", f"vigil_cameras?id=eq.{self.camera_id}", json_body={"record_requested": False})
+        except Exception as e:  # noqa: BLE001
+            log.debug("recording upload failed: %s", e)
