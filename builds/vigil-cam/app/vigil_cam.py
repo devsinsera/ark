@@ -152,10 +152,7 @@ def main() -> None:
         prev_gray = gray
         set_motion_display(motion)   # black screen → red flash on motion (HDMI, if attached)
 
-        # ── Stamp (timestamp + REC + MOTION) — security overlay, no effects ──
-        ts = time.strftime("%Y-%m-%d %H:%M:%S")
-        cv2.putText(frame, ts, (8, H - 10), cv2.FONT_HERSHEY_PLAIN, 1.1, (0, 0, 0), 3, cv2.LINE_AA)
-        cv2.putText(frame, ts, (8, H - 10), cv2.FONT_HERSHEY_PLAIN, 1.1, (210, 210, 210), 1, cv2.LINE_AA)
+        # ── REC + MOTION indicators only (no timestamp/date watermark on the video) ──
         cv2.circle(frame, (W - 18, 16), 5, (0, 0, 200), -1)
         if motion:
             cv2.rectangle(frame, (1, 1), (W - 2, H - 2), (0, 0, 220), 3)
