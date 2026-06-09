@@ -56,7 +56,15 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
         p = self.path.split("?")[0]
         if p == "/" or p == "/index.html":
-            html = b"<html><body style='margin:0;background:#000'><img src='/stream' style='width:100%;height:100vh;object-fit:contain'></body></html>"
+            # snapshot-refresh (works everywhere incl. WPE WebKit/cog, which won't render MJPEG-in-img). /stream stays for chromium.
+            html = (b"<html><body style='margin:0;background:#000;overflow:hidden'>"
+                    b"<a href='https://sinsera.co/' style='position:fixed;top:10px;left:10px;z-index:9;color:#fff;"
+                    b"background:rgba(0,0,0,.55);padding:8px 13px;font-family:sans-serif;font-size:15px;"
+                    b"text-decoration:none;border-radius:6px'>&#8962; Sinsera</a>"
+                    b"<img id=v style='width:100%;height:100vh;object-fit:contain'>"
+                    b"<script>var v=document.getElementById('v');function u(){v.src='/snapshot?'+Date.now();}"
+                    b"v.onload=function(){setTimeout(u,80)};v.onerror=function(){setTimeout(u,500)};u();</script>"
+                    b"</body></html>")
             self.send_response(200); self.send_header("Content-Type", "text/html")
             self.send_header("Content-Length", str(len(html))); self.end_headers(); self.wfile.write(html); return
         if p == "/snapshot":
