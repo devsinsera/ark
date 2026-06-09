@@ -45,6 +45,25 @@ RECORD_SECS  = int(os.environ.get("RECORD_SECS", "8"))            # clip length
 RECORD_ON_MOTION = os.environ.get("RECORD_ON_MOTION", "0") == "1" # auto-record motion clips
 RECORD_DIR   = os.environ.get("RECORD_DIR", "/opt/vigil/recordings")
 
+# ── Motion display: black framebuffer that flashes RED on motion ──
+# No-ops until an HDMI screen is plugged in (then /dev/fb0 appears). Best-effort.
+_ind = {"on": None}
+def set_motion_display(on: bool) -> None:
+    if _ind["on"] == on:
+        return
+    _ind["on"] = on
+    try:
+        import struct
+        bpp = int(open("/sys/class/graphics/fb0/bits_per_pixel").read())
+        w, h = (int(x) for x in open("/sys/class/graphics/fb0/virtual_size").read().split(","))
+        r, g, b = (220, 0, 0) if on else (0, 0, 0)
+        px = struct.pack("<H", ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)) if bpp == 16 \
+             else struct.pack("<I", (r << 16) | (g << 8) | b)
+        with open("/dev/fb0", "wb") as f:
+            f.write(px * (w * h))
+    except Exception:
+        pass  # no screen attached / no fb0 yet
+
 
 def open_camera():
     cap = cv2.VideoCapture(CAM_INDEX)
@@ -130,6 +149,7 @@ def main() -> None:
             if mean > MOTION_THRESH and area > MOTION_AREA:
                 motion = True
         prev_gray = gray
+        set_motion_display(motion)   # black screen → red flash on motion (HDMI, if attached)
 
         # ── Stamp (timestamp + REC + MOTION) — security overlay, no effects ──
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
