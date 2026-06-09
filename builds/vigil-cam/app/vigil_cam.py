@@ -52,17 +52,18 @@ def set_motion_display(on: bool) -> None:
     if _ind["on"] == on:
         return
     _ind["on"] = on
-    try:
-        import struct
-        bpp = int(open("/sys/class/graphics/fb0/bits_per_pixel").read())
-        w, h = (int(x) for x in open("/sys/class/graphics/fb0/virtual_size").read().split(","))
-        r, g, b = (220, 0, 0) if on else (0, 0, 0)
-        px = struct.pack("<H", ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)) if bpp == 16 \
-             else struct.pack("<I", (r << 16) | (g << 8) | b)
-        with open("/dev/fb0", "wb") as f:
-            f.write(px * (w * h))
-    except Exception:
-        pass  # no screen attached / no fb0 yet
+    import struct
+    r, g, b = (220, 0, 0) if on else (0, 0, 0)
+    for fb in ("fb0", "fb1"):   # fb0 = HDMI, fb1 = SPI LCD HAT (if attached)
+        try:
+            bpp = int(open(f"/sys/class/graphics/{fb}/bits_per_pixel").read())
+            w, h = (int(x) for x in open(f"/sys/class/graphics/{fb}/virtual_size").read().split(","))
+            px = struct.pack("<H", ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)) if bpp == 16 \
+                 else struct.pack("<I", (r << 16) | (g << 8) | b)
+            with open(f"/dev/{fb}", "wb") as f:
+                f.write(px * (w * h))
+        except Exception:
+            pass  # that framebuffer not present
 
 
 def open_camera():
