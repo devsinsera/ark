@@ -68,6 +68,9 @@ SEC
   chmod 600 "$R/opt/sinsera-node/secrets.env"
   echo "[bake] running install.sh in chroot…"
   chroot "$R" /bin/bash /opt/sinsera-node/install.sh
+  # belt-and-braces: the in-chroot write of this has been unreliable → ensure the no-arrow cursor
+  mkdir -p "$R/usr/share/icons/default"
+  printf "[Icon Theme]\nName=Default\nInherits=blank\n" > "$R/usr/share/icons/default/index.theme"
   rm -f "$R/opt/sinsera-node/secrets.env" "$R/etc/resolv.conf"
   sync
   umount "$R/sys" "$R/proc" "$R/dev/pts" "$R/dev" "$R/boot/firmware" "$R" 2>/dev/null || true
