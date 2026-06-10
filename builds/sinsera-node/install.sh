@@ -7,7 +7,7 @@
 set +e
 . /opt/sinsera-node/secrets.env 2>/dev/null
 : "${HOSTNAME_NEW:=sinsera-node-1}"
-KIOSK_URL="https://sinsera.co/?kiosk=1"
+KIOSK_URL="https://sinsera.co/vigil?wall=1&kiosk=1"
 APPSRC=/opt/sinsera-node/app
 export DEBIAN_FRONTEND=noninteractive
 step(){ echo; echo "== $* =="; }
@@ -17,7 +17,7 @@ apt-get update -y
 apt-get install -y --no-install-recommends \
   cage cog libseat1 \
   fonts-dejavu-core fonts-liberation ca-certificates curl \
-  nodejs npm tmux git python3 python3-pip rfkill raspi-config
+  nodejs npm tmux git python3 python3-pip rfkill raspi-config iw dmz-cursor-theme
 
 step "ttyd web terminal (arm64)"
 curl -fsSL -o /usr/local/bin/ttyd https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.aarch64 && chmod +x /usr/local/bin/ttyd
@@ -99,21 +99,23 @@ NM
   chmod 600 /etc/NetworkManager/system-connections/preconfigured.nmconnection
 fi
 
-step "transparent cursor theme (no pointer on the touch screen)"
-python3 - <<'PY'
-import struct, os
-d="/usr/share/icons/blank/cursors"; os.makedirs(d, exist_ok=True)
-w=h=32
-data=b'Xcur'+struct.pack('<3I',16,0x00010000,1)+struct.pack('<3I',0xfffd0002,32,28)+struct.pack('<9I',36,0xfffd0002,32,1,w,h,0,0,0)+b'\x00\x00\x00\x00'*(w*h)
-open(d+"/left_ptr","wb").write(data)
-for n in ["default","arrow","top_left_arrow","cursor","pointer","hand1","hand2","xterm","text","watch","crosshair"]:
-    p=d+"/"+n
-    try: os.remove(p)
-    except FileNotFoundError: pass
-    os.symlink("left_ptr",p)
-open("/usr/share/icons/blank/index.theme","w").write("[Icon Theme]\nName=blank\n")
-print("blank cursor theme installed")
-PY
+step "visible white cursor (this node drives a TV, not a touch screen)"
+mkdir -p /usr/share/icons/default
+printf '[Icon Theme]\nInherits=DMZ-White\n' > /usr/share/icons/default/index.theme
+
+step "keep wifi awake — disable power-save (the classic Pi 'drops off the network' cause)"
+cat > /etc/systemd/system/wifi-powersave-off.service <<'WP'
+[Unit]
+Description=Disable wlan0 power saving
+After=network.target
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'iw dev wlan0 set power_save off || true'
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+WP
+systemctl enable wifi-powersave-off.service
 
 step "kiosk user + tty1 autologin → cage+cog (sinsera.co)"
 id kiosk >/dev/null 2>&1 || { useradd -m -s /bin/bash kiosk; passwd -l kiosk; }
@@ -129,7 +131,7 @@ cat > /usr/local/bin/sinsera-kiosk-launch.sh <<KL
 #!/bin/bash
 export XDG_RUNTIME_DIR=/run/user/\$(id -u)
 export LIBSEAT_BACKEND=logind
-export XCURSOR_THEME=blank
+export XCURSOR_THEME=DMZ-White
 export WLR_NO_HARDWARE_CURSORS=1
 # wait for the page to be reachable before launching (no white screen on boot)
 for i in \$(seq 1 90); do curl -sf -o /dev/null --max-time 4 "$KIOSK_URL" && break; sleep 2; done
