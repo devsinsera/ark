@@ -14,7 +14,7 @@ report() {
     -d "{\"email\":\"$VIGIL_EMAIL\",\"password\":\"$VIGIL_PASSWORD\"}" \
     | python3 -c 'import sys,json;print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null)
   [ -n "$TOK" ] || return
-  CPU=$(awk -v c="$CORES" '{v=$1/c*100; print v>100?100:int(v)}' /proc/loadavg)
+  CPU=$(awk -v c="$CORES" '{v=$1/c*100; print (v>100?100:int(v))}' /proc/loadavg)  # parens: awk treats bare > as redirect
   TEMP=$(awk '{printf "%.1f", $1/1000}' /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
   RAM=$(free | awk '/Mem:/{printf "%d", $3/$2*100}')
   UP=$(uptime -p 2>/dev/null | sed 's/^up //')
