@@ -1,0 +1,11 @@
+{
+  "profile_id": "sinsera-node",
+  "version": 1,
+  "category": "raspberry-pi-devices",
+  "name": "Sinsera Node (Pi 5 8GB SD secondary → sinsera.co + Claude-on-USB)",
+  "description": "Secondary kiosk: cage+cog (WPE on DRM) → https://sinsera.co/?kiosk=1 (auto-login dashboard), NO cursor (touch), auto-detect display (native res). Claude Code builds off whatever USB is inserted (ttyd + tmux + auto-resume). All learnings baked: getty@tty1 enabled, logind seat, cloud-init off, wizard-mask, WiFi rfkill-unblock, network-wait before cog, SSH key + NOPASSWD sudo. Bakes node-1 + clones node-2.",
+  "supported_hardware": ["pi-5-8gb","pi-5-16gb","pi-5-4gb"],
+  "base_image": "raspios_lite_arm64_latest.img.xz",
+  "preconfigured": {"hostnames":"sinsera-node-1 / sinsera-node-2","url":"https://sinsera.co/?kiosk=1","ssh":"peta@sinsera-node-{1,2}.local","first_boot":"claude login once for the USB build agent"},
+  "notes": ["UNVERIFIED on hardware; SSH baked for tuning.","16GB main runs on NVMe — no .img (this is the 8GB SD secondaries)."]
+}
