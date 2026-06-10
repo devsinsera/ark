@@ -9,7 +9,7 @@ export XCURSOR_THEME=blank
 export WLR_NO_HARDWARE_CURSORS=1
 
 # cache-buster (_cb) forces cog to fetch the latest build, not a stale WebKit cache
-BASE="https://sinsera.co/vigil?wall=1&kiosk=1&_cb=$(date +%s)"
+BASE="https://sinsera.co/vigil?wall=1&kiosk=1&node=$(hostname)&_cb=$(date +%s)"
 URL="$BASE"
 
 # wait for the page to be reachable before launching (no white screen on boot)

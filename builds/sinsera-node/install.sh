@@ -162,6 +162,23 @@ BP
 chown kiosk:kiosk /home/kiosk/.bash_profile
 touch /var/log/sinsera-kiosk.log; chown kiosk:kiosk /var/log/sinsera-kiosk.log
 
+step "Node status reporter — CPU/temp/RAM -> Supabase node_status (dashboard status bars)"
+cp "$APPSRC"/node-status-reporter.sh /opt/sinsera-node/node-status-reporter.sh
+chmod 755 /opt/sinsera-node/node-status-reporter.sh
+cat > /etc/systemd/system/node-status-reporter.service <<'NSR'
+[Unit]
+Description=Node status reporter (CPU/temp/RAM -> Supabase node_status)
+After=network-online.target
+Wants=network-online.target
+[Service]
+ExecStart=/opt/sinsera-node/node-status-reporter.sh
+Restart=always
+RestartSec=20
+[Install]
+WantedBy=multi-user.target
+NSR
+systemctl enable node-status-reporter.service 2>/dev/null
+
 step "Claude on USB (tmux + ttyd) — builds off whatever USB is inserted"
 cp "$APPSRC"/usb-mount.sh /usr/local/bin/; chmod 755 /usr/local/bin/usb-mount.sh
 cp "$APPSRC"/usb-claude-launch.sh /usr/local/bin/; chmod 755 /usr/local/bin/usb-claude-launch.sh
