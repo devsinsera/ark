@@ -113,10 +113,10 @@ for n in ["default","arrow","top_left_arrow","cursor","pointer","hand1","hand2",
     except FileNotFoundError: pass
     os.symlink("left_ptr", p)
 open("/usr/share/icons/blank/index.theme","w").write("[Icon Theme]\nName=blank\n")
-PY
 # The system DEFAULT theme is what cog actually honours — it must inherit blank, or an arrow shows.
-mkdir -p /usr/share/icons/default
-printf '[Icon Theme]\nName=Default\nInherits=blank\n' > /usr/share/icons/default/index.theme
+os.makedirs("/usr/share/icons/default", exist_ok=True)
+open("/usr/share/icons/default/index.theme","w").write("[Icon Theme]\nName=Default\nInherits=blank\n")
+PY
 
 step "keep wifi awake — disable power-save (the classic Pi 'drops off the network' cause)"
 cat > /etc/systemd/system/wifi-powersave-off.service <<'WP'
