@@ -34,4 +34,6 @@ except Exception:
 fi
 
 # cog runs as a WAYLAND CLIENT of cage (NOT -P drm — that fights cage for DRM → black)
-exec cage -d -- cog "$URL" 2>>/var/log/sinsera-kiosk.log
+# --cookie-store=always (keep 3rd-party cookies — needed for Spotify/Apple Music embeds)
+# + --cookie-jar=sqlite (persist logins across reboots, so music sign-in sticks)
+exec cage -d -- cog --cookie-store=always --cookie-jar=sqlite:/home/kiosk/.cog-cookies.db "$URL" 2>>/var/log/sinsera-kiosk.log
