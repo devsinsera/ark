@@ -225,12 +225,15 @@ WantedBy=multi-user.target
 AR
 systemctl enable agent-status-reporter.service
 
-step "WireGuard tunnel → home LAN (reaches the bridge wall at 192.168.4.163 from anywhere)"
+step "WireGuard config baked but NOT auto-started — Node 3 is LAN-local (bridge is on the same LAN)"
+# Node 3 stays in the house, so it reaches 192.168.4.163 directly over wifi/LAN.
+# Auto-enabling wg0 would route 192.168.4.0/22 through the tunnel and hairpin local
+# traffic → breaking direct access. The config is baked in for portability only:
+# if it ever leaves the LAN, run  sudo wg-quick up wg0  (and 'down' to return).
 if [ -f /opt/sinsera-node/wg0.conf ]; then
   mkdir -p /etc/wireguard
   cp /opt/sinsera-node/wg0.conf /etc/wireguard/wg0.conf
   chmod 600 /etc/wireguard/wg0.conf
-  systemctl enable wg-quick@wg0
 fi
 
 step "MOTD + done"
