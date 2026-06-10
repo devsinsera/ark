@@ -22,6 +22,10 @@ if [ -f "$HOME/.ark/wifi.env" ]; then set -a; source "$HOME/.ark/wifi.env"; set 
 [ -n "$WIFI_SSID" ] || echo "WARNING: no WiFi (~/.ark/wifi.env) — Pi will be unreachable on WiFi!"
 ENV_PROD="/Users/petastockdale/Dev-Sinsera/Sinsera Core/.env.production"
 ANON_KEY=""; [ -f "$ENV_PROD" ] && ANON_KEY=$(grep -E "^VITE_SUPABASE_ANON_KEY=" "$ENV_PROD" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '\r')
+# Camera-account creds for the zero-touch Vigil-wall auto-auth (pulled from the live node)
+VIGIL_EMAIL=""; VIGIL_PASSWORD=""; SUPABASE_URL=""
+if [ -f "$HOME/.ark/vigil.env" ]; then set -a; source "$HOME/.ark/vigil.env"; set +a; fi
+[ -n "$VIGIL_EMAIL" ] || echo "WARNING: no camera creds (~/.ark/vigil.env) — the wall won't auto-auth!"
 
 echo "[node-bake] decompress base → $OUT_IMG"
 xz -dck "$SRC_XZ" > "$OUT_IMG"
@@ -40,6 +44,7 @@ docker run --rm --privileged -v "$OUT_DIR:/baking" --entrypoint /bin/bash ark-bu
 echo "[node-bake] chroot provisioning (hostname sinsera-node-1)…"
 docker run --rm --privileged -v "$OUT_DIR:/baking" -v "$PROFILE_DIR:/profile:ro" \
   -e SSH_PUBKEY="$SSH_PUBKEY" -e WIFI_SSID="$WIFI_SSID" -e WIFI_KEY="$WIFI_KEY" -e ANON_KEY="$ANON_KEY" \
+  -e VIGIL_EMAIL="$VIGIL_EMAIL" -e VIGIL_PASSWORD="$VIGIL_PASSWORD" -e SUPABASE_URL="$SUPABASE_URL" \
   --entrypoint /bin/bash ark-builder:0.1 -c '
   set -e; IMG=/baking/ark-built.img
   LOOP=$(losetup -fP --show "$IMG"); P1=${LOOP}p1; P2=${LOOP}p2
@@ -55,6 +60,9 @@ SSH_PUBKEY="${SSH_PUBKEY}"
 WIFI_SSID="${WIFI_SSID}"
 WIFI_KEY="${WIFI_KEY}"
 ANON_KEY="${ANON_KEY}"
+VIGIL_EMAIL="${VIGIL_EMAIL}"
+VIGIL_PASSWORD="${VIGIL_PASSWORD}"
+SUPABASE_URL="${SUPABASE_URL}"
 HOSTNAME_NEW="sinsera-node-1"
 SEC
   chmod 600 "$R/opt/sinsera-node/secrets.env"

@@ -142,18 +142,18 @@ ExecStart=
 ExecStart=-/sbin/agetty --autologin kiosk --noclear %I \$TERM
 G1
 systemctl enable getty@tty1.service   # auto-start is unreliable on raspios → enable explicitly
-cat > /usr/local/bin/sinsera-kiosk-launch.sh <<KL
-#!/bin/bash
-export XDG_RUNTIME_DIR=/run/user/\$(id -u)
-export LIBSEAT_BACKEND=logind
-export XCURSOR_THEME=DMZ-White
-export WLR_NO_HARDWARE_CURSORS=1
-# wait for the page to be reachable before launching (no white screen on boot)
-for i in \$(seq 1 90); do curl -sf -o /dev/null --max-time 4 "$KIOSK_URL" && break; sleep 2; done
-# cog runs as a WAYLAND CLIENT of cage (NOT -P drm — that fights cage for DRM → black)
-exec cage -d -- cog "$KIOSK_URL" 2>>/var/log/sinsera-kiosk.log
-KL
+# Auto-auth Vigil-wall launcher (signs the camera account in each boot, hands cog the
+# session in the URL hash → cameras show zero-touch) + cache-bust + transparent cursor.
+cp "$APPSRC"/sinsera-kiosk-launch.sh /usr/local/bin/sinsera-kiosk-launch.sh
 chmod 755 /usr/local/bin/sinsera-kiosk-launch.sh
+# Camera-account creds the launcher reads — MUST be kiosk-readable (the launcher runs as kiosk)
+cat > /opt/sinsera-node/kiosk-auth.env <<KA
+SUPABASE_URL=${SUPABASE_URL:-https://lkhtgkmivqwgnvzmjbhr.supabase.co}
+SUPABASE_ANON_KEY=$ANON_KEY
+VIGIL_EMAIL=$VIGIL_EMAIL
+VIGIL_PASSWORD=$VIGIL_PASSWORD
+KA
+chown kiosk:kiosk /opt/sinsera-node/kiosk-auth.env; chmod 600 /opt/sinsera-node/kiosk-auth.env
 cat > /home/kiosk/.bash_profile <<'BP'
 if [[ "$(tty)" == "/dev/tty1" ]]; then
   while true; do /usr/local/bin/sinsera-kiosk-launch.sh; sleep 3; done
@@ -223,6 +223,22 @@ RestartSec=15
 WantedBy=multi-user.target
 AR
 systemctl enable agent-status-reporter.service
+
+step "AC600 (RTL8811AU) 5GHz wifi — first-boot driver install + wlan1 primary"
+cp "$APPSRC"/ac600-firstboot.sh /usr/local/sbin/ac600-firstboot.sh; chmod 755 /usr/local/sbin/ac600-firstboot.sh
+cat > /etc/systemd/system/ac600-firstboot.service <<AC
+[Unit]
+Description=AC600 driver install + wlan1 5GHz (runs first boot, self-disables on success)
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ac600-firstboot.sh
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+AC
+systemctl enable ac600-firstboot.service
 
 step "MOTD + done"
 cat > /etc/motd <<M
