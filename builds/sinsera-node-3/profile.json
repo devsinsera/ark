@@ -1,11 +1,23 @@
 {
-  "profile_id": "sinsera-node",
-  "version": 1,
+  "profile_id": "sinsera-node-3",
+  "version": 2,
   "category": "raspberry-pi-devices",
-  "name": "Sinsera Node (Pi 5 8GB SD secondary → sinsera.co + Claude-on-USB)",
-  "description": "Secondary kiosk: cage+cog (WPE on DRM) → https://sinsera.co/?kiosk=1 (auto-login dashboard), NO cursor (touch), auto-detect display (native res). Claude Code builds off whatever USB is inserted (ttyd + tmux + auto-resume). All learnings baked: getty@tty1 enabled, logind seat, cloud-init off, wizard-mask, WiFi rfkill-unblock, network-wait before cog, SSH key + NOPASSWD sudo. Bakes node-1 + clones node-2.",
-  "supported_hardware": ["pi-5-8gb","pi-5-16gb","pi-5-4gb"],
+  "name": "Sinsera Node 3 — Vigil camera wall (Pi Zero 2 W → 75\" TV, framebuffer)",
+  "description": "Pi Zero 2 W that renders the 4 Eufy cameras (Back/Door/Front/Front Yard) as a 2x2 grid FULLSCREEN on the HDMI framebuffer — Pygame on SDL kmsdrm, NO browser (the Zero 2 W can't run WPE/cog). Pulls JPEG snapshots from the eufy bridge (192.168.4.163:8091/snap/<serial>) ~1.5fps/tile + /status for the motion/live border. LAN-local over wifi. LCD HAT disabled (HDMI is the only display), forced 1080p, gpu_mem=128. Lean: no Claude/USB-builder/WireGuard.",
+  "supported_hardware": ["pi-zero-2-w", "pi-zero-2-wh"],
   "base_image": "raspios_lite_arm64_latest.img.xz",
-  "preconfigured": {"hostnames":"sinsera-node-1 / sinsera-node-2","url":"https://sinsera.co/?kiosk=1","ssh":"peta@sinsera-node-{1,2}.local","first_boot":"claude login once for the USB build agent"},
-  "notes": ["UNVERIFIED on hardware; SSH baked for tuning.","16GB main runs on NVMe — no .img (this is the 8GB SD secondaries)."]
+  "preconfigured": {
+    "hostname": "sinsera-node-3",
+    "display": "HDMI framebuffer @ 1080p (Pygame/kmsdrm) — LCD HAT off",
+    "content": "Vigil 2x2 camera wall from http://192.168.4.163:8091 (snapshots, ~1.5fps/tile)",
+    "user": "peta (SSH-key, NOPASSWD sudo); renderer runs as 'wall' on tty1 autologin",
+    "network": "wifi (baked from ~/.ark/wifi.env); LAN-local to the bridge",
+    "tuning": "/opt/vigil-wall/vigil-wall.py (RES, FPS, cameras) · log /var/log/vigil-wall.log"
+  },
+  "notes": [
+    "UNVERIFIED on hardware — built without a Zero 2 W to test; expect on-Pi tuning (kmsdrm mode, tile fps, LCD-HAT backlight pin).",
+    "LCD HAT: dtparam=spi=off + a best-effort backlight-off on GPIO 18/24/13. If the HAT stays lit, find its real backlight pin and edit /usr/local/sbin/lcd-hat-off.sh.",
+    "Snapshots, not live video — deliberate, to keep the Zero 2 W smooth. Bump VIGIL_TILE_FPS if the chip handles more.",
+    "Repurposes the vigil-cam Pi: flash to a SEPARATE SD so the vigil-cam card stays intact for swapping back."
+  ]
 }

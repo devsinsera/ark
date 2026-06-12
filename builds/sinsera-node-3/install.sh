@@ -1,47 +1,79 @@
 #!/bin/bash
-# sinsera-node install.sh — Pi 5 8GB SD-booted SECONDARY kiosk. Runs in the chroot.
-# Display: cage + cog (WPE on DRM) → https://sinsera.co/?kiosk=1 (auto-login dashboard),
-# NO cursor (touch), auto-detect display (native res). Claude Code builds off whatever
-# USB is inserted (ttyd + tmux + auto-resume). Every session learning baked in.
+# sinsera-node-3 install.sh — Pi ZERO 2 W → 75" TV Vigil camera wall.
+# Renders the 4 Eufy cams as a 2x2 grid FULLSCREEN on the HDMI framebuffer
+# (Pygame on SDL kmsdrm — NO X, NO browser; the Zero 2 W can't run WPE/cog).
+# LCD HAT disabled (HDMI only). LAN-local: reaches the bridge at
+# 192.168.4.163:8091 over wifi. Lean by design — no Claude/USB-builder/WireGuard
+# stack (too heavy for 512MB). Runs in the chroot.
 # secrets.env: SSH_PUBKEY, WIFI_SSID, WIFI_KEY, ANON_KEY, HOSTNAME_NEW
 set +e
 . /opt/sinsera-node/secrets.env 2>/dev/null
-: "${HOSTNAME_NEW:=sinsera-node-1}"
-KIOSK_URL="http://192.168.4.163:8091/wall"
+: "${HOSTNAME_NEW:=sinsera-node-3}"
 APPSRC=/opt/sinsera-node/app
 export DEBIAN_FRONTEND=noninteractive
 step(){ echo; echo "== $* =="; }
 
-step "apt: cage+cog kiosk + Claude stack"
+step "apt: framebuffer renderer stack (pygame + requests, NO browser)"
 apt-get update -y
 apt-get install -y --no-install-recommends \
-  cage cog libseat1 \
-  fonts-dejavu-core fonts-liberation ca-certificates curl \
-  nodejs npm tmux git python3 python3-pip rfkill raspi-config iw dmz-cursor-theme \
-  wireguard wireguard-tools
+  python3 python3-pygame python3-requests \
+  libsdl2-2.0-0 libsdl2-image-2.0-0 \
+  fonts-dejavu-core ca-certificates curl \
+  rfkill raspi-config iw network-manager
 
-step "ttyd web terminal (arm64)"
-curl -fsSL -o /usr/local/bin/ttyd https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.aarch64 && chmod +x /usr/local/bin/ttyd
-
-step "Claude Code"
-npm install -g @anthropic-ai/claude-code
-
-step "locale + 1G swap + fan + HDMI hotplug (NO forced resolution — auto-detect)"
+step "locale + Zero 2 W boot config (force 1080p HDMI, gpu_mem, NO fan, LCD HAT off)"
 sed -i 's/^# *en_AU.UTF-8 UTF-8/en_AU.UTF-8 UTF-8/' /etc/locale.gen 2>/dev/null; locale-gen 2>/dev/null; update-locale LANG=en_AU.UTF-8 2>/dev/null
-sed -i 's/^CONF_SWAPSIZE=.*/CONF_SWAPSIZE=1024/' /etc/dphys-swapfile 2>/dev/null
 BOOTDIR=/boot/firmware; [ -d "$BOOTDIR" ] || BOOTDIR=/boot
 BOOTCFG="$BOOTDIR/config.txt"
-if [ -f "$BOOTCFG" ] && ! grep -q "sinsera-node" "$BOOTCFG"; then
-  printf '\n# sinsera-node — cage auto-detects the connected display (native res)\ndtparam=cooling_fan=on\nhdmi_force_hotplug=1\ndisable_overscan=1\n' >> "$BOOTCFG"
+if [ -f "$BOOTCFG" ] && ! grep -q "sinsera-node-3" "$BOOTCFG"; then
+  cat >> "$BOOTCFG" <<'CFG'
+
+# sinsera-node-3 — Zero 2 W → 75" TV: force 1080p HDMI on the framebuffer, no LCD HAT
+hdmi_force_hotplug=1
+disable_overscan=1
+hdmi_group=1
+hdmi_mode=16
+gpu_mem=128
+# No SPI/LCD-HAT dtoverlay loaded — HDMI framebuffer is the only display.
+dtparam=spi=off
+CFG
 fi
 
-step "mask first-boot wizard + disable cloud-init"
+step "best-effort LCD-HAT backlight OFF (common Waveshare pins) — HDMI is the display"
+cat > /usr/local/sbin/lcd-hat-off.sh <<'LH'
+#!/bin/bash
+# Drive common Waveshare LCD-HAT backlight pins LOW so the little screen stays dark
+# (HDMI is the real display). Harmless if no HAT / a different pin — tune if needed.
+for PIN in 18 24 13; do
+  pinctrl set $PIN op dl 2>/dev/null || {
+    echo $PIN > /sys/class/gpio/export 2>/dev/null
+    echo out > /sys/class/gpio/gpio$PIN/direction 2>/dev/null
+    echo 0 > /sys/class/gpio/gpio$PIN/value 2>/dev/null
+  }
+done
+exit 0
+LH
+chmod +x /usr/local/sbin/lcd-hat-off.sh
+cat > /etc/systemd/system/lcd-hat-off.service <<'LHS'
+[Unit]
+Description=Turn the LCD HAT backlight off (HDMI-only display)
+DefaultDependencies=no
+After=local-fs.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/lcd-hat-off.sh
+RemainAfterExit=yes
+[Install]
+WantedBy=sysinit.target
+LHS
+systemctl enable lcd-hat-off.service 2>/dev/null
+
+step "mask first-boot wizard + cloud-init"
 systemctl disable userconfig.service 2>/dev/null; systemctl mask userconfig.service 2>/dev/null
 systemctl disable userconf.service 2>/dev/null; systemctl mask userconf.service 2>/dev/null
-rm -f /etc/systemd/system/getty@tty1.service.d/autologin.conf 2>/dev/null
 systemctl disable cloud-init cloud-config cloud-final cloud-init-local cloud-init-main 2>/dev/null; mkdir -p /etc/cloud; touch /etc/cloud/cloud-init.disabled 2>/dev/null
 
-step "WiFi country + rfkill-unblock boot service"
+step "WiFi country + rfkill-unblock + powersave-off"
 raspi-config nonint do_wifi_country AU 2>/dev/null
 cat > /usr/local/sbin/ark-wifi-unblock.sh <<'UNB'
 #!/bin/bash
@@ -64,13 +96,25 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 UNBS
 systemctl enable ark-wifi-unblock.service 2>/dev/null
+cat > /etc/systemd/system/wifi-powersave-off.service <<'WP'
+[Unit]
+Description=Disable wlan0 power saving
+After=network.target
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'iw dev wlan0 set power_save off || true'
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+WP
+systemctl enable wifi-powersave-off.service 2>/dev/null
 
 step "hostname ($HOSTNAME_NEW)"
 echo "$HOSTNAME_NEW" > /etc/hostname
 sed -i "s/127.0.1.1.*/127.0.1.1\t$HOSTNAME_NEW/g" /etc/hosts 2>/dev/null
 
-step "peta user (SSH-key, NOPASSWD sudo) + root key + ssh"
-id peta >/dev/null 2>&1 || useradd -m -s /bin/bash -G adm,dialout,cdrom,sudo,audio,video,plugdev,games,users,input,render,netdev,gpio,i2c,spi peta
+step "peta user (SSH-key, NOPASSWD sudo) + ssh"
+id peta >/dev/null 2>&1 || useradd -m -s /bin/bash -G adm,dialout,sudo,audio,video,plugdev,users,input,render,netdev,gpio,i2c,spi peta
 passwd -l peta
 echo "peta ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/010_peta-nopasswd; chmod 440 /etc/sudoers.d/010_peta-nopasswd
 mkdir -p /home/peta/.ssh && chmod 700 /home/peta/.ssh
@@ -100,148 +144,36 @@ NM
   chmod 600 /etc/NetworkManager/system-connections/preconfigured.nmconnection
 fi
 
-step "transparent cursor (touch kiosk → no pointer arrow; cog ignores web cursor:none)"
-python3 - <<'PY'
-import struct, os
-d = "/usr/share/icons/blank/cursors"; os.makedirs(d, exist_ok=True)
-w = h = 32
-data = (b'Xcur' + struct.pack('<3I',16,0x00010000,1) + struct.pack('<3I',0xfffd0002,32,28)
-        + struct.pack('<9I',36,0xfffd0002,32,1,w,h,0,0,0) + b'\x00\x00\x00\x00'*(w*h))
-open(d+"/left_ptr","wb").write(data)
-for n in ["default","arrow","top_left_arrow","cursor","pointer","hand1","hand2","xterm","text","watch"]:
-    p = d+"/"+n
-    try: os.remove(p)
-    except FileNotFoundError: pass
-    os.symlink("left_ptr", p)
-open("/usr/share/icons/blank/index.theme","w").write("[Icon Theme]\nName=blank\n")
-# The system DEFAULT theme is what cog actually honours — it must inherit blank, or an arrow shows.
-os.makedirs("/usr/share/icons/default", exist_ok=True)
-open("/usr/share/icons/default/index.theme","w").write("[Icon Theme]\nName=Default\nInherits=blank\n")
-PY
-
-step "keep wifi awake — disable power-save (the classic Pi 'drops off the network' cause)"
-cat > /etc/systemd/system/wifi-powersave-off.service <<'WP'
-[Unit]
-Description=Disable wlan0 power saving
-After=network.target
-[Service]
-Type=oneshot
-ExecStart=/bin/sh -c 'iw dev wlan0 set power_save off || true'
-RemainAfterExit=yes
-[Install]
-WantedBy=multi-user.target
-WP
-systemctl enable wifi-powersave-off.service
-
-step "kiosk user + tty1 autologin → cage+cog (sinsera.co)"
-id kiosk >/dev/null 2>&1 || { useradd -m -s /bin/bash kiosk; passwd -l kiosk; }
-for g in video audio input render tty seat plugdev netdev; do getent group "$g" >/dev/null 2>&1 && usermod -aG "$g" kiosk; done
+step "vigil-wall renderer + 'wall' user tty1 autologin (framebuffer, kmsdrm)"
+install -d /opt/vigil-wall
+cp "$APPSRC"/vigil-wall.py /opt/vigil-wall/vigil-wall.py
+cp "$APPSRC"/run-vigil-wall.sh /opt/vigil-wall/run-vigil-wall.sh
+chmod +x /opt/vigil-wall/run-vigil-wall.sh
+touch /var/log/vigil-wall.log
+id wall >/dev/null 2>&1 || { useradd -m -s /bin/bash wall; passwd -l wall; }
+for g in video audio input render tty seat plugdev netdev gpio; do getent group "$g" >/dev/null 2>&1 && usermod -aG "$g" wall; done
+chown -R wall:wall /opt/vigil-wall /var/log/vigil-wall.log
 mkdir -p /etc/systemd/system/getty@tty1.service.d
 cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf <<G1
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --autologin kiosk --noclear %I \$TERM
+ExecStart=-/sbin/agetty --autologin wall --noclear %I \$TERM
 G1
 systemctl enable getty@tty1.service   # auto-start is unreliable on raspios → enable explicitly
-# Simple bridge-wall launcher — waits for the bridge (reachable over WireGuard) then cog.
-cat > /usr/local/bin/sinsera-kiosk-launch.sh <<KL
-#!/bin/bash
-export XDG_RUNTIME_DIR=/run/user/\$(id -u)
-export LIBSEAT_BACKEND=logind
-export XCURSOR_THEME=blank
-export WLR_NO_HARDWARE_CURSORS=1
-# wait for the bridge wall (via WireGuard) to answer — no white screen on boot
-for i in \$(seq 1 150); do curl -sf -o /dev/null --max-time 4 "$KIOSK_URL" && break; sleep 2; done
-exec cage -d -- cog "$KIOSK_URL" 2>>/var/log/sinsera-kiosk.log
-KL
-chmod 755 /usr/local/bin/sinsera-kiosk-launch.sh
-cat > /home/kiosk/.bash_profile <<'BP'
+cat > /home/wall/.bash_profile <<'BP'
+# tty1 → render the Vigil wall on the HDMI framebuffer (crash-loops internally)
 if [[ "$(tty)" == "/dev/tty1" ]]; then
-  while true; do /usr/local/bin/sinsera-kiosk-launch.sh; sleep 3; done
+  exec /opt/vigil-wall/run-vigil-wall.sh
 fi
 BP
-chown kiosk:kiosk /home/kiosk/.bash_profile
-touch /var/log/sinsera-kiosk.log; chown kiosk:kiosk /var/log/sinsera-kiosk.log
-
-step "Claude on USB (tmux + ttyd) — builds off whatever USB is inserted"
-cp "$APPSRC"/usb-mount.sh /usr/local/bin/; chmod 755 /usr/local/bin/usb-mount.sh
-cp "$APPSRC"/usb-claude-launch.sh /usr/local/bin/; chmod 755 /usr/local/bin/usb-claude-launch.sh
-touch /var/log/claude.log; chown peta:peta /var/log/claude.log
-cat > /etc/systemd/system/claude-session.service <<CS
-[Unit]
-Description=Claude Code (USB build) persistent tmux session
-After=network-online.target
-Wants=network-online.target
-[Service]
-Type=oneshot
-User=peta
-RemainAfterExit=yes
-Environment=HOME=/home/peta
-ExecStart=/usr/bin/tmux new-session -d -s claude /usr/local/bin/usb-claude-launch.sh
-ExecStop=/usr/bin/tmux kill-session -t claude
-[Install]
-WantedBy=multi-user.target
-CS
-F=/home/peta/.ttyd-pass; openssl rand -hex 6 > "$F" 2>/dev/null || echo "node$RANDOM" > "$F"; chown peta:peta "$F"; chmod 600 "$F"; TPW=$(cat "$F")
-cat > /etc/systemd/system/ttyd-claude.service <<TS
-[Unit]
-Description=ttyd web terminal -> Claude Code (USB build)
-After=claude-session.service
-Wants=claude-session.service
-[Service]
-User=peta
-Environment=HOME=/home/peta
-ExecStart=/usr/local/bin/ttyd -p 7681 -i 0.0.0.0 -W -c peta:$TPW /usr/bin/tmux attach -t claude
-Restart=always
-RestartSec=3
-[Install]
-WantedBy=multi-user.target
-TS
-systemctl enable claude-session.service ttyd-claude.service
-
-step "Build Agent reporter → Supabase agent_status"
-mkdir -p /opt/kiosk-agent
-cp "$APPSRC"/agent-status-reporter.py /opt/kiosk-agent/
-cat > /opt/kiosk-agent/.env <<AE
-SUPABASE_URL=https://lkhtgkmivqwgnvzmjbhr.supabase.co
-SUPABASE_ANON_KEY=$ANON_KEY
-AE
-chown -R peta:peta /opt/kiosk-agent; chmod 600 /opt/kiosk-agent/.env
-cat > /etc/systemd/system/agent-status-reporter.service <<AR
-[Unit]
-Description=Claude -> Supabase agent_status reporter
-After=network-online.target claude-session.service
-Wants=network-online.target
-[Service]
-User=peta
-Environment=HOME=/home/peta
-Environment=AGENT_TMUX=claude
-Environment=AGENT_NAME=$HOSTNAME_NEW
-ExecStart=/usr/bin/python3 /opt/kiosk-agent/agent-status-reporter.py
-Restart=always
-RestartSec=15
-[Install]
-WantedBy=multi-user.target
-AR
-systemctl enable agent-status-reporter.service
-
-step "WireGuard config baked but NOT auto-started — Node 3 is LAN-local (bridge is on the same LAN)"
-# Node 3 stays in the house, so it reaches 192.168.4.163 directly over wifi/LAN.
-# Auto-enabling wg0 would route 192.168.4.0/22 through the tunnel and hairpin local
-# traffic → breaking direct access. The config is baked in for portability only:
-# if it ever leaves the LAN, run  sudo wg-quick up wg0  (and 'down' to return).
-if [ -f /opt/sinsera-node/wg0.conf ]; then
-  mkdir -p /etc/wireguard
-  cp /opt/sinsera-node/wg0.conf /etc/wireguard/wg0.conf
-  chmod 600 /etc/wireguard/wg0.conf
-fi
+chown wall:wall /home/wall/.bash_profile
 
 step "MOTD + done"
 cat > /etc/motd <<M
 
-  $HOSTNAME_NEW — Pi 5 8GB secondary · cage+cog → $KIOSK_URL (no cursor, auto-detect display)
-  Claude builds off any inserted USB. SSH: peta@$HOSTNAME_NEW.local · ttyd :7681
-  Sign in once: open ttyd or tty2, run \`claude login\`.
+  $HOSTNAME_NEW — Pi Zero 2 W · Vigil camera wall on HDMI (framebuffer, 1080p)
+  Bridge: http://192.168.4.163:8091  ·  SSH: peta@$HOSTNAME_NEW.local
+  Renderer log: /var/log/vigil-wall.log  ·  tune: /opt/vigil-wall/vigil-wall.py
 M
 apt-get clean
-echo "[sinsera-node install] DONE → $HOSTNAME_NEW"
+echo "[sinsera-node-3 install] DONE → $HOSTNAME_NEW (Vigil wall, framebuffer)"
