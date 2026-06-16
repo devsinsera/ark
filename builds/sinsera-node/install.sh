@@ -179,6 +179,23 @@ WantedBy=multi-user.target
 NSR
 systemctl enable node-status-reporter.service 2>/dev/null
 
+step "Node command runner — remote poweroff/reboot from the Vigil Nodes panel (Supabase node_commands)"
+cp "$APPSRC"/node-command-runner.sh /opt/sinsera-node/node-command-runner.sh
+chmod 755 /opt/sinsera-node/node-command-runner.sh
+cat > /etc/systemd/system/node-command-runner.service <<'NCR'
+[Unit]
+Description=Node command runner (poweroff/reboot -> Supabase node_commands)
+After=network-online.target
+Wants=network-online.target
+[Service]
+ExecStart=/opt/sinsera-node/node-command-runner.sh
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=multi-user.target
+NCR
+systemctl enable node-command-runner.service 2>/dev/null
+
 step "Claude on USB (tmux + ttyd) — builds off whatever USB is inserted"
 cp "$APPSRC"/usb-mount.sh /usr/local/bin/; chmod 755 /usr/local/bin/usb-mount.sh
 cp "$APPSRC"/usb-claude-launch.sh /usr/local/bin/; chmod 755 /usr/local/bin/usb-claude-launch.sh
