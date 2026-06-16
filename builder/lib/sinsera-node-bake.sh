@@ -83,7 +83,8 @@ SEC
 
 echo "[node-bake] deliver node-1 + clone → node-2 (hostname rewrite)"
 mkdir -p "$BUILDS"
-rm -f "$BUILDS/sinsera-node-"*.img 2>/dev/null || true
+# only our two outputs — NOT a broad sinsera-node-*.img glob (that would nuke node-3's image)
+rm -f "$BUILDS/sinsera-node-1-"*.img "$BUILDS/sinsera-node-2-"*.img 2>/dev/null || true
 cp "$OUT_IMG" "$BUILDS/sinsera-node-1-pi5-8gb.img"
 mv -f "$OUT_IMG" "$BUILDS/sinsera-node-2-pi5-8gb.img"
 docker run --rm --privileged -v "$BUILDS:/b" --entrypoint /bin/bash ark-builder:0.1 -c '
