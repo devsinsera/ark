@@ -1,0 +1,7 @@
+# never commit secrets or vendored upstream
+.env
+*.env
+!*.env.example
+secrets/
+supabase-docker/
+gitea-data/
