@@ -1,13 +1,14 @@
 #!/bin/bash
-# sinsera-node install.sh — Pi 5 8GB SD-booted SECONDARY kiosk. Runs in the chroot.
-# Display: cage + cog (WPE on DRM) → https://sinsera.co/?kiosk=1 (auto-login dashboard),
-# NO cursor (touch), auto-detect display (native res). Claude Code builds off whatever
-# USB is inserted (ttyd + tmux + auto-resume). Every session learning baked in.
+# sinsera-node install.sh — Pi 5 8GB kiosk image (boot from the NVMe SSD on the HAT).
+# Display: cage + cog (WPE on DRM) → the generic kiosk entry; what each screen shows is
+# config-driven per node (kiosk_config). Node 1 = bedroom 18.5" touchscreen (no cursor);
+# Node 2 = lounge 75" Bravia + Logitech K400 trackpad (visible cursor, set in the bake clone).
+# Claude Code builds off whatever USB is inserted (ttyd + tmux + auto-resume).
 # secrets.env: SSH_PUBKEY, WIFI_SSID, WIFI_KEY, ANON_KEY, HOSTNAME_NEW
 set +e
 . /opt/sinsera-node/secrets.env 2>/dev/null
 : "${HOSTNAME_NEW:=sinsera-node-1}"
-KIOSK_URL="https://sinsera.co/vigil?wall=1&kiosk=1"
+KIOSK_URL="https://sinsera.co/?kiosk=1"
 APPSRC=/opt/sinsera-node/app
 export DEBIAN_FRONTEND=noninteractive
 step(){ echo; echo "== $* =="; }
@@ -273,6 +274,21 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 AC
 systemctl enable ac600-firstboot.service
+
+step "Boot from NVMe — set the Pi 5 bootloader to prefer the SSD (first boot, self-disables)"
+cp "$APPSRC"/nvme-bootorder-firstboot.sh /usr/local/sbin/nvme-bootorder-firstboot.sh; chmod 755 /usr/local/sbin/nvme-bootorder-firstboot.sh
+cat > /etc/systemd/system/nvme-bootorder-firstboot.service <<'NVB'
+[Unit]
+Description=Prefer NVMe in the Pi 5 bootloader (runs first boot, self-disables)
+After=multi-user.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nvme-bootorder-firstboot.sh
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+NVB
+systemctl enable nvme-bootorder-firstboot.service 2>/dev/null
 
 step "MOTD + done"
 cat > /etc/motd <<M

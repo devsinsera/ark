@@ -1,7 +1,10 @@
 #!/bin/bash
-# sinsera-node-bake.sh — Pi 5 8GB SD secondary kiosk image. Bakes node-1 (full
-# native-arm64 chroot), then clones it to node-2 with the hostname changed.
-# Output → Dev-Sinsera/Builds/sinsera-node-1-pi5-8gb.img + sinsera-node-2-pi5-8gb.img
+# sinsera-node-bake.sh — Pi 5 8GB kiosk image, boot from the NVMe SSD on the HAT.
+# Bakes node-1 (full native-arm64 chroot), then clones to node-2 with hostname +
+# a VISIBLE cursor (node-2 = K400 trackpad; node-1 = touchscreen, no cursor).
+#   Node 1 — bedroom 18.5" touchscreen · Wi-Fi (onboard; TP-Link AX1800 USB = follow-up)
+#   Node 2 — lounge 75" Bravia · LAN · Logitech K400 · 2TB SSD (adapter-powered for now)
+# Flash each .img to that node's NVMe SSD (not SD). Output → Dev-Sinsera/Builds/.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -90,10 +93,14 @@ docker run --rm --privileged -v "$BUILDS:/b" --entrypoint /bin/bash ark-builder:
   R=/m; mkdir -p $R; mount "$P2" $R
   sed -i "s/sinsera-node-1/sinsera-node-2/g" $R/etc/hostname $R/etc/hosts $R/etc/motd \
     $R/etc/systemd/system/agent-status-reporter.service 2>/dev/null || true
+  # Node 2 = lounge 75" Bravia driven by a Logitech K400 trackpad (NOT touch) → restore a
+  # VISIBLE cursor (Node 1 keeps the blank/no-cursor touchscreen default).
+  printf "[Icon Theme]\nName=Default\nInherits=DMZ-White\n" > $R/usr/share/icons/default/index.theme
   sync; umount $R 2>/dev/null; kpartx -d "$LOOP" 2>/dev/null || true; losetup -d "$LOOP"
-  echo "[node-bake] node-2 hostname set to sinsera-node-2"
+  echo "[node-bake] node-2 → hostname sinsera-node-2 + visible cursor (K400)"
 '
 echo ""; echo "[node-bake] DONE:"
-echo "  $BUILDS/sinsera-node-1-pi5-8gb.img"
-echo "  $BUILDS/sinsera-node-2-pi5-8gb.img"
-echo "  → sinsera.co/?kiosk=1 · no cursor · auto-detect display · Claude builds off any USB · ssh peta@sinsera-node-{1,2}.local"
+echo "  $BUILDS/sinsera-node-1-pi5-8gb.img   (bedroom touchscreen · Wi-Fi · no cursor)"
+echo "  $BUILDS/sinsera-node-2-pi5-8gb.img   (lounge 75\" · LAN · K400 · visible cursor)"
+echo "  → FLASH EACH .img TO ITS NVMe SSD (not SD). First boot sets BOOT_ORDER to prefer NVMe."
+echo "  → sinsera.co/?kiosk=1&node=<host> · view per node via the Kiosks module · ssh peta@sinsera-node-{1,2}.local"
