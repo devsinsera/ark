@@ -1,0 +1,17 @@
+services:
+  gitea:
+    image: gitea/gitea:1.22
+    container_name: gitea
+    restart: unless-stopped
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - GITEA__server__DOMAIN=sinsera-core.local
+      - GITEA__server__ROOT_URL=http://sinsera-core.local:3001/
+      - GITEA__server__HTTP_PORT=3000
+      - GITEA__server__SSH_PORT=2222
+    volumes:
+      - /opt/sinsera-stack/gitea:/data
+    ports:
+      - "3001:3000"
+      - "2222:2222"
