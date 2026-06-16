@@ -94,9 +94,10 @@ docker run --rm --privileged -v "$BUILDS:/b" --entrypoint /bin/bash ark-builder:
   R=/m; mkdir -p $R; mount "$P2" $R
   sed -i "s/sinsera-node-1/sinsera-node-2/g" $R/etc/hostname $R/etc/hosts $R/etc/motd \
     $R/etc/systemd/system/agent-status-reporter.service 2>/dev/null || true
-  # Node 2 = lounge 75" Bravia driven by a Logitech K400 trackpad (NOT touch) → restore a
-  # VISIBLE cursor (Node 1 keeps the blank/no-cursor touchscreen default).
-  printf "[Icon Theme]\nName=Default\nInherits=DMZ-White\n" > $R/usr/share/icons/default/index.theme
+  # Node 2 = lounge 75" Bravia driven by a Logitech K400 trackpad (NOT touch) → VISIBLE cursor.
+  # XCURSOR_THEME (read by the launcher) is the mechanism cage/cog actually honours; index.theme
+  # alone proved unreliable. Node 1 keeps the blank (hidden) cursor.
+  printf "XCURSOR_THEME=DMZ-White\n" > $R/opt/sinsera-node/cursor.env
   sync; umount $R 2>/dev/null; kpartx -d "$LOOP" 2>/dev/null || true; losetup -d "$LOOP"
   echo "[node-bake] node-2 → hostname sinsera-node-2 + visible cursor (K400)"
 '

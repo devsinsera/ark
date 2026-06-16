@@ -1,15 +1,23 @@
 #!/bin/bash
-# Sinsera Node kiosk launcher — cage+cog → the Vigil camera wall, AUTO-AUTHENTICATED.
+# Sinsera Node kiosk launcher — cage+cog → the generic kiosk entry, AUTO-AUTHENTICATED.
+# The screen's content is config-driven: App reads kiosk_config for ?node=<hostname> and
+# shows that node's chosen view (an in-app module, or a LAN URL like the camera wall).
+# Edit it in the Kiosks module; no reflash needed to change what a screen shows.
 # Reads the camera-account creds from /opt/sinsera-node/kiosk-auth.env, signs in fresh
-# on every boot, and hands cog the session in the URL hash so the wall shows cameras
-# with zero interaction (and can't silently "log out" — it re-auths each launch).
+# on every boot, and hands cog the session in the URL hash (so private modules render
+# and it can't silently "log out" — it re-auths each launch).
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
 export LIBSEAT_BACKEND=logind
-export XCURSOR_THEME=blank
 export WLR_NO_HARDWARE_CURSORS=1
+# Cursor is per-node: node-1 touchscreen → 'blank' (hidden); node-2 K400 trackpad →
+# 'DMZ-White' (visible). The bake writes /opt/sinsera-node/cursor.env per node.
+XCURSOR_THEME=blank
+[ -f /opt/sinsera-node/cursor.env ] && . /opt/sinsera-node/cursor.env
+export XCURSOR_THEME
 
-# cache-buster (_cb) forces cog to fetch the latest build, not a stale WebKit cache
-BASE="https://sinsera.co/vigil?wall=1&kiosk=1&_cb=$(date +%s)"
+# cache-buster (_cb) forces cog to fetch the latest build, not a stale WebKit cache.
+# Generic entry: the Kiosks module decides what this screen shows (by ?node=<hostname>).
+BASE="https://sinsera.co/?kiosk=1&node=$(hostname)&_cb=$(date +%s)"
 URL="$BASE"
 
 # wait for the page to be reachable before launching (no white screen on boot)
@@ -33,5 +41,6 @@ except Exception:
   [ -n "$HASH" ] && URL="$BASE#$HASH"
 fi
 
-# cog runs as a WAYLAND CLIENT of cage (NOT -P drm — that fights cage for DRM → black)
-exec cage -d -- cog "$URL" 2>>/var/log/sinsera-kiosk.log
+# cog runs as a WAYLAND CLIENT of cage (NOT -P drm — that fights cage for DRM → black).
+# --cookie-store=always + --cookie-jar=sqlite persist logins across reboots (music sign-in sticks).
+exec cage -d -- cog --cookie-store=always --cookie-jar=sqlite:/home/kiosk/.cog-cookies.db "$URL" 2>>/var/log/sinsera-kiosk.log

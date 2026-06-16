@@ -118,6 +118,9 @@ open("/usr/share/icons/blank/index.theme","w").write("[Icon Theme]\nName=blank\n
 os.makedirs("/usr/share/icons/default", exist_ok=True)
 open("/usr/share/icons/default/index.theme","w").write("[Icon Theme]\nName=Default\nInherits=blank\n")
 PY
+# Per-node cursor the launcher actually honours (XCURSOR_THEME). Default = blank (hidden)
+# for the Node 1 touchscreen; the bake overwrites this with DMZ-White on Node 2 (K400 trackpad).
+echo "XCURSOR_THEME=blank" > /opt/sinsera-node/cursor.env
 
 step "keep wifi awake — disable power-save (the classic Pi 'drops off the network' cause)"
 cat > /etc/systemd/system/wifi-powersave-off.service <<'WP'
