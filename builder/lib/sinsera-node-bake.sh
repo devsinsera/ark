@@ -1,9 +1,10 @@
 #!/bin/bash
 # sinsera-node-bake.sh — Pi 5 8GB kiosk image, boot from the NVMe SSD on the HAT.
-# Bakes node-1 (full native-arm64 chroot), then clones to node-2 with hostname +
-# a VISIBLE cursor (node-2 = K400 trackpad; node-1 = touchscreen, no cursor).
-#   Node 1 — bedroom 18.5" touchscreen · Wi-Fi (onboard; TP-Link AX1800 USB = follow-up)
-#   Node 2 — lounge 75" Bravia · LAN · Logitech K400 · 2TB SSD (adapter-powered for now)
+# Bakes node-2 (full native-arm64 chroot), then clones to node-3 with hostname +
+# a VISIBLE cursor (node-3 = K400 trackpad; node-2 = touchscreen, no cursor).
+#   Node 2 — bedroom 18.5" touchscreen · Wi-Fi (onboard; TP-Link AX1800 USB = follow-up)
+#   Node 3 — lounge 75" Bravia · LAN · Logitech K400 · 2TB SSD (adapter-powered for now)
+#   (Node 1 = the main Sinsera Core Pi — not built here.)
 # Flash each .img to that node's NVMe SSD (not SD). Output → Dev-Sinsera/Builds/.
 set -euo pipefail
 
@@ -44,7 +45,7 @@ docker run --rm --privileged -v "$OUT_DIR:/baking" --entrypoint /bin/bash ark-bu
   e2fsck -fy "$P2" || true; resize2fs "$P2"; kpartx -d "$LOOP" 2>/dev/null || true; losetup -d "$LOOP"
 '
 
-echo "[node-bake] chroot provisioning (hostname sinsera-node-1)…"
+echo "[node-bake] chroot provisioning (hostname sinsera-node-2 · bedroom)…"
 docker run --rm --privileged -v "$OUT_DIR:/baking" -v "$PROFILE_DIR:/profile:ro" \
   -e SSH_PUBKEY="$SSH_PUBKEY" -e WIFI_SSID="$WIFI_SSID" -e WIFI_KEY="$WIFI_KEY" -e ANON_KEY="$ANON_KEY" \
   -e VIGIL_EMAIL="$VIGIL_EMAIL" -e VIGIL_PASSWORD="$VIGIL_PASSWORD" -e SUPABASE_URL="$SUPABASE_URL" \
@@ -66,7 +67,7 @@ ANON_KEY="${ANON_KEY}"
 VIGIL_EMAIL="${VIGIL_EMAIL}"
 VIGIL_PASSWORD="${VIGIL_PASSWORD}"
 SUPABASE_URL="${SUPABASE_URL}"
-HOSTNAME_NEW="sinsera-node-1"
+HOSTNAME_NEW="sinsera-node-2"
 SEC
   chmod 600 "$R/opt/sinsera-node/secrets.env"
   echo "[bake] running install.sh in chroot…"
@@ -81,28 +82,28 @@ SEC
   echo "[node-bake] provisioning complete"
 '
 
-echo "[node-bake] deliver node-1 + clone → node-2 (hostname rewrite)"
+echo "[node-bake] deliver node-2 (bedroom) + clone → node-3 (lounge)"
 mkdir -p "$BUILDS"
-# only our two outputs — NOT a broad sinsera-node-*.img glob (that would nuke node-3's image)
-rm -f "$BUILDS/sinsera-node-1-"*.img "$BUILDS/sinsera-node-2-"*.img 2>/dev/null || true
-cp "$OUT_IMG" "$BUILDS/sinsera-node-1-pi5-8gb.img"
-mv -f "$OUT_IMG" "$BUILDS/sinsera-node-2-pi5-8gb.img"
+# remove only this profile's exact Pi5 outputs (node-1 retired → main Pi is sinsera-core)
+rm -f "$BUILDS/sinsera-node-1-pi5-8gb.img" "$BUILDS/sinsera-node-2-pi5-8gb.img" "$BUILDS/sinsera-node-3-pi5-8gb.img" 2>/dev/null || true
+cp "$OUT_IMG" "$BUILDS/sinsera-node-2-pi5-8gb.img"
+mv -f "$OUT_IMG" "$BUILDS/sinsera-node-3-pi5-8gb.img"
 docker run --rm --privileged -v "$BUILDS:/b" --entrypoint /bin/bash ark-builder:0.1 -c '
-  set -e; IMG=/b/sinsera-node-2-pi5-8gb.img
+  set -e; IMG=/b/sinsera-node-3-pi5-8gb.img
   LOOP=$(losetup -fP --show "$IMG"); P2=${LOOP}p2
   [ -e "$P2" ] || { kpartx -av "$LOOP"; P2=/dev/mapper/$(basename "$LOOP")p2; }
   R=/m; mkdir -p $R; mount "$P2" $R
-  sed -i "s/sinsera-node-1/sinsera-node-2/g" $R/etc/hostname $R/etc/hosts $R/etc/motd \
+  sed -i "s/sinsera-node-2/sinsera-node-3/g" $R/etc/hostname $R/etc/hosts $R/etc/motd \
     $R/etc/systemd/system/agent-status-reporter.service 2>/dev/null || true
-  # Node 2 = lounge 75" Bravia driven by a Logitech K400 trackpad (NOT touch) → VISIBLE cursor.
+  # Node 3 = lounge 75" Bravia driven by a Logitech K400 trackpad (NOT touch) → VISIBLE cursor.
   # XCURSOR_THEME (read by the launcher) is the mechanism cage/cog actually honours; index.theme
-  # alone proved unreliable. Node 1 keeps the blank (hidden) cursor.
+  # alone proved unreliable. Node 2 (bedroom touchscreen) keeps the blank (hidden) cursor.
   printf "XCURSOR_THEME=DMZ-White\n" > $R/opt/sinsera-node/cursor.env
   sync; umount $R 2>/dev/null; kpartx -d "$LOOP" 2>/dev/null || true; losetup -d "$LOOP"
-  echo "[node-bake] node-2 → hostname sinsera-node-2 + visible cursor (K400)"
+  echo "[node-bake] node-3 → hostname sinsera-node-3 + visible cursor (K400)"
 '
 echo ""; echo "[node-bake] DONE:"
-echo "  $BUILDS/sinsera-node-1-pi5-8gb.img   (bedroom touchscreen · Wi-Fi · no cursor)"
-echo "  $BUILDS/sinsera-node-2-pi5-8gb.img   (lounge 75\" · LAN · K400 · visible cursor)"
+echo "  $BUILDS/sinsera-node-2-pi5-8gb.img   (Node 2 · bedroom 18.5\" touchscreen · Wi-Fi · no cursor)"
+echo "  $BUILDS/sinsera-node-3-pi5-8gb.img   (Node 3 · lounge 75\" Bravia · LAN · K400 · visible cursor)"
 echo "  → FLASH EACH .img TO ITS NVMe SSD (not SD). First boot sets BOOT_ORDER to prefer NVMe."
-echo "  → sinsera.co/?kiosk=1&node=<host> · view per node via the Kiosks module · ssh peta@sinsera-node-{1,2}.local"
+echo "  → sinsera.co/?kiosk=1&node=<host> · view per node via the Kiosks module · ssh peta@sinsera-node-{2,3}.local"

@@ -1,13 +1,14 @@
 #!/bin/bash
 # sinsera-node install.sh — Pi 5 8GB kiosk image (boot from the NVMe SSD on the HAT).
 # Display: cage + cog (WPE on DRM) → the generic kiosk entry; what each screen shows is
-# config-driven per node (kiosk_config). Node 1 = bedroom 18.5" touchscreen (no cursor);
-# Node 2 = lounge 75" Bravia + Logitech K400 trackpad (visible cursor, set in the bake clone).
+# config-driven per node (kiosk_config). Node 2 = bedroom 18.5" touchscreen (no cursor);
+# Node 3 = lounge 75" Bravia + Logitech K400 trackpad (visible cursor, set in the bake clone).
+# (Node 1 = the main Sinsera Core Pi, hostname sinsera-core — not built by this profile.)
 # Claude Code builds off whatever USB is inserted (ttyd + tmux + auto-resume).
 # secrets.env: SSH_PUBKEY, WIFI_SSID, WIFI_KEY, ANON_KEY, HOSTNAME_NEW
 set +e
 . /opt/sinsera-node/secrets.env 2>/dev/null
-: "${HOSTNAME_NEW:=sinsera-node-1}"
+: "${HOSTNAME_NEW:=sinsera-node-2}"
 KIOSK_URL="https://sinsera.co/?kiosk=1"
 APPSRC=/opt/sinsera-node/app
 export DEBIAN_FRONTEND=noninteractive
