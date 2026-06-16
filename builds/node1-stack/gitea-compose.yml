@@ -10,6 +10,11 @@ services:
       - GITEA__server__ROOT_URL=http://sinsera-core.local:3001/
       - GITEA__server__HTTP_PORT=3000
       - GITEA__server__SSH_PORT=2222
+      - GITEA__security__INSTALL_LOCK=true
+      - GITEA__database__DB_TYPE=sqlite3
+      - GITEA__database__PATH=/data/gitea/gitea.db
+      - GITEA__repository__ENABLE_PUSH_CREATE_USER=true
+      - GITEA__service__DISABLE_REGISTRATION=true
     volumes:
       - /opt/sinsera-stack/gitea:/data
     ports:
