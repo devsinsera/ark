@@ -1,0 +1,5 @@
+[Unit]
+Description=Sinsera self-hosted stack backup (Supabase DB + Gitea + config)
+[Service]
+Type=oneshot
+ExecStart=/opt/sinsera-stack/backup.sh
