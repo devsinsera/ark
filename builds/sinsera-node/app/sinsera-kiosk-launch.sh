@@ -1,36 +1,40 @@
 #!/bin/bash
-# Sinsera Node kiosk launcher — cage+cog → the generic kiosk entry, AUTO-AUTHENTICATED.
-# The screen's content is config-driven: App reads kiosk_config for ?node=<hostname> and
-# shows that node's chosen view (an in-app module, or a LAN URL like the camera wall).
-# Edit it in the Kiosks module; no reflash needed to change what a screen shows.
-# Reads the camera-account creds from /opt/sinsera-node/kiosk-auth.env, signs in fresh
-# on every boot, and hands cog the session in the URL hash (so private modules render
-# and it can't silently "log out" — it re-auths each launch).
+# Sinsera Node kiosk launcher — cage+cog. What each screen shows is baked per-node in
+# /opt/sinsera-node/display.env (resilient: works even if Supabase is down), via KIOSK_VIEW:
+#   KIOSK_VIEW=""            → the Sinsera dashboard/hub on sinsera.co   (Node 1 / main)
+#   KIOSK_VIEW="/weather"    → that in-app module on sinsera.co          (Node 2 / bedroom)
+#   KIOSK_VIEW="http://…"    → an external page, e.g. the LAN camera wall (Node 3 / lounge)
+# Also: KIOSK_CURSOR (ui→red-eye), KIOSK_ZOOM (app CSS zoom), KIOSK_SCALE (cog scale).
+# External views skip the Supabase auth (not needed) and keep working with Supabase down.
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
 export LIBSEAT_BACKEND=logind
 export WLR_NO_HARDWARE_CURSORS=1
-# Cursor is per-node: node-1 touchscreen → 'blank' (hidden); node-2 K400 trackpad →
-# 'DMZ-White' (visible). The bake writes /opt/sinsera-node/cursor.env per node.
 XCURSOR_THEME=blank
 [ -f /opt/sinsera-node/cursor.env ] && . /opt/sinsera-node/cursor.env
-export XCURSOR_THEME
+export XCURSOR_THEME XCURSOR_SIZE
+[ -f /opt/sinsera-node/display.env ] && . /opt/sinsera-node/display.env
+CB=$(date +%s)
 
-# cache-buster (_cb) forces cog to fetch the latest build, not a stale WebKit cache.
-# Generic entry: the Kiosks module decides what this screen shows (by ?node=<hostname>).
-BASE="https://sinsera.co/?kiosk=1&node=$(hostname)&_cb=$(date +%s)"
-URL="$BASE"
-
-# wait for the page to be reachable before launching (no white screen on boot)
-for i in $(seq 1 90); do curl -sf -o /dev/null --max-time 4 "$BASE" && break; sleep 2; done
-
-# auto-auth: sign in the camera account, embed the session in the hash
-AUTH=/opt/sinsera-node/kiosk-auth.env
-if [ -f "$AUTH" ]; then
-  set -a; . "$AUTH"; set +a
-  TOK=$(curl -s --max-time 15 -X POST "$SUPABASE_URL/auth/v1/token?grant_type=password" \
-    -H "apikey: $SUPABASE_ANON_KEY" -H "Content-Type: application/json" \
-    -d "{\"email\":\"$VIGIL_EMAIL\",\"password\":\"$VIGIL_PASSWORD\"}" 2>/dev/null)
-  HASH=$(printf '%s' "$TOK" | python3 -c '
+case "$KIOSK_VIEW" in
+  http://*|https://*)
+    # External view (LAN camera wall) — load directly, no Supabase auth needed.
+    SEP="?"; case "$KIOSK_VIEW" in *\?*) SEP="&";; esac
+    URL="${KIOSK_VIEW}${SEP}cursor=${KIOSK_CURSOR}&zoom=${KIOSK_ZOOM}&_cb=${CB}"
+    for i in $(seq 1 90); do curl -sf -o /dev/null --max-time 4 "$KIOSK_VIEW" && break; sleep 2; done
+    ;;
+  *)
+    # In-app view on sinsera.co (hub when KIOSK_VIEW is empty, else a route like /weather).
+    BASE="https://sinsera.co${KIOSK_VIEW}?kiosk=1&node=$(hostname)&cursor=${KIOSK_CURSOR}&zoom=${KIOSK_ZOOM}&_cb=${CB}"
+    URL="$BASE"
+    for i in $(seq 1 90); do curl -sf -o /dev/null --max-time 4 "$BASE" && break; sleep 2; done
+    # auto-auth: sign in the camera account, embed the session in the hash
+    AUTH=/opt/sinsera-node/kiosk-auth.env
+    if [ -f "$AUTH" ]; then
+      set -a; . "$AUTH"; set +a
+      TOK=$(curl -s --max-time 15 -X POST "$SUPABASE_URL/auth/v1/token?grant_type=password" \
+        -H "apikey: $SUPABASE_ANON_KEY" -H "Content-Type: application/json" \
+        -d "{\"email\":\"$VIGIL_EMAIL\",\"password\":\"$VIGIL_PASSWORD\"}" 2>/dev/null)
+      HASH=$(printf '%s' "$TOK" | python3 -c '
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -38,9 +42,10 @@ try:
         d["access_token"], d.get("expires_in", 3600), d["refresh_token"]))
 except Exception:
     print("")' 2>/dev/null)
-  [ -n "$HASH" ] && URL="$BASE#$HASH"
-fi
+      [ -n "$HASH" ] && URL="$BASE#$HASH"
+    fi
+    ;;
+esac
 
-# cog runs as a WAYLAND CLIENT of cage (NOT -P drm — that fights cage for DRM → black).
-# --cookie-store=always + --cookie-jar=sqlite persist logins across reboots (music sign-in sticks).
-exec cage -d -- cog --cookie-store=always --cookie-jar=sqlite:/home/kiosk/.cog-cookies.db "$URL" 2>>/var/log/sinsera-kiosk.log
+# cog runs as a WAYLAND CLIENT of cage. --cookie-store/jar persist logins across reboots.
+exec cage -d -- cog --scale=${KIOSK_SCALE:-1.0} --cookie-store=always --cookie-jar=sqlite:/home/kiosk/.cog-cookies.db "$URL" 2>>/var/log/sinsera-kiosk.log

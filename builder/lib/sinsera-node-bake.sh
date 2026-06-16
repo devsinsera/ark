@@ -95,12 +95,15 @@ docker run --rm --privileged -v "$BUILDS:/b" --entrypoint /bin/bash ark-builder:
   R=/m; mkdir -p $R; mount "$P2" $R
   sed -i "s/sinsera-node-2/sinsera-node-3/g" $R/etc/hostname $R/etc/hosts $R/etc/motd \
     $R/etc/systemd/system/agent-status-reporter.service 2>/dev/null || true
-  # Node 3 = lounge 75" Bravia driven by a Logitech K400 trackpad (NOT touch) → VISIBLE cursor.
-  # XCURSOR_THEME (read by the launcher) is the mechanism cage/cog actually honours; index.theme
-  # alone proved unreliable. Node 2 (bedroom touchscreen) keeps the blank (hidden) cursor.
-  printf "XCURSOR_THEME=DMZ-White\n" > $R/opt/sinsera-node/cursor.env
+  # Node 3 = lounge 75-inch Bravia + Logitech K400 trackpad (NOT touch) → VISIBLE cursor (DMZ-White,
+  # 96px so it is findable on a 4K screen). XCURSOR_THEME is what cage/cog honours; index.theme
+  # proved unreliable. Node 2 (bedroom touchscreen) keeps the blank (hidden) cursor.
+  printf "XCURSOR_THEME=DMZ-White\nXCURSOR_SIZE=96\n" > $R/opt/sinsera-node/cursor.env
+  # Node 3 shows the LAN camera wall (served by the eufy bridge on Node 1) — resilient to Supabase
+  # being down/402, and keeps camera-frame egress off Supabase. cursor=ui draws the red-eye on the wall.
+  printf "KIOSK_VIEW=http://192.168.4.163:8091/wall\nKIOSK_CURSOR=ui\nKIOSK_ZOOM=\nKIOSK_SCALE=1.0\n" > $R/opt/sinsera-node/display.env
   sync; umount $R 2>/dev/null; kpartx -d "$LOOP" 2>/dev/null || true; losetup -d "$LOOP"
-  echo "[node-bake] node-3 → hostname sinsera-node-3 + visible cursor (K400)"
+  echo "[node-bake] node-3 → hostname sinsera-node-3 + visible cursor (K400) + LAN wall view"
 '
 echo ""; echo "[node-bake] DONE:"
 echo "  $BUILDS/sinsera-node-2-pi5-8gb.img   (Node 2 · bedroom 18.5\" touchscreen · Wi-Fi · no cursor)"

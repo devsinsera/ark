@@ -119,9 +119,13 @@ open("/usr/share/icons/blank/index.theme","w").write("[Icon Theme]\nName=blank\n
 os.makedirs("/usr/share/icons/default", exist_ok=True)
 open("/usr/share/icons/default/index.theme","w").write("[Icon Theme]\nName=Default\nInherits=blank\n")
 PY
-# Per-node cursor the launcher actually honours (XCURSOR_THEME). Default = blank (hidden)
-# for the Node 1 touchscreen; the bake overwrites this with DMZ-White on Node 2 (K400 trackpad).
+# Per-node cursor the launcher honours (XCURSOR_THEME). Default = blank (hidden) for the
+# Node 2 bedroom touchscreen; the bake overwrites this with DMZ-White on Node 3 (K400 trackpad).
 echo "XCURSOR_THEME=blank" > /opt/sinsera-node/cursor.env
+# Per-node display config the launcher reads (what to show + cursor/zoom/scale). This base image
+# is Node 2 (bedroom 18.5" touchscreen) → the weather module, touch (no forced cursor). The bake
+# overwrites display.env on Node 3 (lounge) to point at the LAN camera wall.
+printf 'KIOSK_VIEW=/weather\nKIOSK_CURSOR=\nKIOSK_ZOOM=\nKIOSK_SCALE=1.0\n' > /opt/sinsera-node/display.env
 
 step "keep wifi awake — disable power-save (the classic Pi 'drops off the network' cause)"
 cat > /etc/systemd/system/wifi-powersave-off.service <<'WP'
