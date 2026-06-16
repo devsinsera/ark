@@ -1,15 +1,19 @@
 #!/bin/bash
-# Sinsera Node kiosk launcher — cage+cog → the Vigil camera wall, AUTO-AUTHENTICATED.
+# Sinsera Node kiosk launcher — cage+cog → the generic kiosk entry, AUTO-AUTHENTICATED.
+# The screen's content is config-driven: App reads kiosk_config for ?node=<hostname> and
+# shows that node's chosen view (an in-app module, or a LAN URL like the camera wall).
+# Edit it in the Kiosks module; no reflash needed to change what a screen shows.
 # Reads the camera-account creds from /opt/sinsera-node/kiosk-auth.env, signs in fresh
-# on every boot, and hands cog the session in the URL hash so the wall shows cameras
-# with zero interaction (and can't silently "log out" — it re-auths each launch).
+# on every boot, and hands cog the session in the URL hash (so private modules render
+# and it can't silently "log out" — it re-auths each launch).
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
 export LIBSEAT_BACKEND=logind
 export XCURSOR_THEME=blank
 export WLR_NO_HARDWARE_CURSORS=1
 
-# cache-buster (_cb) forces cog to fetch the latest build, not a stale WebKit cache
-BASE="https://sinsera.co/vigil?wall=1&kiosk=1&node=$(hostname)&_cb=$(date +%s)"
+# cache-buster (_cb) forces cog to fetch the latest build, not a stale WebKit cache.
+# Generic entry: the Kiosks module decides what this screen shows (by ?node=<hostname>).
+BASE="https://sinsera.co/?kiosk=1&node=$(hostname)&_cb=$(date +%s)"
 URL="$BASE"
 
 # wait for the page to be reachable before launching (no white screen on boot)
