@@ -1,11 +1,16 @@
 #!/bin/bash
-# Sinsera Node kiosk launcher — cage+cog. What each screen shows is baked per-node in
+# Sinsera Node kiosk launcher. What each screen shows is baked per-node in
 # /opt/sinsera-node/display.env (resilient: works even if Supabase is down), via KIOSK_VIEW:
 #   KIOSK_VIEW=""            → the Sinsera dashboard/hub on sinsera.co   (Node 1 / main)
 #   KIOSK_VIEW="/weather"    → that in-app module on sinsera.co          (Node 2 / bedroom)
 #   KIOSK_VIEW="http://…"    → an external page, e.g. the LAN camera wall (Node 3 / lounge)
-# Also: KIOSK_CURSOR (ui→red-eye), KIOSK_ZOOM (app CSS zoom), KIOSK_SCALE (cog scale).
+# Also: KIOSK_CURSOR (ui→red-eye), KIOSK_ZOOM (app CSS zoom), KIOSK_SCALE (device-scale).
 # External views skip the Supabase auth (not needed) and keep working with Supabase down.
+#
+# DISPLAY: prefers Xorg + openbox + chromium + unclutter (SINSERA-XSWITCH) — the only proven
+# way to hide the pointer on the touchscreens (cog/Wayland draws a cursor nothing can hide).
+# Falls back to cage+cog if Xorg fails so the screen never strands black. The actual chromium
+# launch lives in /home/kiosk/.config/openbox/autostart, which reads the URL from /tmp/kiosk_url.
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
 export LIBSEAT_BACKEND=logind
 export WLR_NO_HARDWARE_CURSORS=1
@@ -18,8 +23,7 @@ CB=$(date +%s)
 case "$KIOSK_VIEW" in
   http://*|https://*)
     # External view (LAN camera wall) — load directly, no Supabase auth needed.
-    SEP="?"; case "$KIOSK_VIEW" in *\?*) SEP="&";; esac
-    URL="${KIOSK_VIEW}${SEP}cursor=${KIOSK_CURSOR}&zoom=${KIOSK_ZOOM}&_cb=${CB}"
+    URL="${KIOSK_VIEW}"   # SINSERA-FIX: bridge exact-matches path; appended query 404s (white screen)
     for i in $(seq 1 90); do curl -sf -o /dev/null --max-time 4 "$KIOSK_VIEW" && break; sleep 2; done
     ;;
   *)
@@ -47,5 +51,13 @@ except Exception:
     ;;
 esac
 
-# cog runs as a WAYLAND CLIENT of cage. --cookie-store/jar persist logins across reboots.
+# SINSERA-XSWITCH: prefer Xorg+chromium+unclutter (hides the touch cursor cog can't);
+# fall back to cage+cog if X fails so the screen never strands black. The openbox autostart
+# reads the URL from /tmp/kiosk_url and runs the actual `chromium --kiosk` relaunch loop.
+if command -v startx >/dev/null 2>&1 && command -v chromium >/dev/null 2>&1 && command -v unclutter >/dev/null 2>&1; then
+  echo "$URL" > /tmp/kiosk_url
+  startx /usr/bin/openbox-session -- vt1 -keeptty >>/var/log/sinsera-kiosk.log 2>&1
+  echo "[launch] startx exited rc=$? — falling back to cage+cog" >>/var/log/sinsera-kiosk.log
+fi
+# Fallback only. cog runs as a WAYLAND CLIENT of cage. --cookie-store/jar persist logins.
 exec cage -d -- cog --scale=${KIOSK_SCALE:-1.0} --cookie-store=always --cookie-jar=sqlite:/home/kiosk/.cog-cookies.db "$URL" 2>>/var/log/sinsera-kiosk.log

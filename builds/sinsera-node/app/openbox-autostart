@@ -1,0 +1,21 @@
+# Sinsera kiosk X session (openbox). The cursor is hidden by unclutter — which is the
+# whole point of moving off cage+cog (cog draws a cursor nothing can hide on touch).
+xset s off &
+xset -dpms &
+xset s noblank &
+xrandr --auto &
+unclutter -idle 0.1 -root &
+[ -f /opt/sinsera-node/display.env ] && . /opt/sinsera-node/display.env
+DSF="${KIOSK_SCALE:-1.0}"
+while true; do
+  rm -f /home/kiosk/.config/chromium/Singleton* 2>/dev/null
+  URL=$(cat /tmp/kiosk_url 2>/dev/null); [ -n "$URL" ] || URL="https://sinsera.co/?kiosk=1"
+  chromium \
+    --kiosk --noerrdialogs --disable-infobars --no-first-run --start-maximized \
+    --disable-session-crashed-bubble --disable-features=Translate \
+    --check-for-update-interval=31536000 --ozone-platform=x11 \
+    --force-device-scale-factor="$DSF" \
+    --user-data-dir=/home/kiosk/.config/chromium \
+    "$URL" >>/var/log/sinsera-kiosk.log 2>&1
+  sleep 3
+done &

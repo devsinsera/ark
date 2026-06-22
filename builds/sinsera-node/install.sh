@@ -1,8 +1,11 @@
 #!/bin/bash
 # sinsera-node install.sh — Pi 5 8GB kiosk image (boot from the NVMe SSD on the HAT).
-# Display: cage + cog (WPE on DRM) → the generic kiosk entry; what each screen shows is
-# config-driven per node (kiosk_config). Node 2 = bedroom 18.5" touchscreen (no cursor);
-# Node 3 = lounge 75" Bravia + Logitech K400 trackpad (visible cursor, set in the bake clone).
+# Display: Xorg + openbox + chromium --kiosk + unclutter (SINSERA-XSWITCH) → the proven recipe
+# copied from the 16GB main. cage+cog (WPE on DRM) is kept ONLY as an auto-fallback if Xorg fails.
+# Why X not cog: on a touchscreen cog/Wayland draws a pointer NOTHING can hide
+# (WLR_NO_HARDWARE_CURSORS / XCURSOR_THEME=blank / CSS cursor:none all ignored) — only
+# `unclutter` under Xorg hides it. What each screen shows is config-driven per node
+# (/opt/sinsera-node/display.env). Node 2 = bedroom 18.5" touchscreen; Node 3 = lounge 75" TV.
 # (Node 1 = the main Sinsera Core Pi, hostname sinsera-core — not built by this profile.)
 # Claude Code builds off whatever USB is inserted (ttyd + tmux + auto-resume).
 # secrets.env: SSH_PUBKEY, WIFI_SSID, WIFI_KEY, ANON_KEY, HOSTNAME_NEW
@@ -14,12 +17,17 @@ APPSRC=/opt/sinsera-node/app
 export DEBIAN_FRONTEND=noninteractive
 step(){ echo; echo "== $* =="; }
 
-step "apt: cage+cog kiosk + Claude stack"
+step "apt: Xorg+chromium+openbox+unclutter kiosk (primary) + cage+cog (fallback) + Claude stack"
 apt-get update -y
+# NOTE: do NOT install xserver-xorg-video-fbdev — its presence makes Xorg fail on the Pi 5
+# with "Cannot run in framebuffer mode". modesetting (via 99-vc4-kms.conf below) is what works.
 apt-get install -y --no-install-recommends \
+  xserver-xorg-core xserver-xorg-legacy xinit xserver-xorg-input-libinput \
+  x11-xserver-utils openbox unclutter chromium \
   cage cog libseat1 \
   fonts-dejavu-core fonts-liberation ca-certificates curl \
   nodejs npm tmux git python3 python3-pip rfkill raspi-config iw dmz-cursor-theme
+apt-get purge -y xserver-xorg-video-fbdev 2>/dev/null || true
 
 step "ttyd web terminal (arm64)"
 curl -fsSL -o /usr/local/bin/ttyd https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.aarch64 && chmod +x /usr/local/bin/ttyd
@@ -33,7 +41,7 @@ sed -i 's/^CONF_SWAPSIZE=.*/CONF_SWAPSIZE=1024/' /etc/dphys-swapfile 2>/dev/null
 BOOTDIR=/boot/firmware; [ -d "$BOOTDIR" ] || BOOTDIR=/boot
 BOOTCFG="$BOOTDIR/config.txt"
 if [ -f "$BOOTCFG" ] && ! grep -q "sinsera-node" "$BOOTCFG"; then
-  printf '\n# sinsera-node — cage auto-detects the connected display (native res)\ndtparam=cooling_fan=on\nhdmi_force_hotplug=1\ndisable_overscan=1\n' >> "$BOOTCFG"
+  printf '\n# sinsera-node — Xorg/xrandr auto-detects the connected display (native res)\ndtparam=cooling_fan=on\nhdmi_force_hotplug=1\ndisable_overscan=1\n' >> "$BOOTCFG"
 fi
 
 step "mask first-boot wizard + disable cloud-init"
@@ -141,7 +149,7 @@ WantedBy=multi-user.target
 WP
 systemctl enable wifi-powersave-off.service
 
-step "kiosk user + tty1 autologin → cage+cog (sinsera.co)"
+step "kiosk user + tty1 autologin → Xorg+openbox+chromium (sinsera.co; cage+cog fallback)"
 id kiosk >/dev/null 2>&1 || { useradd -m -s /bin/bash kiosk; passwd -l kiosk; }
 for g in video audio input render tty seat plugdev netdev; do getent group "$g" >/dev/null 2>&1 && usermod -aG "$g" kiosk; done
 mkdir -p /etc/systemd/system/getty@tty1.service.d
@@ -155,6 +163,33 @@ systemctl enable getty@tty1.service   # auto-start is unreliable on raspios → 
 # session in the URL hash → cameras show zero-touch) + cache-bust + transparent cursor.
 cp "$APPSRC"/sinsera-kiosk-launch.sh /usr/local/bin/sinsera-kiosk-launch.sh
 chmod 755 /usr/local/bin/sinsera-kiosk-launch.sh
+
+step "Xorg recipe (SINSERA-XSWITCH) — modesetting on vc4 + unclutter-friendly Xwrapper"
+# (a) force the modesetting driver as PrimaryGPU on the vc4 (card1) — without this Xorg either
+# refuses to start or picks the wrong node; (b) let any user start X rootlessly (the kiosk
+# autologin user runs `startx`). These two files are exactly what's live on the running fleet.
+mkdir -p /etc/X11/xorg.conf.d
+cat > /etc/X11/xorg.conf.d/99-vc4-kms.conf <<'XK'
+Section "OutputClass"
+  Identifier  "vc4"
+  MatchDriver "vc4"
+  Driver      "modesetting"
+  Option      "PrimaryGPU" "true"
+EndSection
+XK
+cat > /etc/X11/Xwrapper.config <<'XW'
+allowed_users=anybody
+needs_root_rights=no
+XW
+
+step "openbox autostart — unclutter (hides touch cursor) + chromium --kiosk relaunch loop"
+# The launcher writes the resolved URL to /tmp/kiosk_url, then `startx openbox-session`; this
+# autostart hides the cursor with unclutter (the whole reason for Xorg over cog) and runs the
+# crash-relaunch chromium loop at the per-node device-scale (KIOSK_SCALE from display.env).
+mkdir -p /home/kiosk/.config/openbox
+cp "$APPSRC"/openbox-autostart /home/kiosk/.config/openbox/autostart
+chmod 755 /home/kiosk/.config/openbox/autostart
+chown -R kiosk:kiosk /home/kiosk/.config
 # Camera-account creds the launcher reads — MUST be kiosk-readable (the launcher runs as kiosk)
 cat > /opt/sinsera-node/kiosk-auth.env <<KA
 SUPABASE_URL=${SUPABASE_URL:-https://lkhtgkmivqwgnvzmjbhr.supabase.co}
@@ -301,7 +336,7 @@ systemctl enable nvme-bootorder-firstboot.service 2>/dev/null
 step "MOTD + done"
 cat > /etc/motd <<M
 
-  $HOSTNAME_NEW — Pi 5 8GB secondary · cage+cog → $KIOSK_URL (no cursor, auto-detect display)
+  $HOSTNAME_NEW — Pi 5 8GB secondary · Xorg+chromium → $KIOSK_URL (no cursor, auto-detect display; cage+cog fallback)
   Claude builds off any inserted USB. SSH: peta@$HOSTNAME_NEW.local · ttyd :7681
   Sign in once: open ttyd or tty2, run \`claude login\`.
 M
