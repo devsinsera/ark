@@ -31,21 +31,68 @@ case "$KIOSK_VIEW" in
     BASE="https://sinsera.co${KIOSK_VIEW}?kiosk=1&node=$(hostname)&cursor=${KIOSK_CURSOR}&zoom=${KIOSK_ZOOM}&_cb=${CB}"
     URL="$BASE"
     for i in $(seq 1 90); do curl -sf -o /dev/null --max-time 4 "$BASE" && break; sleep 2; done
-    # auto-auth: sign in the camera account, embed the session in the hash
+    # auto-auth: hand the app a session in the URL hash. REUSE the saved session
+    # wherever possible — a fresh password grant on every boot/relaunch created a
+    # new auth session each time (thousands of them) and was a major driver of the
+    # egress overage that suspended the cloud project. Order: (1) reuse the cached
+    # access_token while it's still valid → NO network; (2) else refresh_token grant
+    # (cheap, no new session); (3) password grant only as a last resort / first run.
+    # The cache survives reboots, so steady-state makes ZERO sign-in calls.
     AUTH=/opt/sinsera-node/kiosk-auth.env
     if [ -f "$AUTH" ]; then
       set -a; . "$AUTH"; set +a
-      TOK=$(curl -s --max-time 15 -X POST "$SUPABASE_URL/auth/v1/token?grant_type=password" \
-        -H "apikey: $SUPABASE_ANON_KEY" -H "Content-Type: application/json" \
-        -d "{\"email\":\"$VIGIL_EMAIL\",\"password\":\"$VIGIL_PASSWORD\"}" 2>/dev/null)
-      HASH=$(printf '%s' "$TOK" | python3 -c '
-import sys, json
+      HASH=$(SESSION_CACHE=/opt/sinsera-node/kiosk-session.json python3 - <<'PY' 2>/dev/null
+import json, os, time, urllib.request
+
+URL   = os.environ.get("SUPABASE_URL", "").rstrip("/")
+ANON  = os.environ.get("SUPABASE_ANON_KEY", "")
+EMAIL = os.environ.get("VIGIL_EMAIL", "")
+PASS  = os.environ.get("VIGIL_PASSWORD", "")
+CACHE = os.environ.get("SESSION_CACHE", "/opt/sinsera-node/kiosk-session.json")
+SKEW  = 300  # treat a token expiring within 5 min as already expired
+
+def post(grant, body):
+    req = urllib.request.Request(
+        f"{URL}/auth/v1/token?grant_type={grant}",
+        data=json.dumps(body).encode(),
+        headers={"apikey": ANON, "Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read())
+
+def save(d):
+    d.setdefault("expires_at", int(time.time()) + int(d.get("expires_in", 3600)))
+    try:
+        with open(CACHE, "w") as f: json.dump(d, f)
+        os.chmod(CACHE, 0o600)
+    except Exception: pass
+
+d = None
 try:
-    d = json.load(sys.stdin)
+    with open(CACHE) as f: d = json.load(f)
+except Exception: d = None
+
+# (1) reuse a still-valid cached token — no network at all
+if d and d.get("access_token") and d.get("refresh_token") \
+   and int(d.get("expires_at", 0)) - SKEW > time.time():
+    pass
+# (2) refresh with the cached refresh_token (no new auth session)
+elif d and d.get("refresh_token"):
+    try:
+        d = post("refresh_token", {"refresh_token": d["refresh_token"]}); save(d)
+    except Exception:
+        d = None
+# (3) last resort: password grant (first run, or refresh failed/expired)
+if not (d and d.get("access_token") and d.get("refresh_token")):
+    try:
+        d = post("password", {"email": EMAIL, "password": PASS}); save(d)
+    except Exception:
+        d = None
+
+if d and d.get("access_token") and d.get("refresh_token"):
     print("access_token=%s&expires_in=%s&refresh_token=%s&token_type=bearer&type=magiclink" % (
         d["access_token"], d.get("expires_in", 3600), d["refresh_token"]))
-except Exception:
-    print("")' 2>/dev/null)
+PY
+)
       [ -n "$HASH" ] && URL="$BASE#$HASH"
     fi
     ;;
