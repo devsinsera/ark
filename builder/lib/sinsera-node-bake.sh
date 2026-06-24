@@ -34,10 +34,10 @@ if [ -f "$HOME/.ark/vigil.env" ]; then set -a; source "$HOME/.ark/vigil.env"; se
 echo "[node-bake] decompress base → $OUT_IMG"
 xz -dck "$SRC_XZ" > "$OUT_IMG"
 
-echo "[node-bake] expand rootfs (+2600 MB for cage/cog/node/claude)"
+echo "[node-bake] expand rootfs (+3600 MB for Xorg+chromium+openbox + cage/cog fallback + node/claude)"
 docker run --rm --privileged -v "$OUT_DIR:/baking" --entrypoint /bin/bash ark-builder:0.1 -c '
   set -e; IMG=/baking/ark-built.img
-  SZ=$(stat -c%s "$IMG"); truncate -s $((SZ + 2600*1024*1024)) "$IMG"
+  SZ=$(stat -c%s "$IMG"); truncate -s $((SZ + 3600*1024*1024)) "$IMG"
   START=$(parted -s "$IMG" unit s print | awk "\$1==2{print \$2}" | tr -d s)
   parted -s "$IMG" rm 2; parted -s "$IMG" unit s mkpart primary ${START}s 100%
   LOOP=$(losetup -fP --show "$IMG"); P2=${LOOP}p2
