@@ -9,19 +9,23 @@ Lightweight by design: it pulls JPEG *snapshots* from the eufy bridge
 (/snap/<serial>) ~1.5 fps per tile and tiles them — not live video — so the
 Zero 2 W stays smooth. /status (every 3s) drives the per-tile motion/live border.
 
-The four Eufy cams only (Back/Door/Front/Front Yard). The old .179 "Front Door
-LAN" cam IS this Pi now, so it's deliberately out of the grid.
+The camera list is fetched LIVE from the bridge's /cams endpoint, so a newly
+paired SPARE camera shows up automatically (and the grid auto-sizes) without
+editing this file — re-pulled every 60s. If the bridge is unreachable at boot we
+fall back to the core four so the wall is never blank. (The old .179 "Front Door
+LAN" cam IS this Pi, so the bridge keeps it off /cams and out of this grid.)
 
 Tune over SSH: env VIGIL_BRIDGE / VIGIL_TILE_FPS, or the constants below.
 Log: /var/log/vigil-wall.log
 """
 from __future__ import annotations
-import os, io, time, threading
+import os, io, time, math, threading
 import pygame
 import requests
 
 BRIDGE       = os.environ.get("VIGIL_BRIDGE", "http://192.168.4.163:8091")
 FPS_PER_TILE = float(os.environ.get("VIGIL_TILE_FPS", "1.5"))  # snapshot refresh/cam
+CAMS_REFRESH = 60.0   # re-pull /cams this often so a freshly paired spare appears
 RES          = (1920, 1080)
 BG    = (8, 4, 6)
 GOLD  = (212, 160, 23)
@@ -29,13 +33,29 @@ EMBER = (255, 69, 0)
 INK   = (201, 168, 130)
 DIM   = (122, 92, 74)
 
-# serial → label. The 2x2 grid order.
-CAMERAS = [
+# Fallback ONLY — used when the bridge's /cams endpoint can't be reached at boot.
+# Normally the list (core cameras + any spare) comes live from the bridge.
+FALLBACK_CAMS = [
     ("T8160T1224041058", "BACK"),
     ("T8210P812335014E", "DOOR"),
     ("T8170T1025032AD7", "FRONT"),
     ("T8410P5025402107", "FRONT YARD"),
 ]
+
+
+def fetch_cams():
+    """[(serial, LABEL)] from the bridge /cams (auto-discovered: core + spare).
+    Falls back to FALLBACK_CAMS when the bridge is unreachable so we never blank."""
+    try:
+        r = requests.get(f"{BRIDGE}/cams", timeout=6)
+        if r.status_code == 200:
+            cams = [(c["serial"], (c.get("label") or c["serial"]).upper())
+                    for c in (r.json() or []) if c.get("serial")]
+            if cams:
+                return cams
+    except Exception:
+        pass
+    return FALLBACK_CAMS
 
 
 class Tile:
@@ -61,6 +81,30 @@ class Tile:
         return False
 
 
+class Wall:
+    """Live, thread-safe ordered set of tiles. Tile objects are REUSED across a
+    /cams refresh so each tile keeps its cached frame and the picture never blinks."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.tiles = []
+        self.set_cams(fetch_cams())
+
+    def set_cams(self, cams):
+        with self.lock:
+            keep = {t.serial: t for t in self.tiles}
+            self.tiles = [keep.get(s) or Tile(s, l) for s, l in cams]
+
+    def snapshot(self):
+        with self.lock:
+            return list(self.tiles)
+
+
+def refresher(wall):
+    while True:
+        time.sleep(CAMS_REFRESH)
+        wall.set_cams(fetch_cams())
+
+
 def poll_status(state):
     while True:
         try:
@@ -75,12 +119,16 @@ def poll_status(state):
         time.sleep(3)
 
 
-def rotator(tiles):
+def rotator(wall):
     # eufy battery cams can't all stream at once (HomeBase P2P ~2 max), so ROTATE:
     # warm one camera via /snap until a frame lands, grab a few fresh frames, then
-    # move on. Each tile keeps its last still → all 4 show an image, refreshed every
-    # ~40s as the cycle comes round. One camera warm at a time stays within the limit.
+    # move on. Each tile keeps its last still → all show an image, refreshed as the
+    # cycle comes round. One camera warm at a time stays within the P2P limit.
     while True:
+        tiles = wall.snapshot()
+        if not tiles:
+            time.sleep(1)
+            continue
         for t in tiles:
             warmed = False
             for _ in range(8):          # cold /snap 503s until the stream produces a frame
@@ -121,20 +169,16 @@ def main():
             return pygame.font.Font(None, sz)
     font = _font(24, bold=True)
     small = _font(16)
-
-    # A persistent top header so a live-but-camera-less screen is unmistakably NOT blank.
     hdr_font = _font(20, bold=True)
 
-    tiles = [Tile(s, l) for s, l in CAMERAS]
-    threading.Thread(target=rotator, args=(tiles,), daemon=True).start()
+    wall = Wall()
+    threading.Thread(target=rotator, args=(wall,), daemon=True).start()
+    threading.Thread(target=refresher, args=(wall,), daemon=True).start()
     status: dict = {}
     threading.Thread(target=poll_status, args=(status,), daemon=True).start()
 
-    cols, rows, gap = 2, 2, 6
-    tw = (W - gap * (cols + 1)) // cols
-    th = (H - gap * (rows + 1)) // rows
+    gap = 6
     clock = pygame.time.Clock()
-
     frame = 0
     while True:
         for e in pygame.event.get():
@@ -142,6 +186,14 @@ def main():
                 return
             if e.type == pygame.KEYDOWN and e.key in (pygame.K_ESCAPE, pygame.K_q):
                 return
+
+        # Grid auto-sizes to the live camera count (4 → 2x2, 5/6 → 3x2, 9 → 3x3…).
+        tiles = wall.snapshot()
+        n = len(tiles)
+        cols = max(1, math.ceil(math.sqrt(n))) if n else 1
+        rows = max(1, math.ceil(n / cols)) if n else 1
+        tw = (W - gap * (cols + 1)) // cols
+        th = (H - gap * (rows + 1)) // rows
 
         screen.fill(BG)
         for i, t in enumerate(tiles):
@@ -177,7 +229,7 @@ def main():
 
         loaded = sum(1 for t in tiles if t.surf is not None)
         pygame.draw.rect(screen, (150, 20, 20), (0, 0, W, 46))   # bright header strip (proves HDMI output)
-        screen.blit(hdr_font.render(f"VIGIL · NODE 3 · {loaded}/4 cameras live", True, (255, 224, 130)), (18, 12))
+        screen.blit(hdr_font.render(f"VIGIL · NODE 3 · {loaded}/{n} cameras live", True, (255, 224, 130)), (18, 12))
 
         pygame.display.flip()
         clock.tick(12)
@@ -185,7 +237,7 @@ def main():
         if frame % 120 == 0:
             try:
                 with open("/var/log/vigil-wall.log", "a") as _l:
-                    _l.write(f"[hb] frame={frame} cams={loaded}/4\n")
+                    _l.write(f"[hb] frame={frame} cams={loaded}/{n}\n")
             except Exception:
                 pass
 
