@@ -28,8 +28,8 @@ OPEN_BIT_SET_MEANS_OPEN = True
 
 # BLE MAC -> (vigil_cameras slug, label). Slugs match the rows already created.
 SENSORS = {
-    "B0:E9:FE:54:D6:54": ("switchbot-b0e9fe54d654", "Bedroom Door"),
-    "B0:E9:FE:54:CC:13": ("switchbot-b0e9fe54cc13", "Robe Door"),
+    "B0:E9:FE:54:D6:54": ("switchbot-b0e9fe54d654", "Robe Door"),
+    "B0:E9:FE:54:CC:13": ("switchbot-b0e9fe54cc13", "Bedroom Door"),
 }
 
 
