@@ -67,16 +67,25 @@ _tok = {"at": None, "uid": None, "exp": 0.0}
 _cam_ids = {}
 
 
-def _req(method, path, body=None, token=None):
+def _req(method, path, body=None, token=None, tries=3):
+    """Supabase REST/auth call with retries — the node's link to the cloud DB times
+    out intermittently, and a dropped retry used to lose door events."""
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(SB_URL + path, data=data, method=method)
-    req.add_header("apikey", ANON)
-    req.add_header("Content-Type", "application/json")
-    if token:
-        req.add_header("Authorization", "Bearer " + token)
-    with urllib.request.urlopen(req, timeout=15) as r:
-        raw = r.read().decode()
-        return json.loads(raw) if raw else None
+    last = None
+    for attempt in range(tries):
+        try:
+            req = urllib.request.Request(SB_URL + path, data=data, method=method)
+            req.add_header("apikey", ANON)
+            req.add_header("Content-Type", "application/json")
+            if token:
+                req.add_header("Authorization", "Bearer " + token)
+            with urllib.request.urlopen(req, timeout=20) as r:
+                raw = r.read().decode()
+                return json.loads(raw) if raw else None
+        except Exception as e:
+            last = e
+            time.sleep(2 * (attempt + 1))
+    raise last
 
 
 def auth():
@@ -122,20 +131,24 @@ def upsert_sensor(slug, label, status, battery):
             row.update(payload)
             _req("POST", "/rest/v1/vigil_cameras", row, token=_tok["at"])
             cam_id(slug)
+        return True
     except Exception as e:
         log("upsert %s: %s" % (slug, e))
+        return False
 
 
 def post_event(slug, kind, note):
     cid = cam_id(slug)
     if not cid:
-        return
+        return False
     try:
         _req("POST", "/rest/v1/vigil_events",
              {"owner_id": _tok["uid"], "camera_id": cid, "kind": kind, "note": note},
              token=_tok["at"])
+        return True
     except Exception as e:
         log("event %s: %s" % (slug, e))
+        return False
 
 
 def read_servicedata(mac):
@@ -197,14 +210,20 @@ def main():
                 continue
             status = "open" if d["open"] else "closed"
             now = time.time()
-            changed = mac in state and state[mac] != d["open"]
-            if changed or mac not in state or now - last_push.get(mac, 0) > HEARTBEAT:
-                upsert_sensor(slug, label, status, d["battery"])
-                last_push[mac] = now
-            if changed:
-                post_event(slug, "contact", "%s %s" % (label, "opened" if d["open"] else "closed"))
-                log("%s -> %s (battery %d%%)" % (label, status, d["battery"]))
-            state[mac] = d["open"]
+            first = mac not in state
+            changed = (not first) and state[mac] != d["open"]
+            # keep the sensor row warm (status/battery/last_seen), heartbeat-throttled
+            if first or changed or now - last_push.get(mac, 0) > HEARTBEAT:
+                if upsert_sensor(slug, label, status, d["battery"]):
+                    last_push[mac] = now
+            if first:
+                state[mac] = d["open"]              # baseline read — no event
+            elif changed:
+                if post_event(slug, "contact", "%s %s" % (label, "opened" if d["open"] else "closed")):
+                    log("%s -> %s (battery %d%%)" % (label, status, d["battery"]))
+                    state[mac] = d["open"]          # only advance once the event is in
+                else:
+                    log("%s changed to %s but post failed — retrying next cycle" % (label, status))
         time.sleep(LOOP_SLEEP)
 
 
