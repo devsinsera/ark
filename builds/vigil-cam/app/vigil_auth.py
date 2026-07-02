@@ -217,6 +217,16 @@ class VigilCloud:
         except Exception:
             return False
 
+    # Dashboard → Pi: is this camera ARMED? (auto-record motion clips when true.)
+    def poll_armed(self) -> bool:
+        if not self.enabled or not self.camera_id:
+            return False
+        try:
+            r = self._rest("GET", "vigil_cameras", params={"id": f"eq.{self.camera_id}", "select": "motion_armed"})
+            return bool(r.status_code < 300 and r.json() and r.json()[0].get("motion_armed"))
+        except Exception:
+            return False
+
     def upload_recording(self, mp4_bytes: bytes, started_at: str, duration_s: float, kind: str = "motion") -> None:
         if not self.enabled or not self.uid:
             return

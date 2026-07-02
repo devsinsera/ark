@@ -45,6 +45,22 @@ RECORD_SECS  = int(os.environ.get("RECORD_SECS", "8"))            # clip length
 RECORD_ON_MOTION = os.environ.get("RECORD_ON_MOTION", "0") == "1" # auto-record motion clips
 RECORD_DIR   = os.environ.get("RECORD_DIR", "/opt/vigil/recordings")
 
+# Optional "HH:MM-HH:MM" window (supports overnight, e.g. 22:00-06:00). When set,
+# armed/auto motion-recording only fires inside it. Empty = any time.
+def _parse_window(spec):
+    try:
+        a, b = spec.split("-"); ah, am = a.split(":"); bh, bm = b.split(":")
+        return (int(ah) * 60 + int(am), int(bh) * 60 + int(bm))
+    except Exception:
+        return None
+RECORD_WINDOW = _parse_window(os.environ.get("RECORD_WINDOW", ""))
+def _in_window(now):
+    if not RECORD_WINDOW:
+        return True
+    lt = time.localtime(now); m = lt.tm_hour * 60 + lt.tm_min
+    s, e = RECORD_WINDOW
+    return (s <= m < e) if s <= e else (m >= s or m < e)
+
 # ── Motion display: black framebuffer that flashes RED on motion ──
 # No-ops until an HDMI screen is plugged in (then /dev/fb0 appears). Best-effort.
 _ind = {"on": None}
@@ -103,6 +119,18 @@ def main() -> None:
                 record_req.set()
             time.sleep(3)
     threading.Thread(target=poll_req, daemon=True).start()
+
+    # Background: mirror this camera's ARMED state (dashboard toggle) so motion
+    # auto-records only when the user has armed it (within RECORD_WINDOW if set).
+    armed = threading.Event()
+    def poll_armed():
+        while True:
+            try:
+                armed.set() if cloud.poll_armed() else armed.clear()
+            except Exception:
+                pass
+            time.sleep(5)
+    threading.Thread(target=poll_armed, daemon=True).start()
 
     # Background recording uploader (off the capture thread).
     def upload_rec(path, started, dur, kind):
@@ -176,8 +204,9 @@ def main() -> None:
                 try: upq.put_nowait(data)
                 except queue.Full: pass
 
-            # ── Recording: manual (dashboard) or motion (if enabled) ──
-            if writer is None and (record_req.is_set() or (RECORD_ON_MOTION and motion)):
+            # ── Recording: manual (dashboard) or motion (armed / RECORD_ON_MOTION, within window) ──
+            auto_rec = (RECORD_ON_MOTION or armed.is_set()) and motion and _in_window(now)
+            if writer is None and (record_req.is_set() or auto_rec):
                 rec_kind = "manual" if record_req.is_set() else "motion"; record_req.clear()
                 try:
                     os.makedirs(RECORD_DIR, exist_ok=True)
