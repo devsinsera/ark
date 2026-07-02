@@ -44,6 +44,25 @@ HEARTBEAT_S  = int(os.environ.get("HEARTBEAT_S", "30"))
 RECORD_SECS  = int(os.environ.get("RECORD_SECS", "8"))            # clip length
 RECORD_ON_MOTION = os.environ.get("RECORD_ON_MOTION", "0") == "1" # auto-record motion clips
 RECORD_DIR   = os.environ.get("RECORD_DIR", "/opt/vigil/recordings")
+RECORD_MAX_GB = float(os.environ.get("RECORD_MAX_GB", "50"))       # local retention cap; oldest clips pruned over this
+
+def _prune_recordings():
+    """Keep the local recordings dir under RECORD_MAX_GB by deleting the oldest clips."""
+    import time as _t
+    limit = RECORD_MAX_GB * (1024 ** 3)
+    while True:
+        try:
+            fs = sorted((os.path.join(RECORD_DIR, f) for f in os.listdir(RECORD_DIR) if f.endswith(".mp4")),
+                        key=os.path.getmtime)
+            total = sum(os.path.getsize(f) for f in fs)
+            n = 0
+            while total > limit and fs:
+                total -= os.path.getsize(fs[0]); os.remove(fs.pop(0)); n += 1
+            if n:
+                print(f"[vigil] pruned {n} old recordings (cap {RECORD_MAX_GB}GB)", flush=True)
+        except OSError:
+            pass
+        _t.sleep(3600)
 
 # Optional "HH:MM-HH:MM" window (supports overnight, e.g. 22:00-06:00). When set,
 # armed/auto motion-recording only fires inside it. Empty = any time.
@@ -94,6 +113,7 @@ def open_camera():
 
 def main() -> None:
     print(f"[vigil] starting — {W}x{H}@{CAM_FPS} cloud~{CLOUD_FPS}fps motion@{MOTION_THRESH}", flush=True)
+    threading.Thread(target=_prune_recordings, daemon=True).start()  # local storage retention
     serve_mjpeg(MJPEG_PORT)
     cloud = VigilCloud()
 

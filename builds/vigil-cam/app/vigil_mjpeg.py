@@ -19,6 +19,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 _TOKEN = os.environ.get("MJPEG_TOKEN", "").strip()
+RECORD_DIR = os.environ.get("RECORD_DIR", "/opt/vigil/recordings")
 
 
 class _Latest:
@@ -89,6 +90,37 @@ class _Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 return
             return
+        if p == "/rec" or p == "/rec/":
+            # Local recordings browser (LAN) — newest first, plays from Node's disk.
+            import html as _h
+            try:
+                files = sorted((f for f in os.listdir(RECORD_DIR) if f.endswith(".mp4")), reverse=True)
+            except OSError:
+                files = []
+            rows = "".join(
+                "<li><a href='/rec/{f}' style='color:#e8d5c4;text-decoration:none'>&#9654; {f}</a>"
+                " <span style='color:#7a5c4a'>({kb} KB)</span></li>".format(
+                    f=_h.escape(fn), kb=os.path.getsize(os.path.join(RECORD_DIR, fn)) // 1024)
+                for fn in files)
+            body = ("<html><head><meta name=viewport content='width=device-width,initial-scale=1'></head>"
+                    "<body style='margin:0;background:#0a0005;color:#e8d5c4;font-family:monospace;padding:18px'>"
+                    "<h2 style='letter-spacing:3px;color:#d4a017'>VIGIL &middot; RECORDINGS ({n})</h2>"
+                    "<ul style='line-height:2;list-style:none;padding:0'>{rows}</ul>"
+                    "</body></html>").format(n=len(files), rows=rows or "<li>No recordings yet.</li>").encode()
+            self.send_response(200); self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
+        if p.startswith("/rec/"):
+            fn = os.path.basename(p[len("/rec/"):])
+            fp = os.path.join(RECORD_DIR, fn)
+            if fn.endswith(".mp4") and os.path.isfile(fp):
+                try:
+                    with open(fp, "rb") as fh:
+                        data = fh.read()
+                    self.send_response(200); self.send_header("Content-Type", "video/mp4")
+                    self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data); return
+                except OSError:
+                    pass
+            self.send_response(404); self.end_headers(); return
         self.send_response(404); self.end_headers()
 
 
