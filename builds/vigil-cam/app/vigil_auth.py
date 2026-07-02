@@ -56,6 +56,25 @@ def _telemetry() -> dict:
         pass
     return out
 
+
+def _netloc() -> dict:
+    """Current LAN ip + this instance's MJPEG port, so the DB HD link stays
+    correct across DHCP lease changes."""
+    out: dict = {}
+    try:
+        out["mjpeg_port"] = int(os.environ.get("MJPEG_PORT", "8090"))
+    except Exception:
+        pass
+    try:
+        import socket
+        sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sk.connect(("8.8.8.8", 80))   # no packets sent; picks the default-route src IP
+        out["ip_address"] = sk.getsockname()[0]
+        sk.close()
+    except Exception:
+        pass
+    return out
+
 import requests
 
 try:
@@ -184,7 +203,7 @@ class VigilCloud:
             return
         try:
             self._rest("PATCH", f"vigil_cameras?id=eq.{self.camera_id}",
-                       json_body={"status": "online", "last_seen_at": _now_iso(), **_telemetry()})
+                       json_body={"status": "online", "last_seen_at": _now_iso(), **_telemetry(), **_netloc()})
         except Exception:
             pass
 

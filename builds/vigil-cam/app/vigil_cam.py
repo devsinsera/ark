@@ -168,7 +168,7 @@ def main() -> None:
                 if now - last_motion_event > MOTION_COOLDOWN:
                     last_motion_event = now
                     threading.Thread(target=cloud.motion_event, args=("motion detected",), daemon=True).start()
-                    print(f"[vigil] MOTION @ {ts}", flush=True)
+                    print("[vigil] MOTION", flush=True)
 
             rate = CLOUD_FPS_HOT if now < hot_until else CLOUD_FPS
             if now - last_cloud >= 1.0 / max(0.2, rate):
