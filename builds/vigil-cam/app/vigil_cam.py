@@ -34,6 +34,8 @@ H            = int(os.environ.get("CAM_HEIGHT", "480"))
 CAM_FPS      = int(os.environ.get("CAM_FPS", "15"))          # capture/LAN rate
 CAM_INDEX    = int(os.environ.get("CAM_INDEX", "0"))
 CAM_V4L2     = os.environ.get("CAM_V4L2", "").strip()  # per-cam v4l2 controls "k=v,k=v" (WB/exposure/contrast tuning)
+CAM_FOURCC   = os.environ.get("CAM_FOURCC", "").strip()  # e.g. "MJPG" — needed for 720p+ over USB2
+SHARPEN      = float(os.environ.get("CAM_SHARPEN", "0"))  # unsharp-mask amount (0=off, ~0.6 crisps a soft lens)
 JPEG_Q       = int(os.environ.get("JPEG_QUALITY", "75"))
 CLOUD_FPS    = float(os.environ.get("CLOUD_FPS", "2"))        # remote snapshot rate (idle)
 CLOUD_FPS_HOT= float(os.environ.get("CLOUD_FPS_MOTION", "4")) # remote rate while motion
@@ -132,6 +134,9 @@ def _apply_v4l2():
 
 def open_camera():
     cap = cv2.VideoCapture(CAM_INDEX)
+    if CAM_FOURCC:  # set the codec before the resolution (drivers gate high-res modes on MJPG)
+        try: cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*CAM_FOURCC))
+        except Exception: pass
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
     cap.set(cv2.CAP_PROP_FPS, CAM_FPS)
@@ -231,6 +236,8 @@ def main() -> None:
 
         if frame.shape[1] != W or frame.shape[0] != H:
             frame = cv2.resize(frame, (W, H))
+        if SHARPEN > 0:  # unsharp mask — crisps a soft/fixed-focus lens
+            frame = cv2.addWeighted(frame, 1.0 + SHARPEN, cv2.GaussianBlur(frame, (0, 0), 1.4), -SHARPEN, 0)
 
         # ── Motion: downscaled grayscale frame-diff ──
         small = cv2.resize(frame, (W // 4, H // 4))
