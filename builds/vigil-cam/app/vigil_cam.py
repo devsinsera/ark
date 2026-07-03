@@ -80,6 +80,19 @@ def _in_window(now):
     s, e = RECORD_WINDOW
     return (s <= m < e) if s <= e else (m >= s or m < e)
 
+def _in_sched(now, start, end):
+    """True if the app-set record window (HH:MM[:SS] strings) contains 'now' (overnight-aware). No window = always."""
+    def _tm(t):
+        try: p = str(t).split(":"); return int(p[0]) * 60 + int(p[1])
+        except Exception: return None
+    if not start or not end:
+        return True
+    s = _tm(start); e = _tm(end)
+    if s is None or e is None:
+        return True
+    lt = time.localtime(now); m = lt.tm_hour * 60 + lt.tm_min
+    return (s <= m < e) if s <= e else (m >= s or m < e)
+
 # ── Motion display: black framebuffer that flashes RED on motion ──
 # No-ops until an HDMI screen is plugged in (then /dev/fb0 appears). Best-effort.
 _ind = {"on": None}
@@ -151,6 +164,19 @@ def main() -> None:
                 pass
             time.sleep(5)
     threading.Thread(target=poll_armed, daemon=True).start()
+
+    # Background: mirror the app-editable record-on-motion schedule.
+    sched = {"on": False, "start": None, "end": None}
+    def poll_sched():
+        while True:
+            try:
+                s = cloud.poll_record_schedule()
+                if s is not None:
+                    sched.update(s)
+            except Exception:
+                pass
+            time.sleep(5)
+    threading.Thread(target=poll_sched, daemon=True).start()
 
     # Background recording uploader (off the capture thread).
     def upload_rec(path, started, dur, kind):
@@ -225,7 +251,8 @@ def main() -> None:
                 except queue.Full: pass
 
             # ── Recording: manual (dashboard) or motion (armed / RECORD_ON_MOTION, within window) ──
-            auto_rec = (RECORD_ON_MOTION or armed.is_set()) and motion and _in_window(now)
+            auto_rec = motion and ((RECORD_ON_MOTION and _in_window(now)) or armed.is_set()
+                                    or (sched["on"] and _in_sched(now, sched["start"], sched["end"])))
             if writer is None and (record_req.is_set() or auto_rec):
                 rec_kind = "manual" if record_req.is_set() else "motion"; record_req.clear()
                 try:

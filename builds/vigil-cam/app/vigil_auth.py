@@ -217,6 +217,19 @@ class VigilCloud:
         except Exception:
             return False
 
+    # Dashboard → Pi: app-editable record-on-motion schedule (record_on_motion + rec_start/rec_end window).
+    def poll_record_schedule(self):
+        if not self.enabled or not self.camera_id:
+            return None
+        try:
+            r = self._rest("GET", "vigil_cameras", params={"id": f"eq.{self.camera_id}", "select": "record_on_motion,rec_start,rec_end"})
+            if r.status_code < 300 and r.json():
+                row = r.json()[0]
+                return {"on": bool(row.get("record_on_motion")), "start": row.get("rec_start"), "end": row.get("rec_end")}
+        except Exception:
+            pass
+        return None
+
     # Dashboard → Pi: is this camera ARMED? (auto-record motion clips when true.)
     def poll_armed(self) -> bool:
         if not self.enabled or not self.camera_id:
