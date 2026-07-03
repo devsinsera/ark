@@ -32,7 +32,7 @@ from vigil_auth import VigilCloud
 W            = int(os.environ.get("CAM_WIDTH", "640"))
 H            = int(os.environ.get("CAM_HEIGHT", "480"))
 CAM_FPS      = int(os.environ.get("CAM_FPS", "15"))          # capture/LAN rate
-CAM_INDEX    = int(os.environ.get("CAM_INDEX", "0"))
+CAM_INDEX    = int(os.environ.get("CAM_INDEX") or (int(os.environ.get("CAM_SLOT", "0")) * 2))  # dual-cam uses CAM_SLOT 0/1 → /dev/video0,2
 CAM_V4L2     = os.environ.get("CAM_V4L2", "").strip()  # per-cam v4l2 controls "k=v,k=v" (WB/exposure/contrast tuning)
 CAM_FOURCC   = os.environ.get("CAM_FOURCC", "").strip()  # e.g. "MJPG" — needed for 720p+ over USB2
 SHARPEN      = float(os.environ.get("CAM_SHARPEN", "0"))  # unsharp-mask amount (0=off, ~0.6 crisps a soft lens)
