@@ -33,6 +33,7 @@ W            = int(os.environ.get("CAM_WIDTH", "640"))
 H            = int(os.environ.get("CAM_HEIGHT", "480"))
 CAM_FPS      = int(os.environ.get("CAM_FPS", "15"))          # capture/LAN rate
 CAM_INDEX    = int(os.environ.get("CAM_INDEX", "0"))
+CAM_V4L2     = os.environ.get("CAM_V4L2", "").strip()  # per-cam v4l2 controls "k=v,k=v" (WB/exposure/contrast tuning)
 JPEG_Q       = int(os.environ.get("JPEG_QUALITY", "75"))
 CLOUD_FPS    = float(os.environ.get("CLOUD_FPS", "2"))        # remote snapshot rate (idle)
 CLOUD_FPS_HOT= float(os.environ.get("CLOUD_FPS_MOTION", "4")) # remote rate while motion
@@ -114,6 +115,21 @@ def set_motion_display(on: bool) -> None:
             pass  # that framebuffer not present
 
 
+def _apply_v4l2():
+    """Apply per-camera v4l2 controls (CAM_V4L2 env, "k=v,k=v") after the device is open.
+    OpenCV resets controls on open, so tuning (white balance / exposure / contrast) must be
+    re-applied on every (re)connect. Best-effort; order matters (e.g. white_balance_automatic=0
+    before white_balance_temperature). Needs v4l2-ctl."""
+    if not CAM_V4L2:
+        return
+    import subprocess
+    try:
+        subprocess.run(["v4l2-ctl", "-d", f"/dev/video{CAM_INDEX}", "-c", CAM_V4L2],
+                       check=False, capture_output=True, timeout=5)
+        print(f"[vigil] applied v4l2 controls: {CAM_V4L2}", flush=True)
+    except Exception as e:
+        print(f"[vigil] v4l2 tune failed: {e}", flush=True)
+
 def open_camera():
     cap = cv2.VideoCapture(CAM_INDEX)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
@@ -121,7 +137,10 @@ def open_camera():
     cap.set(cv2.CAP_PROP_FPS, CAM_FPS)
     try: cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     except Exception: pass
-    return cap if cap.isOpened() else None
+    if not cap.isOpened():
+        return None
+    _apply_v4l2()
+    return cap
 
 
 def main() -> None:
