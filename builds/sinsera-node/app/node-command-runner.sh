@@ -42,7 +42,7 @@ poll() {
       # Apply a new kiosk view without a reboot: kill cog/cage; the launcher loop
       # (.bash_profile) relaunches it, re-reading this node's kiosk_config target.
       logger -t node-command-runner "refresh requested — restarting kiosk browser"
-      pkill -x cog 2>/dev/null; pkill -x cage 2>/dev/null
+      pkill -x cog 2>/dev/null; pkill -x cage 2>/dev/null; pkill chromium 2>/dev/null
       curl -s --max-time 12 -X PATCH "$SUPABASE_URL/rest/v1/node_commands?id=eq.$ID" \
         -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $TOK" \
         -H "Content-Type: application/json" \
