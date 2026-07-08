@@ -21,9 +21,13 @@ import os, sys, time, json, subprocess, urllib.request
 
 ENV = "/opt/sinsera-node/kiosk-auth.env"
 LOG = "/var/log/switchbot-sensor.log"
-SCAN_SECS = 6           # BLE scan window per cycle
-LOOP_SLEEP = 22         # gap between cycles — keeps BLE churn low so it doesn't
-                        # compete with the kiosk's rendering (door state still caught)
+SCAN_SECS = 15          # BLE scan window per cycle — long enough to reliably catch a
+                        # door-change advertisement burst as it happens
+LOOP_SLEEP = 3          # short gap between cycles: the adapter now scans ~80% of the
+                        # time, so a door opened/closed during the gap is still caught
+                        # on the very next cycle (the old 6s/22s left a 22s blind window
+                        # that let real changes slip through and the row sit stale for
+                        # hours). BLE scan overhead is negligible vs the kiosk render.
 HEARTBEAT = 300         # refresh the row at least this often even with no change
 OPEN_BIT_SET_MEANS_OPEN = True
 
