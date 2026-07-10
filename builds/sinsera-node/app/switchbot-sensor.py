@@ -180,10 +180,12 @@ def read_servicedata(mac):
 
 
 def decode(b):
-    """SwitchBot WoContact (type 'd' = 0x64): battery = b[2]&0x7f, open = b[3]&0x02."""
+    """SwitchBot WoContact (type 'd' = 0x64): battery = b[2]&0x7f, open = b[3]&0x06
+    (0x02 = just-opened, 0x04 = open/timeout when left open — both mean physically open;
+    checking only 0x02 made doors left open eventually read closed)."""
     if not b or len(b) < 4 or b[0] != 0x64:
         return None
-    op = bool(b[3] & 0x02)
+    op = bool(b[3] & 0x06)
     if not OPEN_BIT_SET_MEANS_OPEN:
         op = not op
     return {"open": op, "battery": b[2] & 0x7f}
