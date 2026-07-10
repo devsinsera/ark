@@ -190,6 +190,29 @@ mkdir -p /home/kiosk/.config/openbox
 cp "$APPSRC"/openbox-autostart /home/kiosk/.config/openbox/autostart
 chmod 755 /home/kiosk/.config/openbox/autostart
 chown -R kiosk:kiosk /home/kiosk/.config
+
+# Keyboard "Home" (XF86HomePage) → jump back to the Command Centre, not chromium's
+# homepage. home-key.sh repoints the relaunch loop's URL file at cc=1 and bounces
+# chromium (kiosk mode has no address bar to navigate). Injected into the in-use
+# openbox rc.xml, idempotently.
+cp "$APPSRC"/home-key.sh /opt/sinsera-node/home-key.sh
+chmod 755 /opt/sinsera-node/home-key.sh
+if ! grep -q "home-key.sh" /etc/xdg/openbox/rc.xml 2>/dev/null; then
+  python3 - <<'PY'
+p="/etc/xdg/openbox/rc.xml"
+try:
+    s=open(p).read()
+    bind='''<keyboard>
+  <!-- SINSERA: keyboard Home button jumps to the Command Centre, not chromium's homepage -->
+  <keybind key="XF86HomePage">
+    <action name="Execute"><command>/opt/sinsera-node/home-key.sh</command></action>
+  </keybind>'''
+    if "<keyboard>" in s:
+        open(p,"w").write(s.replace("<keyboard>", bind, 1))
+except Exception as e:
+    print("home-key rc.xml patch skipped:", e)
+PY
+fi
 # Camera-account creds the launcher reads — MUST be kiosk-readable (the launcher runs as kiosk)
 cat > /opt/sinsera-node/kiosk-auth.env <<KA
 SUPABASE_URL=${SUPABASE_URL:-https://lkhtgkmivqwgnvzmjbhr.supabase.co}
