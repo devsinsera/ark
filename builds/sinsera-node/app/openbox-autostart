@@ -7,6 +7,11 @@ xrandr --auto &
 unclutter -idle 0.1 -root &
 [ -f /opt/sinsera-node/display.env ] && . /opt/sinsera-node/display.env
 DSF="${KIOSK_SCALE:-1.0}"
+# Clear chromium's HTTP/GPU cache ONCE per session (not per relaunch) so a stale cache
+# after a reboot can't leave the wall on a white screen. Login/session live elsewhere.
+rm -rf /home/kiosk/.config/chromium/Default/Cache/* \
+       "/home/kiosk/.config/chromium/Default/Code Cache/"* \
+       /home/kiosk/.config/chromium/Default/GPUCache/* 2>/dev/null
 while true; do
   rm -f /home/kiosk/.config/chromium/Singleton* 2>/dev/null
   URL=$(cat /tmp/kiosk_url 2>/dev/null); [ -n "$URL" ] || URL="https://sinsera.co/?kiosk=1"
