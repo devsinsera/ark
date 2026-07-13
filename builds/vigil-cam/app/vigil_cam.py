@@ -36,6 +36,7 @@ CAM_INDEX    = int(os.environ.get("CAM_INDEX") or (int(os.environ.get("CAM_SLOT"
 CAM_V4L2     = os.environ.get("CAM_V4L2", "").strip()  # per-cam v4l2 controls "k=v,k=v" (WB/exposure/contrast tuning)
 CAM_FOURCC   = os.environ.get("CAM_FOURCC", "").strip()  # e.g. "MJPG" — needed for 720p+ over USB2
 SHARPEN      = float(os.environ.get("CAM_SHARPEN", "0"))  # unsharp-mask amount (0=off, ~0.6 crisps a soft lens)
+ROTATE       = int(os.environ.get("CAM_ROTATE", "0"))     # 0/90/180/270 — for upside-down or sideways mounts
 JPEG_Q       = int(os.environ.get("JPEG_QUALITY", "75"))
 CLOUD_FPS    = float(os.environ.get("CLOUD_FPS", "2"))        # remote snapshot rate (idle)
 CLOUD_FPS_HOT= float(os.environ.get("CLOUD_FPS_MOTION", "4")) # remote rate while motion
@@ -159,21 +160,27 @@ def main() -> None:
     def uploader():
         while True:
             jpg = upq.get()
-            cloud.upload_frame(jpg)
+            try: cloud.upload_frame(jpg)
+            except Exception as e: print(f"[vigil] upload_frame error: {e}", flush=True)
     threading.Thread(target=uploader, daemon=True).start()
 
     # Background heartbeat.
     def beat():
         while True:
-            cloud.heartbeat(); time.sleep(HEARTBEAT_S)
+            try: cloud.heartbeat()
+            except Exception as e: print(f"[vigil] heartbeat error: {e}", flush=True)
+            time.sleep(HEARTBEAT_S)
     threading.Thread(target=beat, daemon=True).start()
 
     # Background: poll the dashboard's "record" request (when cloud is on).
     record_req = threading.Event()
     def poll_req():
         while True:
-            if cloud.poll_record_request():
-                record_req.set()
+            try:
+                if cloud.poll_record_request():
+                    record_req.set()
+            except Exception as e:
+                print(f"[vigil] poll_record_request error: {e}", flush=True)
             time.sleep(3)
     threading.Thread(target=poll_req, daemon=True).start()
 
@@ -228,12 +235,18 @@ def main() -> None:
             time.sleep(0.5); continue
 
         ok, frame = cap.read()
-        if not ok:
+        if not ok or frame is None:   # ok can be True with a None frame on a flaky USB cam → guard before .shape
             print("[vigil] camera dropped — reopening", flush=True)
             try: cap.release()
             except Exception: pass
-            cap = None; prev_gray = None; continue
+            cap = None; prev_gray = None; time.sleep(0.2); continue
 
+        if ROTATE == 180:
+            frame = cv2.rotate(frame, cv2.ROTATE_180)
+        elif ROTATE == 90:
+            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        elif ROTATE == 270:
+            frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
         if frame.shape[1] != W or frame.shape[0] != H:
             frame = cv2.resize(frame, (W, H))
         if SHARPEN > 0:  # unsharp mask — crisps a soft/fixed-focus lens
