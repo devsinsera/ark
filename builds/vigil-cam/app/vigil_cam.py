@@ -21,6 +21,8 @@ import queue
 import threading
 import datetime
 import tempfile
+import shutil
+import subprocess
 
 import cv2
 import numpy as np
@@ -209,9 +211,35 @@ def main() -> None:
             time.sleep(5)
     threading.Thread(target=poll_sched, daemon=True).start()
 
+    # OpenCV writes mp4v (MPEG-4 Part 2), which browsers' <video> CANNOT play — so
+    # the app's Recordings player just showed nothing. Transcode to H.264 (yuv420p +
+    # faststart) in place so every copy (SD, cloud, Node 3 archive) is browser-playable.
+    # Falls back to the original file if ffmpeg is missing or fails.
+    def _to_h264(path):
+        if not shutil.which("ffmpeg"):
+            return
+        tmp = path + ".h264.mp4"
+        try:
+            r = subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-i", path,
+                 "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                 "-movflags", "+faststart", tmp],
+                timeout=90, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if r.returncode == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                os.replace(tmp, path)      # in place → local + archive get H.264 too
+            elif os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception as e:
+            print(f"[vigil] transcode failed: {e}", flush=True)
+            try:
+                if os.path.exists(tmp): os.remove(tmp)
+            except Exception:
+                pass
+
     # Background recording uploader (off the capture thread).
     def upload_rec(path, started, dur, kind):
         try:
+            _to_h264(path)
             with open(path, "rb") as f:
                 cloud.upload_recording(f.read(), started, dur, kind)
         except Exception:
