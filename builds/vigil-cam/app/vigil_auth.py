@@ -240,6 +240,24 @@ class VigilCloud:
         except Exception:
             return False
 
+    # Dashboard → Pi: live per-camera rotation (0/90/180/270). Stored in
+    # kiosk_config __cam_rotation__ as a JSON map slug->degrees so the app can
+    # rotate a camera without SSH; returns None if unset (keeps the env default).
+    def poll_rotation(self):
+        if not self.enabled:
+            return None
+        try:
+            r = self._rest("GET", "kiosk_config", params={"node": "eq.__cam_rotation__", "select": "target"})
+            if r.status_code < 300 and r.json():
+                import json as _json
+                m = _json.loads(r.json()[0].get("target") or "{}")
+                v = m.get(CAMERA_SLUG)
+                if v is not None:
+                    return int(v) % 360
+        except Exception:
+            pass
+        return None
+
     def upload_recording(self, mp4_bytes: bytes, started_at: str, duration_s: float, kind: str = "motion") -> None:
         if not self.enabled or not self.uid:
             return

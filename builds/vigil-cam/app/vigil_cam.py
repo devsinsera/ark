@@ -34,11 +34,14 @@ from vigil_auth import VigilCloud
 W            = int(os.environ.get("CAM_WIDTH", "640"))
 H            = int(os.environ.get("CAM_HEIGHT", "480"))
 CAM_FPS      = int(os.environ.get("CAM_FPS", "15"))          # capture/LAN rate
+CAM_DEVICE   = os.environ.get("CAM_DEVICE", "").strip()  # explicit device PATH (e.g. a stable /dev/v4l/by-path/… symlink) — wins over CAM_INDEX so USB re-enumeration on reboot can't shuffle which physical camera a service gets
 CAM_INDEX    = int(os.environ.get("CAM_INDEX") or (int(os.environ.get("CAM_SLOT", "0")) * 2))  # dual-cam uses CAM_SLOT 0/1 → /dev/video0,2
 CAM_V4L2     = os.environ.get("CAM_V4L2", "").strip()  # per-cam v4l2 controls "k=v,k=v" (WB/exposure/contrast tuning)
 CAM_FOURCC   = os.environ.get("CAM_FOURCC", "").strip()  # e.g. "MJPG" — needed for 720p+ over USB2
 SHARPEN      = float(os.environ.get("CAM_SHARPEN", "0"))  # unsharp-mask amount (0=off, ~0.6 crisps a soft lens)
-ROTATE       = int(os.environ.get("CAM_ROTATE", "0"))     # 0/90/180/270 — for upside-down or sideways mounts
+# Rotation is LIVE-updatable from the app (kiosk_config __cam_rotation__ → poll_rotation);
+# CAM_ROTATE is just the boot default. Held in a dict so a background poll can change it.
+ROT          = {"deg": int(os.environ.get("CAM_ROTATE", "0")) % 360}  # 0/90/180/270 — for upside-down / sideways mounts
 JPEG_Q       = int(os.environ.get("JPEG_QUALITY", "75"))
 CLOUD_FPS    = float(os.environ.get("CLOUD_FPS", "2"))        # remote snapshot rate (idle)
 CLOUD_FPS_HOT= float(os.environ.get("CLOUD_FPS_MOTION", "4")) # remote rate while motion
@@ -136,7 +139,7 @@ def _apply_v4l2():
         print(f"[vigil] v4l2 tune failed: {e}", flush=True)
 
 def open_camera():
-    cap = cv2.VideoCapture(CAM_INDEX)
+    cap = cv2.VideoCapture(CAM_DEVICE if CAM_DEVICE else CAM_INDEX)  # path (stable by-path) or numeric index
     if CAM_FOURCC:  # set the codec before the resolution (drivers gate high-res modes on MJPG)
         try: cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*CAM_FOURCC))
         except Exception: pass
@@ -211,6 +214,20 @@ def main() -> None:
             time.sleep(5)
     threading.Thread(target=poll_sched, daemon=True).start()
 
+    # Background: mirror the app-editable per-camera rotation (kiosk_config
+    # __cam_rotation__). Lets the user rotate a camera live from the app.
+    def poll_rot():
+        while True:
+            try:
+                deg = cloud.poll_rotation()
+                if deg is not None and deg != ROT["deg"]:
+                    ROT["deg"] = deg
+                    print(f"[vigil] rotation → {deg}°", flush=True)
+            except Exception as e:
+                print(f"[vigil] poll_rotation error: {e}", flush=True)
+            time.sleep(8)
+    threading.Thread(target=poll_rot, daemon=True).start()
+
     # OpenCV writes mp4v (MPEG-4 Part 2), which browsers' <video> CANNOT play — so
     # the app's Recordings player just showed nothing. Transcode to H.264 (yuv420p +
     # faststart) in place so every copy (SD, cloud, Node 3 archive) is browser-playable.
@@ -269,11 +286,12 @@ def main() -> None:
             except Exception: pass
             cap = None; prev_gray = None; time.sleep(0.2); continue
 
-        if ROTATE == 180:
+        _deg = ROT["deg"]
+        if _deg == 180:
             frame = cv2.rotate(frame, cv2.ROTATE_180)
-        elif ROTATE == 90:
+        elif _deg == 90:
             frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-        elif ROTATE == 270:
+        elif _deg == 270:
             frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
         if frame.shape[1] != W or frame.shape[0] != H:
             frame = cv2.resize(frame, (W, H))
