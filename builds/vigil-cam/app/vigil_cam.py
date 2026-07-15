@@ -55,6 +55,90 @@ RECORD_ON_MOTION = os.environ.get("RECORD_ON_MOTION", "0") == "1" # auto-record 
 RECORD_DIR   = os.environ.get("RECORD_DIR", "/opt/vigil/recordings")
 RECORD_MAX_GB = float(os.environ.get("RECORD_MAX_GB", "50"))       # local retention cap; oldest clips pruned over this
 
+# ── Object detection (MobileNet-SSD via OpenCV DNN) — optional, off the hot path ──
+DETECT        = os.environ.get("DETECT", "0") == "1"                       # master toggle
+DETECT_EVERY  = max(1, int(os.environ.get("DETECT_EVERY", "6")))          # run inference every Nth frame
+DETECT_CONF   = float(os.environ.get("DETECT_CONF", "0.5"))               # min confidence to show a box
+DETECT_MODELDIR = os.environ.get("DETECT_MODEL_DIR", "/opt/vigil/models")  # holds the .prototxt + .caffemodel
+DETECT_ALERT  = {c.strip() for c in os.environ.get("DETECT_ALERT", "person").split(",") if c.strip()}   # classes that raise an event / trigger recording
+DETECT_CLASSES = {c.strip() for c in os.environ.get("DETECT_CLASSES", "").split(",") if c.strip()}       # empty = draw every class
+# Pascal-VOC 20-class labels the MobileNet-SSD model emits (index → name).
+_VOC = ["background", "aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat",
+        "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant",
+        "sheep", "sofa", "train", "tvmonitor"]
+
+class Detector:
+    """Runs MobileNet-SSD inference on a background thread so the capture/stream
+    loop never blocks. The loop hands it the newest frame; it caches boxes that
+    the loop draws every frame. hit_alert is True while an alert-class is present."""
+    def __init__(self):
+        self.net = None
+        self.lock = threading.Lock()
+        self.boxes: list = []          # [(label, conf, x1, y1, x2, y2)]
+        self.hit_alert = False
+        self._frame = None
+        self._new = threading.Event()
+        if not DETECT:
+            return
+        proto = os.path.join(DETECT_MODELDIR, "MobileNetSSD_deploy.prototxt")
+        model = os.path.join(DETECT_MODELDIR, "MobileNetSSD_deploy.caffemodel")
+        try:
+            self.net = cv2.dnn.readNetFromCaffe(proto, model)
+            self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+            self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+            threading.Thread(target=self._worker, daemon=True).start()
+            print(f"[vigil] object detection ON (conf≥{DETECT_CONF}, alert={sorted(DETECT_ALERT)})", flush=True)
+        except Exception as e:  # noqa: BLE001 — missing/corrupt model → run without detection
+            self.net = None
+            print(f"[vigil] object detection OFF — model load failed ({model}): {e}", flush=True)
+
+    def submit(self, frame) -> None:
+        if self.net is None:
+            return
+        self._frame = frame          # keep only the latest; worker drops stale frames
+        self._new.set()
+
+    def _worker(self) -> None:
+        while True:
+            self._new.wait(); self._new.clear()
+            frame = self._frame
+            if frame is None:
+                continue
+            try:
+                h, w = frame.shape[:2]
+                blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 0.007843, (300, 300), 127.5)
+                self.net.setInput(blob)
+                det = self.net.forward()
+                out, alert = [], False
+                for i in range(det.shape[2]):
+                    conf = float(det[0, 0, i, 2])
+                    if conf < DETECT_CONF:
+                        continue
+                    idx = int(det[0, 0, i, 1])
+                    label = _VOC[idx] if 0 <= idx < len(_VOC) else str(idx)
+                    if DETECT_CLASSES and label not in DETECT_CLASSES:
+                        continue
+                    x1, y1 = int(det[0, 0, i, 3] * w), int(det[0, 0, i, 4] * h)
+                    x2, y2 = int(det[0, 0, i, 5] * w), int(det[0, 0, i, 6] * h)
+                    out.append((label, conf, x1, y1, x2, y2))
+                    if label in DETECT_ALERT:
+                        alert = True
+                with self.lock:
+                    self.boxes, self.hit_alert = out, alert
+            except Exception as e:  # noqa: BLE001
+                print(f"[vigil] detection error: {e}", flush=True)
+            time.sleep(0.01)
+
+    def draw(self, frame):
+        with self.lock:
+            boxes = list(self.boxes)
+        for label, conf, x1, y1, x2, y2 in boxes:
+            col = (0, 0, 230) if label in DETECT_ALERT else (0, 210, 90)   # red for alert class, green otherwise
+            cv2.rectangle(frame, (x1, y1), (x2, y2), col, 2)
+            cv2.putText(frame, f"{label} {int(conf * 100)}%", (x1 + 2, max(13, y1 - 5)),
+                        cv2.FONT_HERSHEY_PLAIN, 1.1, col, 1, cv2.LINE_AA)
+        return frame
+
 def _prune_recordings():
     """Keep the local recordings dir under RECORD_MAX_GB by deleting the oldest clips."""
     import time as _t
@@ -269,6 +353,8 @@ def main() -> None:
     hot_until = 0.0
     last_cam_try = 0.0
     writer = None; rec_end = 0.0; rec_t0 = 0.0; rec_started = ""; rec_kind = "motion"; rec_path = ""
+    detector = Detector()          # object detection (no-op unless DETECT=1 + model present)
+    fc = 0                         # frame counter → paces inference cadence
 
     while True:
         now = time.time()
@@ -309,6 +395,17 @@ def main() -> None:
             if mean > MOTION_THRESH and area > MOTION_AREA:
                 motion = True
         prev_gray = gray
+
+        # ── Object detection: feed the newest frame at the inference cadence.
+        # A persisted alert-class (e.g. a person) counts as motion → record + event. ──
+        fc += 1
+        det_alert = False
+        if DETECT and detector.net is not None:
+            if fc % DETECT_EVERY == 0:
+                detector.submit(frame.copy())
+            det_alert = detector.hit_alert
+            if det_alert:
+                motion = True
         set_motion_display(motion)   # black screen → red flash on motion (HDMI, if attached)
 
         # ── REC + MOTION indicators only (no timestamp/date watermark on the video) ──
@@ -316,6 +413,8 @@ def main() -> None:
         if motion:
             cv2.rectangle(frame, (1, 1), (W - 2, H - 2), (0, 0, 220), 3)
             cv2.putText(frame, "MOTION", (W - 96, 20), cv2.FONT_HERSHEY_PLAIN, 1.2, (0, 0, 220), 2, cv2.LINE_AA)
+        if DETECT and detector.net is not None:
+            detector.draw(frame)     # labelled bounding boxes over the live + recorded frame
 
         ok2, jpg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_Q])
         if ok2:
@@ -326,8 +425,9 @@ def main() -> None:
                 hot_until = now + 5.0
                 if now - last_motion_event > MOTION_COOLDOWN:
                     last_motion_event = now
-                    threading.Thread(target=cloud.motion_event, args=("motion detected",), daemon=True).start()
-                    print("[vigil] MOTION", flush=True)
+                    reason = "person detected" if det_alert else "motion detected"
+                    threading.Thread(target=cloud.motion_event, args=(reason,), daemon=True).start()
+                    print(f"[vigil] {reason.upper()}", flush=True)
 
             rate = CLOUD_FPS_HOT if now < hot_until else CLOUD_FPS
             if now - last_cloud >= 1.0 / max(0.2, rate):
