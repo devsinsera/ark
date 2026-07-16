@@ -1,0 +1,24 @@
+# Uplink #2 — iPhone personal hotspot (mid priority). Covers "phone in the car"
+# live telemetry/remote view while driving.
+#
+# PLACEHOLDERS: ssid= (your iPhone name) and psk= (hotspot password).
+[connection]
+id=uplink-iphone-hotspot
+type=wifi
+autoconnect=true
+autoconnect-priority=50
+
+[wifi]
+mode=infrastructure
+ssid=CHANGE-ME-IPHONE-SSID
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=CHANGE-ME-IPHONE-PSK
+
+[ipv4]
+method=auto
+
+[ipv6]
+addr-gen-mode=default
+method=auto

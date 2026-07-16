@@ -1,0 +1,12 @@
+[Unit]
+Description=Node command runner (poweroff/reboot -> Supabase node_commands)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/opt/sinsera-node/node-command-runner.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

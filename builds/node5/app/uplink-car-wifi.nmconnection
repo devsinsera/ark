@@ -1,0 +1,25 @@
+# Uplink #3 — CAR WiFi (lowest priority). The AU GR86 exposes no telemetry over
+# WiFi and has no hotspot, so this is a placeholder in case a dashcam/head-unit
+# AP is ever used as a fallback uplink. Safe to delete if unused.
+#
+# PLACEHOLDERS: ssid= and psk=.
+[connection]
+id=uplink-car-wifi
+type=wifi
+autoconnect=true
+autoconnect-priority=20
+
+[wifi]
+mode=infrastructure
+ssid=CHANGE-ME-CAR-SSID
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=CHANGE-ME-CAR-PSK
+
+[ipv4]
+method=auto
+
+[ipv6]
+addr-gen-mode=default
+method=auto

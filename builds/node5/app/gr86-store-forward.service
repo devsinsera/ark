@@ -1,0 +1,11 @@
+[Unit]
+Description=GR86 OBD store-and-forward (rsync local buffer -> Node 3 NVMe when home)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/gr86/store-forward.sh
+User=peta
+StandardOutput=journal
+StandardError=journal

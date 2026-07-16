@@ -1,0 +1,12 @@
+[Unit]
+Description=Node status reporter (CPU/temp/RAM -> Supabase node_status)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/opt/sinsera-node/node-status-reporter.sh
+Restart=always
+RestartSec=20
+
+[Install]
+WantedBy=multi-user.target

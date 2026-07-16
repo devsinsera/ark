@@ -1,0 +1,18 @@
+[Unit]
+Description=First-boot Tailscale install for Node 5 (no authkey baked; user runs `tailscale up`)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/usr/bin/tailscale
+
+[Service]
+Type=oneshot
+# Installs tailscaled on first boot with network up (the base image is offline at
+# bake time). Does NOT join the tailnet — no secret is baked. After first boot:
+#   sudo tailscale up --ssh --hostname node5
+ExecStart=/opt/gr86/tailscale-firstboot.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

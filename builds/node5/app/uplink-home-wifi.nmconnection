@@ -1,0 +1,25 @@
+# Uplink #1 — HOME WiFi (highest priority). When the car is parked at home the
+# Pi joins the eero, store-and-forward flushes the OBD buffer to Node 3, and the
+# HUD can proxy the cloud dashboard.
+#
+# PLACEHOLDERS: ssid= and psk= — fill with the real home SSID/passphrase.
+[connection]
+id=uplink-home-wifi
+type=wifi
+autoconnect=true
+autoconnect-priority=100
+
+[wifi]
+mode=infrastructure
+ssid=CHANGE-ME-HOME-SSID
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=CHANGE-ME-HOME-PSK
+
+[ipv4]
+method=auto
+
+[ipv6]
+addr-gen-mode=default
+method=auto

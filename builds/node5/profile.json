@@ -1,0 +1,30 @@
+{
+  "profile_id":  "node5",
+  "version":     1,
+  "category":    "raspberry-pi-devices",
+  "name":        "Node 5 — GR86 in-car Pi (Pi 5 2GB, headless OBD hub)",
+  "description": "Pi OS Lite 64-bit baked into the fleet's Node 5: a HEADLESS in-car Pi 5 (2GB) for the GR86. No HDMI/X/chromium/display stack — the dashboard is viewed via a URL on the iPad/phone. Runs the garage-pi-bridge OBD logger (OBDLink MX+ over the Ugreen BT USB dongle -> Supabase), hosts its own WiFi AP (Sinsera-GR86) on the 2nd radio so the iPad connects DIRECTLY and the local HUD works offline, and uplinks over known WiFi in priority home > iPhone-hotspot > car. Tailscale for headless remote SSH/mgmt (authkey added post-boot). Store-and-forward buffers OBD locally and rsyncs to Node 3's NVMe when home (Node-4 archive pattern). Fleet-integrated via node-status-reporter + node-command-runner (shows on the Nodes page, reboot/poweroff from Kiosks). peta SSH-key-only user + fleet key baked.",
+  "supported_hardware": ["pi-5-2gb", "pi-5-4gb", "pi-5-8gb"],
+  "base_image":  "raspios_lite_arm64_latest.img.xz",
+  "preconfigured": {
+    "hostname":     "node5",
+    "user":         "peta (SSH-key only, sudo NOPASSWD) + fleet key baked",
+    "display":      "NONE — fully headless (gpu_mem=16); HUD is served to the iPad over the Pi AP / cloud",
+    "radios":       "onboard WiFi + TP-Link AX1300 USB (2 WiFi); onboard BT + Ugreen BT 6.0 USB (2 BT). One WiFi hosts the AP, the other uplinks; Ugreen BT -> OBDLink MX+",
+    "ap":           "Sinsera-GR86 (WPA2, method=shared 192.168.42.1/24) — iPad connects direct; passphrase is a placeholder",
+    "uplink":       "NetworkManager autoconnect priority: home-wifi(100) > iphone-hotspot(50) > car-wifi(20); SSIDs/psks are placeholders",
+    "obd":          "garage-obd-bridge.service (Restart=always) at /opt/garage-pi-bridge; .env baked with anon key + owner email, OBDLINK_MAC + CAR_ID + password BLANK placeholders",
+    "hud":          "gr86-hud.service — local-first HUD stub on :8080 (redirects to sinsera.co/garage/<car>/obd?hud=1 when online, placeholder page offline)",
+    "tailscale":    "installed on first boot; NO authkey baked — run `sudo tailscale up --ssh --hostname node5` post-boot",
+    "store_forward":"gr86-store-forward.timer (5 min) rsyncs /var/lib/garage-obd/buffer -> peta@192.168.4.182:/opt/garage-obd/node5 when Node 3 is reachable (home)",
+    "fleet":        "node-status-reporter + node-command-runner (Supabase node_status / node_commands) — shows as node5 on the Nodes page; reboot/poweroff from Kiosks",
+    "run_mode":     "gr86-idle-shutdown.timer STUB — on with ignition, ~15-30 min parked window then poweroff (needs supercap/UPS-hat wiring)",
+    "sd_guard":     "clean-shutdown-on-power-loss stub + documented overlayfs read-only-root toggle (raspi-config nonint enable_overlayfs) left OFF (conflicts with the OBD buffer)"
+  },
+  "notes": [
+    "UNVERIFIED ON HARDWARE — the Pi hasn't arrived. Expect on-Pi tuning: USB dongle drivers (TP-Link AX1300 mt76/rtl88xx-class + Ugreen BT), which radio ends up hosting the AP, OBDLink MX+ BLE pairing.",
+    "Placeholders the user MUST fill: OBDLINK_MAC + CAR_ID + SUPABASE_PASSWORD in /opt/garage-pi-bridge/.env; AP passphrase + all uplink SSIDs/psks in the .nmconnection files; Tailscale authkey via `tailscale up`.",
+    "Known gaps needing the physical Pi: the REAL gauge HUD (currently a stub that proxies the cloud), the supercap/UPS-hat idle-shutdown wiring, and USB-dongle driver verification. A USB SSD for camera/local buffer and the LiveKit camera publish are Phase 2 (not in this bake).",
+    "Headless: no display output at all — Node 5 is an OBD/network hub, not a screen."
+  ]
+}

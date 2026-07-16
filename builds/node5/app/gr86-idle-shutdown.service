@@ -1,0 +1,8 @@
+[Unit]
+Description=GR86 idle-shutdown guard (stay up ~15-30 min after ignition off, then sleep)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/gr86/idle-shutdown.sh
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run GR86 OBD store-and-forward every 5 min (flush buffer to Node 3 when home)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

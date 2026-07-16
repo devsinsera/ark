@@ -1,0 +1,34 @@
+# NetworkManager AP profile — Node 5 (GR86) hosts its OWN access point so the
+# iPad/phone connect DIRECTLY to the Pi and the offline HUD works with no uplink.
+# This should live on the 2nd radio (the TP-Link AX1300 USB) so the onboard chip
+# stays free for the uplink; NM binds it to that interface via [wifi].mac-address
+# once you know the dongle MAC (leave blank = NM picks any AP-capable radio).
+#
+# PLACEHOLDER: change psk= to a real passphrase before baking/first boot.
+# The install.sh rewrites `psk=` from AP_PSK in secrets.env when provided.
+[connection]
+id=ap-sinsera-gr86
+type=wifi
+autoconnect=true
+autoconnect-priority=10
+# interface-name=wlan1   # pin to the TP-Link AX1300 once its ifname is known
+
+[wifi]
+mode=ap
+ssid=Sinsera-GR86
+band=bg
+# mac-address=            # optional: pin to the USB dongle's MAC
+
+[wifi-security]
+key-mgmt=wpa-psk
+proto=rsn
+group=ccmp
+pairwise=ccmp
+psk=CHANGE-ME-AP-PASSPHRASE
+
+[ipv4]
+method=shared
+address1=192.168.42.1/24
+
+[ipv6]
+method=ignore

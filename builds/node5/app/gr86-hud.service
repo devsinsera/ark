@@ -1,0 +1,16 @@
+[Unit]
+Description=GR86 local-first HUD server (serves the offline gauge page on the Pi AP)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/opt/gr86-hud/hud.env
+ExecStart=/usr/bin/python3 /opt/gr86-hud/hud-server.py
+Restart=always
+RestartSec=5
+User=peta
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

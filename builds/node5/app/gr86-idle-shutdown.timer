@@ -1,0 +1,9 @@
+[Unit]
+Description=Poll the GR86 idle-shutdown guard every 2 min
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
