@@ -149,6 +149,32 @@ WantedBy=multi-user.target
 WP
 systemctl enable wifi-powersave-off.service
 
+step "DNS resilience — keep DNS on the router, not only Tailscale MagicDNS"
+# If tailscaled later drops, MagicDNS (100.100.100.100) goes with it and DNS dies, stranding
+# the kiosk. tailscale set --accept-dns=false leaves resolv.conf on the LAN router (192.168.4.1)
+# so name resolution survives a tailscaled hiccup. Tailscale is added post-bake per node, so we
+# apply this as a guarded boot oneshot that no-ops until tailscale is present (idempotent).
+cat > /usr/local/sbin/ark-tailscale-dns.sh <<'TSD'
+#!/bin/bash
+command -v tailscale >/dev/null 2>&1 || exit 0
+tailscale set --accept-dns=false 2>/dev/null || true
+exit 0
+TSD
+chmod +x /usr/local/sbin/ark-tailscale-dns.sh
+cat > /etc/systemd/system/ark-tailscale-dns.service <<'TSDS'
+[Unit]
+Description=Ark: keep DNS on the router (tailscale --accept-dns=false), survives tailscaled drop
+After=tailscaled.service network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ark-tailscale-dns.sh
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+TSDS
+systemctl enable ark-tailscale-dns.service 2>/dev/null
+
 step "kiosk user + tty1 autologin → Xorg+openbox+chromium (sinsera.co; cage+cog fallback)"
 id kiosk >/dev/null 2>&1 || { useradd -m -s /bin/bash kiosk; passwd -l kiosk; }
 for g in video audio input render tty seat plugdev netdev; do getent group "$g" >/dev/null 2>&1 && usermod -aG "$g" kiosk; done

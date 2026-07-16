@@ -102,6 +102,13 @@ esac
 # fall back to cage+cog if X fails so the screen never strands black. The openbox autostart
 # reads the URL from /tmp/kiosk_url and runs the actual `chromium --kiosk` relaunch loop.
 if command -v startx >/dev/null 2>&1 && command -v chromium >/dev/null 2>&1 && command -v unclutter >/dev/null 2>&1; then
+  # .bak-blackfix: clean slate before startx. A stale X from the previous session can still
+  # hold the DRM master, so a fresh KMS modeset fails silently and the screen comes up black
+  # (only a reboot recovered it). Reap X/chromium/openbox with SIGTERM (releases DRM cleanly),
+  # wait ≤6s for Xorg to fully exit, then SIGKILL stragglers before starting ours.
+  pkill -TERM chromium 2>/dev/null; pkill -TERM -f openbox 2>/dev/null; pkill -TERM Xorg 2>/dev/null
+  for _w in $(seq 1 24); do pgrep -x Xorg >/dev/null 2>&1 || break; sleep 0.25; done
+  pkill -9 Xorg 2>/dev/null; sleep 0.5
   echo "$URL" > /tmp/kiosk_url
   startx /usr/bin/openbox-session -- vt1 -keeptty >>/var/log/sinsera-kiosk.log 2>&1
   echo "[launch] startx exited rc=$? — falling back to cage+cog" >>/var/log/sinsera-kiosk.log
