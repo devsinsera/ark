@@ -14,6 +14,9 @@ rm -rf /home/kiosk/.config/chromium/Default/Cache/* \
        /home/kiosk/.config/chromium/Default/GPUCache/* 2>/dev/null
 while true; do
   rm -f /home/kiosk/.config/chromium/Singleton* 2>/dev/null
+  # Re-mint the auth hash if the boot-time token has gone stale (session-reuse
+  # via refresh grant — a relaunch hours after boot must not wake signed out).
+  /usr/local/bin/sinsera-kiosk-freshurl.sh 2>/dev/null || true
   URL=$(cat /tmp/kiosk_url 2>/dev/null); [ -n "$URL" ] || URL="https://sinsera.co/?kiosk=1"
   chromium \
     --kiosk --noerrdialogs --disable-infobars --no-first-run --start-maximized \

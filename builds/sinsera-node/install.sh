@@ -189,6 +189,8 @@ systemctl enable getty@tty1.service   # auto-start is unreliable on raspios → 
 # session in the URL hash → cameras show zero-touch) + cache-bust + transparent cursor.
 cp "$APPSRC"/sinsera-kiosk-launch.sh /usr/local/bin/sinsera-kiosk-launch.sh
 chmod 755 /usr/local/bin/sinsera-kiosk-launch.sh
+cp "$APPSRC"/sinsera-kiosk-freshurl.sh /usr/local/bin/sinsera-kiosk-freshurl.sh
+chmod 755 /usr/local/bin/sinsera-kiosk-freshurl.sh
 
 step "Xorg recipe (SINSERA-XSWITCH) — modesetting on vc4 + unclutter-friendly Xwrapper"
 # (a) force the modesetting driver as PrimaryGPU on the vc4 (card1) — without this Xorg either
