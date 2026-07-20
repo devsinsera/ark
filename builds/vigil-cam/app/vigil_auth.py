@@ -160,10 +160,23 @@ class VigilCloud:
                                 json=json_body, params=params, timeout=10)
 
     # ── camera row (find or create) ───────────────────────────────────────
+    def _is_deleted(self) -> bool:
+        """True if the user deleted this camera on purpose (__deleted_cams__)."""
+        try:
+            r = self._rest("GET", "kiosk_config", params={"node": "eq.__deleted_cams__", "select": "target"})
+            if r.status_code < 300 and r.json():
+                slugs = {x.strip() for x in (r.json()[0].get("target") or "").split(",") if x.strip()}
+                return CAMERA_SLUG in slugs
+        except Exception:
+            pass
+        return False
+
     def _ensure_camera(self) -> None:
         r = self._rest("GET", "vigil_cameras", params={"slug": f"eq.{CAMERA_SLUG}", "select": "id"})
         if r.status_code < 300 and r.json():
             self.camera_id = r.json()[0]["id"]; return
+        if self._is_deleted():
+            self.camera_id = None; return   # user deleted it — do not recreate
         ins = self._rest("POST", "vigil_cameras",
                          json_body={"owner_id": self.uid, "slug": CAMERA_SLUG, "label": CAMERA_LABEL, "status": "online"})
         if ins.status_code < 300 and ins.json():
