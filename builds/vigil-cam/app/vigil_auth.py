@@ -112,8 +112,10 @@ class VigilCloud:
                 log.info("vigil cloud up — owner %s, camera %s", VIGIL_EMAIL, CAMERA_SLUG)
                 print(f"[cloud] signed in as {VIGIL_EMAIL}; camera={CAMERA_SLUG}", flush=True)
             except Exception as e:  # noqa: BLE001
-                self.enabled = False
-                print(f"[cloud] disabled: {e}", flush=True)
+                # transient startup failure (e.g. flaky boot network) — stay enabled;
+                # the background loops retry sign-in via _fresh() instead of going
+                # LAN-only until a manual restart.
+                print(f"[cloud] sign-in deferred (will retry): {e}", flush=True)
         else:
             print("[cloud] disabled (VIGIL_PASSWORD blank or env missing) — LAN MJPEG only", flush=True)
 
@@ -130,7 +132,7 @@ class VigilCloud:
             self.expires_at = time.time() + max(60, b.get("expires_in", 3600) - 300)
 
     def _fresh(self) -> None:
-        if time.time() < self.expires_at and self.jwt:
+        if self.uid and time.time() < self.expires_at and self.jwt:
             return
         try:
             if self.refresh_token:
@@ -144,6 +146,8 @@ class VigilCloud:
                         self.expires_at = time.time() + max(60, b.get("expires_in", 3600) - 300)
                     return
             self._sign_in()
+            if not self.camera_id:
+                self._ensure_camera()
         except Exception as e:  # noqa: BLE001
             log.warning("token refresh failed: %s", e)
 
@@ -189,17 +193,32 @@ class VigilCloud:
 
     # ── frame upload (private bucket, owner path) ─────────────────────────
     def upload_frame(self, jpeg_bytes: bytes) -> bool:
-        if not self.enabled or not self.uid:
+        if not self.enabled:
             return False
-        self._fresh()
+        self._fresh()               # signs in on first use / after expiry / if deferred at boot
+        if not self.uid:
+            return False
         path = f"{self.uid}/{CAMERA_SLUG}/latest.jpg"
         try:
             r = requests.post(f"{SUPABASE_URL}/storage/v1/object/vigil-frames/{path}",
                               headers=self._h({"Content-Type": "image/jpeg", "x-upsert": "true",
                                                "Cache-Control": "no-cache, max-age=0"}),
                               data=jpeg_bytes, timeout=8)
-            return r.status_code < 300
+            if r.status_code < 300:
+                self._upfail = 0; return True
+            # persistent failure (a session that rotted while the daemon kept running)
+            # → force a full re-login so the feed self-heals instead of freezing.
+            self._upfail = getattr(self, "_upfail", 0) + 1
+            if self._upfail % 5 == 0:
+                log.warning("frame upload HTTP %s (streak %d) — forcing re-login", r.status_code, self._upfail)
+                try: self._sign_in(); self._ensure_camera()
+                except Exception as e2: log.warning("re-login failed: %s", e2)
+            return False
         except Exception as e:  # noqa: BLE001
+            self._upfail = getattr(self, "_upfail", 0) + 1
+            if self._upfail % 5 == 0:
+                try: self._sign_in()
+                except Exception: pass
             log.debug("frame upload failed: %s", e); return False
 
     # ── events + heartbeat ────────────────────────────────────────────────

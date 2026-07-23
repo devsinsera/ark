@@ -1,0 +1,17 @@
+[Unit]
+Description=Vigil hotplug supervisor (auto-detect USB cameras)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=VIGIL_NODE=node1
+Environment=VIGIL_LOCATION=Studio
+Environment=VIGIL_DETECT=1
+ExecStart=/usr/bin/python3 /opt/vigil/vigil_hotplug.py
+StandardOutput=append:/var/log/vigil-hotplug.log
+StandardError=append:/var/log/vigil-hotplug.log
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

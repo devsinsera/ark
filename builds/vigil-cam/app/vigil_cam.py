@@ -408,18 +408,22 @@ def main() -> None:
                 motion = True
         set_motion_display(motion)   # black screen → red flash on motion (HDMI, if attached)
 
-        # ── REC + MOTION indicators only (no timestamp/date watermark on the video) ──
+        # Keep a CLEAN frame for the cloud upload + recordings (evidence stays
+        # uncluttered); the REC dot / MOTION border / detection boxes are overlaid
+        # ONLY on the live LAN view.
+        clean = frame.copy()
         cv2.circle(frame, (W - 18, 16), 5, (0, 0, 200), -1)
         if motion:
             cv2.rectangle(frame, (1, 1), (W - 2, H - 2), (0, 0, 220), 3)
             cv2.putText(frame, "MOTION", (W - 96, 20), cv2.FONT_HERSHEY_PLAIN, 1.2, (0, 0, 220), 2, cv2.LINE_AA)
         if DETECT and detector.net is not None:
-            detector.draw(frame)     # labelled bounding boxes over the live + recorded frame
+            detector.draw(frame)     # labelled bounding boxes — LIVE view only
 
-        ok2, jpg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_Q])
+        ok2, jpg = cv2.imencode(".jpg", clean, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_Q])   # CLEAN → cloud + record
         if ok2:
             data = jpg.tobytes()
-            LATEST.set(data)  # LAN MJPEG — every frame
+            okl, jl = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_Q])  # annotated → LAN live
+            LATEST.set(jl.tobytes() if okl else data)  # LAN MJPEG — every frame
 
             if motion:
                 hot_until = now + 5.0
@@ -450,7 +454,7 @@ def main() -> None:
                 except Exception as e:  # noqa: BLE001
                     writer = None; print(f"[vigil] REC start failed: {e}", flush=True)
             if writer is not None:
-                writer.write(frame)
+                writer.write(clean)   # record the CLEAN frame (no overlays)
                 if now >= rec_end:
                     try: writer.release()
                     except Exception: pass
