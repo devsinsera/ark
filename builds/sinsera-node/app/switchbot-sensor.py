@@ -198,7 +198,7 @@ def decode(b):
     op = bool(b[3] & 0x06)  # 0x02 just-opened + 0x04 open/timeout (left open) = both physically open
     if not OPEN_BIT_SET_MEANS_OPEN:
         op = not op
-    return {"open": op, "battery": b[2] & 0x7f, "motion": bool(b[1] & 0x40)}  # PIR bit
+    return {"open": op, "battery": b[2] & 0x7f, "motion": bool(b[1] & 0x40), "raw": bytes(b[:6]).hex()}  # PIR bit; raw for state-mismatch debugging
 
 
 def scan():
@@ -226,6 +226,8 @@ def main():
             if not d:
                 continue
             status = "open" if d["open"] else "closed"
+            if mac == "B0:E9:FE:54:D6:54":
+                log("d654 raw=%s -> %s" % (d.get("raw"), status))   # Hallway open-while-closed diagnosis
             now = time.time()
             first = mac not in state
             changed = (not first) and state[mac] != d["open"]
