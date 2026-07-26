@@ -201,65 +201,95 @@ def decode(b):
     return {"open": op, "battery": b[2] & 0x7f, "motion": bool(b[1] & 0x40), "raw": bytes(b[:6]).hex()}  # PIR bit; raw for state-mismatch debugging
 
 
-def scan():
-    try:
-        subprocess.run(["bluetoothctl", "--timeout", str(SCAN_SECS), "scan", "on"],
-                       capture_output=True, text=True, timeout=SCAN_SECS + 6)
-    except Exception:
-        pass
+# ── LIVE event-driven scanning (bleak). The old bluetoothctl batch loop read the
+# cached service data AFTER each 15s scan window (+3s sleep) → up to ~18s latency
+# on a door/motion event. Now every advertisement is processed the moment it
+# arrives, so latency ≈ the sensor's own advertising delay (~0-2s on an event).
+# The scanner is restarted every 10 min as adapter hygiene. ──
+state, last_push = {}, {}
+
+def process(mac, d):
+    """Per-advert state machine (contact + PIR twin) — same logic as the old loop."""
+    status = "open" if d["open"] else "closed"
+    if mac == "B0:E9:FE:54:D6:54":
+        log("d654 raw=%s -> %s" % (d.get("raw"), status))   # Hallway open-while-closed diagnosis
+    slug, label = SENSORS[mac]
+    now = time.time()
+    first = mac not in state
+    changed = (not first) and state[mac] != d["open"]
+    # keep the sensor row warm (status/battery/last_seen), heartbeat-throttled
+    if first or changed or now - last_push.get(mac, 0) > HEARTBEAT:
+        if upsert_sensor(slug, label, status, d["battery"]):
+            last_push[mac] = now
+    if first:
+        state[mac] = d["open"]              # baseline read — no event
+    elif changed:
+        if post_event(slug, "contact", "%s %s" % (label, "opened" if d["open"] else "closed")):
+            log("%s -> %s (battery %d%%)" % (label, status, d["battery"]))
+            state[mac] = d["open"]          # only advance once the event is in
+        else:
+            log("%s changed to %s but post failed — retrying on the next advert" % (label, status))
+
+    # ── PIR motion (2nd sensor row) for sensors in MOTION ──
+    if mac in MOTION and "motion" in d:
+        mslug, mlabel = MOTION[mac]; mk = mac + "-m"
+        mstatus = "motion" if d["motion"] else "clear"
+        mfirst = mk not in state
+        mchanged = (not mfirst) and state[mk] != d["motion"]
+        if mfirst or mchanged or now - last_push.get(mk, 0) > HEARTBEAT:
+            if upsert_sensor(mslug, mlabel, mstatus, d["battery"], location="Sensor · motion"):
+                last_push[mk] = now
+        if mfirst:
+            state[mk] = d["motion"]
+        elif mchanged:
+            if not d["motion"] or post_event(mslug, "motion", "%s — motion" % mlabel):
+                if d["motion"]: log("%s -> motion" % mlabel)
+                state[mk] = d["motion"]
+
+
+async def amain():
+    import asyncio
+    from bleak import BleakScanner
+    FD3D = "0000fd3d-0000-1000-8000-00805f9b34fb"
+
+    def on_adv(dev, adv):
+        mac = dev.address.upper()
+        if mac not in SENSORS:
+            return
+        sd = adv.service_data.get(FD3D)
+        if not sd:
+            return
+        d = decode(list(sd))
+        if not d:
+            return
+        if not auth():
+            return                          # backoff window — the next advert retries
+        try:
+            process(mac, d)
+        except Exception as e:
+            log("process %s: %s" % (mac, e))
+
+    while True:
+        try:
+            scanner = BleakScanner(on_adv)
+            await scanner.start()
+            await asyncio.sleep(600)        # restart every 10 min (adapter hygiene)
+            await scanner.stop()
+        except Exception as e:
+            log("scanner err: %s — retrying in 15s" % e)
+            try: await scanner.stop()
+            except Exception: pass
+            await asyncio.sleep(15)
 
 
 def main():
+    import asyncio
     if not SB_URL or not EMAIL:
         log("missing Supabase env at %s; exiting" % ENV)
         sys.exit(1)
     subprocess.run(["bluetoothctl", "power", "on"], capture_output=True)
-    log("switchbot-sensor starting; watching %d sensors" % len(SENSORS))
-    state, last_push = {}, {}
-    while True:
-        if not auth():
-            time.sleep(20)
-            continue
-        scan()
-        for mac, (slug, label) in SENSORS.items():
-            d = decode(read_servicedata(mac))
-            if not d:
-                continue
-            status = "open" if d["open"] else "closed"
-            if mac == "B0:E9:FE:54:D6:54":
-                log("d654 raw=%s -> %s" % (d.get("raw"), status))   # Hallway open-while-closed diagnosis
-            now = time.time()
-            first = mac not in state
-            changed = (not first) and state[mac] != d["open"]
-            # keep the sensor row warm (status/battery/last_seen), heartbeat-throttled
-            if first or changed or now - last_push.get(mac, 0) > HEARTBEAT:
-                if upsert_sensor(slug, label, status, d["battery"]):
-                    last_push[mac] = now
-            if first:
-                state[mac] = d["open"]              # baseline read — no event
-            elif changed:
-                if post_event(slug, "contact", "%s %s" % (label, "opened" if d["open"] else "closed")):
-                    log("%s -> %s (battery %d%%)" % (label, status, d["battery"]))
-                    state[mac] = d["open"]          # only advance once the event is in
-                else:
-                    log("%s changed to %s but post failed — retrying next cycle" % (label, status))
-
-            # ── PIR motion (2nd sensor row) for sensors in MOTION ──
-            if mac in MOTION and "motion" in d:
-                mslug, mlabel = MOTION[mac]; mk = mac + "-m"
-                mstatus = "motion" if d["motion"] else "clear"
-                mfirst = mk not in state
-                mchanged = (not mfirst) and state[mk] != d["motion"]
-                if mfirst or mchanged or now - last_push.get(mk, 0) > HEARTBEAT:
-                    if upsert_sensor(mslug, mlabel, mstatus, d["battery"], location="Sensor · motion"):
-                        last_push[mk] = now
-                if mfirst:
-                    state[mk] = d["motion"]
-                elif mchanged:
-                    if not d["motion"] or post_event(mslug, "motion", "%s — motion" % mlabel):
-                        if d["motion"]: log("%s -> motion" % mlabel)
-                        state[mk] = d["motion"]
-        time.sleep(LOOP_SLEEP)
+    log("switchbot-sensor starting (live scan); watching %d sensors" % len(SENSORS))
+    asyncio.run(amain())
 
 
 if __name__ == "__main__":
