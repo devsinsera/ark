@@ -33,8 +33,13 @@ OPEN_BIT_SET_MEANS_OPEN = True
 
 # BLE MAC -> (vigil_cameras slug, label). Slugs match the rows already created.
 SENSORS = {
-    "B0:E9:FE:54:D6:54": ("switchbot-b0e9fe54d654", "Robe Door"),
+    "B0:E9:FE:54:D6:54": ("switchbot-b0e9fe54d654", "Hallway"),   # Garage↔Hallway door
     "B0:E9:FE:54:CC:13": ("switchbot-b0e9fe54cc13", "Bedroom Door"),
+}
+# SwitchBot contact sensors have a built-in PIR — expose motion as a SECOND sensor row.
+MOTION = {
+    "B0:E9:FE:54:D6:54": ("switchbot-b0e9fe54d654-motion", "Hallway Motion"),
+    "B0:E9:FE:54:CC:13": ("switchbot-b0e9fe54cc13-motion", "Bedroom Motion"),
 }
 
 
@@ -94,6 +99,10 @@ def _req(method, path, body=None, token=None, tries=3):
 
 
 def auth():
+    # 429 back-off: after a failed grant, do not re-hit the token endpoint for 90s
+    # (many house services password-grant from this IP; hammering feeds the limit).
+    if time.time() < _tok.get("retry_at", 0):
+        return None
     if _tok["at"] and time.time() < _tok["exp"] - 120:
         return True
     try:
@@ -103,6 +112,7 @@ def auth():
         return True
     except Exception as e:
         log("auth failed: %s" % e)
+        _tok["retry_at"] = time.time() + 90
         return False
 
 
@@ -124,7 +134,9 @@ def now_iso():
     return time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
 
 
-def upsert_sensor(slug, label, status, battery):
+def upsert_sensor(slug, label, status, battery, location="Sensor · door"):
+    # PATCH only status/battery/last_seen — leave label/location alone so the user can
+    # RENAME sensors in the app without the reader clobbering it. Label set on insert.
     payload = {"status": status, "battery": battery, "last_seen_at": now_iso()}
     cid = cam_id(slug)
     try:
@@ -132,7 +144,7 @@ def upsert_sensor(slug, label, status, battery):
             _req("PATCH", "/rest/v1/vigil_cameras?id=eq.%s" % cid, payload, token=_tok["at"])
         else:
             row = {"owner_id": _tok["uid"], "slug": slug, "label": label,
-                   "location": "Sensor · door", "connection": "ble", "ip_address": None}
+                   "location": location, "connection": "ble", "ip_address": None}
             row.update(payload)
             _req("POST", "/rest/v1/vigil_cameras", row, token=_tok["at"])
             cam_id(slug)
@@ -180,15 +192,13 @@ def read_servicedata(mac):
 
 
 def decode(b):
-    """SwitchBot WoContact (type 'd' = 0x64): battery = b[2]&0x7f, open = b[3]&0x06
-    (0x02 = just-opened, 0x04 = open/timeout when left open — both mean physically open;
-    checking only 0x02 made doors left open eventually read closed)."""
+    """SwitchBot WoContact (type 'd' = 0x64): battery = b[2]&0x7f, open = b[3]&0x02."""
     if not b or len(b) < 4 or b[0] != 0x64:
         return None
-    op = bool(b[3] & 0x06)
+    op = bool(b[3] & 0x06)  # 0x02 just-opened + 0x04 open/timeout (left open) = both physically open
     if not OPEN_BIT_SET_MEANS_OPEN:
         op = not op
-    return {"open": op, "battery": b[2] & 0x7f}
+    return {"open": op, "battery": b[2] & 0x7f, "motion": bool(b[1] & 0x40)}  # PIR bit
 
 
 def scan():
@@ -231,6 +241,22 @@ def main():
                     state[mac] = d["open"]          # only advance once the event is in
                 else:
                     log("%s changed to %s but post failed — retrying next cycle" % (label, status))
+
+            # ── PIR motion (2nd sensor row) for sensors in MOTION ──
+            if mac in MOTION and "motion" in d:
+                mslug, mlabel = MOTION[mac]; mk = mac + "-m"
+                mstatus = "motion" if d["motion"] else "clear"
+                mfirst = mk not in state
+                mchanged = (not mfirst) and state[mk] != d["motion"]
+                if mfirst or mchanged or now - last_push.get(mk, 0) > HEARTBEAT:
+                    if upsert_sensor(mslug, mlabel, mstatus, d["battery"], location="Sensor · motion"):
+                        last_push[mk] = now
+                if mfirst:
+                    state[mk] = d["motion"]
+                elif mchanged:
+                    if not d["motion"] or post_event(mslug, "motion", "%s — motion" % mlabel):
+                        if d["motion"]: log("%s -> motion" % mlabel)
+                        state[mk] = d["motion"]
         time.sleep(LOOP_SLEEP)
 
 
