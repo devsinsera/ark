@@ -37,6 +37,7 @@ CAM_FPS      = int(os.environ.get("CAM_FPS", "15"))          # capture/LAN rate
 CAM_DEVICE   = os.environ.get("CAM_DEVICE", "").strip()  # explicit device PATH (e.g. a stable /dev/v4l/by-path/… symlink) — wins over CAM_INDEX so USB re-enumeration on reboot can't shuffle which physical camera a service gets
 CAM_INDEX    = int(os.environ.get("CAM_INDEX") or (int(os.environ.get("CAM_SLOT", "0")) * 2))  # dual-cam uses CAM_SLOT 0/1 → /dev/video0,2
 CAM_V4L2     = os.environ.get("CAM_V4L2", "").strip()  # per-cam v4l2 controls "k=v,k=v" (WB/exposure/contrast tuning)
+V4L2 = {"ctrls": CAM_V4L2}   # live-updatable holder (app __vigil_v4l2__ overrides env)
 CAM_FOURCC   = os.environ.get("CAM_FOURCC", "").strip()  # e.g. "MJPG" — needed for 720p+ over USB2
 SHARPEN      = float(os.environ.get("CAM_SHARPEN", "0"))  # unsharp-mask amount (0=off, ~0.6 crisps a soft lens)
 # Rotation is LIVE-updatable from the app (kiosk_config __cam_rotation__ → poll_rotation);
@@ -212,13 +213,14 @@ def _apply_v4l2():
     OpenCV resets controls on open, so tuning (white balance / exposure / contrast) must be
     re-applied on every (re)connect. Best-effort; order matters (e.g. white_balance_automatic=0
     before white_balance_temperature). Needs v4l2-ctl."""
-    if not CAM_V4L2:
+    ctrls = V4L2["ctrls"]
+    if not ctrls:
         return
     import subprocess
     try:
-        subprocess.run(["v4l2-ctl", "-d", f"/dev/video{CAM_INDEX}", "-c", CAM_V4L2],
+        subprocess.run(["v4l2-ctl", "-d", f"/dev/video{CAM_INDEX}", "-c", ctrls],
                        check=False, capture_output=True, timeout=5)
-        print(f"[vigil] applied v4l2 controls: {CAM_V4L2}", flush=True)
+        print(f"[vigil] applied v4l2 controls: {ctrls}", flush=True)
     except Exception as e:
         print(f"[vigil] v4l2 tune failed: {e}", flush=True)
 
@@ -311,6 +313,21 @@ def main() -> None:
                 print(f"[vigil] poll_rotation error: {e}", flush=True)
             time.sleep(8)
     threading.Thread(target=poll_rot, daemon=True).start()
+
+    def poll_cam_v4l2():
+        import subprocess as _sp
+        while True:
+            try:
+                sv = cloud.poll_v4l2()
+                if sv is not None and sv != V4L2["ctrls"]:
+                    V4L2["ctrls"] = sv
+                    _sp.run(["v4l2-ctl", "-d", (CAM_DEVICE or f"/dev/video{CAM_INDEX}"), "-c", sv],
+                            check=False, capture_output=True, timeout=5)
+                    print(f"[vigil] v4l2 controls -> {sv}", flush=True)
+            except Exception as e:
+                print(f"[vigil] poll_v4l2 error: {e}", flush=True)
+            time.sleep(8)
+    threading.Thread(target=poll_cam_v4l2, daemon=True).start()
 
     # OpenCV writes mp4v (MPEG-4 Part 2), which browsers' <video> CANNOT play — so
     # the app's Recordings player just showed nothing. Transcode to H.264 (yuv420p +

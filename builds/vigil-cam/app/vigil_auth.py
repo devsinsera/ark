@@ -290,6 +290,23 @@ class VigilCloud:
             pass
         return None
 
+    def poll_v4l2(self):
+        """Live per-camera v4l2 image controls from __vigil_v4l2__ (slug -> 'k=v,k=v'
+        string) so the app can tune exposure/contrast without SSH. None if unset."""
+        if not self.enabled:
+            return None
+        try:
+            r = self._rest("GET", "kiosk_config", params={"node": "eq.__vigil_v4l2__", "select": "target"})
+            if r.status_code < 300 and r.json():
+                import json as _json
+                m = _json.loads(r.json()[0].get("target") or "{}")
+                v = m.get(CAMERA_SLUG)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+        except Exception:
+            pass
+        return None
+
     def upload_recording(self, mp4_bytes: bytes, started_at: str, duration_s: float, kind: str = "motion") -> None:
         if not self.enabled or not self.uid:
             return
