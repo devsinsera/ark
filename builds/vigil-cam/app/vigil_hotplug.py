@@ -97,12 +97,21 @@ def save():
 
 state = {}   # byid -> {proc, port, slug, label}
 
+def _port_free(p):
+    import socket as _s
+    try:
+        _t = _s.socket(_s.AF_INET, _s.SOCK_STREAM); _t.bind(("0.0.0.0", int(p))); _t.close(); return True
+    except OSError:
+        return False
+
 def port_for(byid):
-    if byid in persist and "port" in persist[byid]:
+    # honour a stable persisted port only if it is actually FREE — avoids colliding
+    # with non-vigil services (e.g. the eufy bridge on :8091). 2026-07-30
+    if byid in persist and persist[byid].get("port") and _port_free(persist[byid]["port"]):
         return persist[byid]["port"]
     used = {v.get("port") for v in persist.values()} | {s["port"] for s in state.values()}
     for p in range(PORT_BASE, PORT_MAX):
-        if p not in used: return p
+        if p not in used and _port_free(p): return p
     return PORT_BASE
 
 def start(byid, dev):
