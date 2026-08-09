@@ -6,8 +6,11 @@
 # Tune perf over SSH: edit RES / VIGIL_TILE_FPS in vigil-wall.py, or set
 # VIGIL_BRIDGE / VIGIL_TILE_FPS in the environment. Log: /var/log/vigil-wall.log
 
+# Audio ON: send SDL/pygame sound out through ALSA → HDMI → the TV speakers, so
+# Vigil motion alerts chime in the lounge. Set VIGIL_ALERT_SOUND=0 to silence, or
+# SDL_AUDIODRIVER=dummy to hard-disable audio entirely.
 export SDL_VIDEODRIVER=kmsdrm
-export SDL_AUDIODRIVER=dummy
+export SDL_AUDIODRIVER=${SDL_AUDIODRIVER:-alsa}
 export PYGAME_HIDE_SUPPORT_PROMPT=1
 
 cd /opt/vigil-wall || exit 1

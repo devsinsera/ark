@@ -1,10 +1,11 @@
 #!/bin/bash
-# sinsera-node-3 install.sh — Pi ZERO 2 W → 75" TV Vigil camera wall.
-# Renders the 4 Eufy cams as a 2x2 grid FULLSCREEN on the HDMI framebuffer
-# (Pygame on SDL kmsdrm — NO X, NO browser; the Zero 2 W can't run WPE/cog).
-# LCD HAT disabled (HDMI only). LAN-local: reaches the bridge at
-# 192.168.4.163:8091 over wifi. Lean by design — no Claude/USB-builder/WireGuard
-# stack (too heavy for 512MB). Runs in the chroot.
+# sinsera-node-3 install.sh — Pi 5 8GB → 75" TV Vigil camera wall.
+# Renders the Eufy cams as an auto-sized grid FULLSCREEN on the HDMI framebuffer
+# (Pygame on SDL kmsdrm — NO X, NO browser). The Pi 5 has ample headroom to run a
+# browser kiosk / live video, but the lean framebuffer renderer is kept on purpose
+# (rock-solid, tiny, no GPU compositor). HDMI audio is ON so Vigil motion alerts
+# chime through the TV speakers. LAN-local: reaches the bridge at
+# 192.168.4.163:8091 over wifi. Runs in the chroot.
 # secrets.env: SSH_PUBKEY, WIFI_SSID, WIFI_KEY, ANON_KEY, HOSTNAME_NEW
 set +e
 . /opt/sinsera-node/secrets.env 2>/dev/null
@@ -13,60 +14,39 @@ APPSRC=/opt/sinsera-node/app
 export DEBIAN_FRONTEND=noninteractive
 step(){ echo; echo "== $* =="; }
 
-step "apt: framebuffer renderer stack (pygame + requests, NO browser)"
+step "apt: framebuffer renderer stack (pygame + requests + ALSA for HDMI audio, NO browser)"
 apt-get update -y
 apt-get install -y --no-install-recommends \
   python3 python3-pygame python3-requests \
   libsdl2-2.0-0 libsdl2-image-2.0-0 \
+  libasound2 alsa-utils \
   fonts-dejavu-core ca-certificates curl \
   rfkill raspi-config iw network-manager
 
-step "locale + Zero 2 W boot config (force 1080p HDMI, gpu_mem, NO fan, LCD HAT off)"
+step "locale + Pi 5 boot config (KMS HDMI display + HDMI audio to the TV)"
 sed -i 's/^# *en_AU.UTF-8 UTF-8/en_AU.UTF-8 UTF-8/' /etc/locale.gen 2>/dev/null; locale-gen 2>/dev/null; update-locale LANG=en_AU.UTF-8 2>/dev/null
 BOOTDIR=/boot/firmware; [ -d "$BOOTDIR" ] || BOOTDIR=/boot
 BOOTCFG="$BOOTDIR/config.txt"
 if [ -f "$BOOTCFG" ] && ! grep -q "sinsera-node-3" "$BOOTCFG"; then
   cat >> "$BOOTCFG" <<'CFG'
 
-# sinsera-node-3 — Zero 2 W → 75" TV: force 1080p HDMI on the framebuffer, no LCD HAT
+# sinsera-node-3 — Pi 5 8GB → 75" TV. Display + HDMI audio both come from the
+# default vc4-kms-v3d KMS pipeline (bookworm default; NO legacy hdmi_mode/gpu_mem —
+# those are ignored under KMS on a Pi 5). The Pi 5 auto-negotiates the TV's native
+# mode; to pin 1080p instead, add `video=HDMI-A-1:1920x1080@60` to cmdline.txt.
 hdmi_force_hotplug=1
 disable_overscan=1
-hdmi_group=1
-hdmi_mode=16
-gpu_mem=128
-# No SPI/LCD-HAT dtoverlay loaded — HDMI framebuffer is the only display.
-dtparam=spi=off
 CFG
 fi
 
-step "best-effort LCD-HAT backlight OFF (common Waveshare pins) — HDMI is the display"
-cat > /usr/local/sbin/lcd-hat-off.sh <<'LH'
-#!/bin/bash
-# Drive common Waveshare LCD-HAT backlight pins LOW so the little screen stays dark
-# (HDMI is the real display). Harmless if no HAT / a different pin — tune if needed.
-for PIN in 18 24 13; do
-  pinctrl set $PIN op dl 2>/dev/null || {
-    echo $PIN > /sys/class/gpio/export 2>/dev/null
-    echo out > /sys/class/gpio/gpio$PIN/direction 2>/dev/null
-    echo 0 > /sys/class/gpio/gpio$PIN/value 2>/dev/null
-  }
-done
-exit 0
-LH
-chmod +x /usr/local/sbin/lcd-hat-off.sh
-cat > /etc/systemd/system/lcd-hat-off.service <<'LHS'
-[Unit]
-Description=Turn the LCD HAT backlight off (HDMI-only display)
-DefaultDependencies=no
-After=local-fs.target
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/lcd-hat-off.sh
-RemainAfterExit=yes
-[Install]
-WantedBy=sysinit.target
-LHS
-systemctl enable lcd-hat-off.service 2>/dev/null
+step "route ALSA default → HDMI (Pi 5 has NO analog jack; the TV is the only sink)"
+# Pi 5 exposes its two HDMI ports as ALSA cards (typically 0 = HDMI0, 1 = HDMI1).
+# The TV is on HDMI0 → make it the default sink so pygame/SDL audio reaches it.
+# If the TV is plugged into the OTHER HDMI port and stays silent, flip 0 → 1 here.
+cat > /etc/asound.conf <<'ASND'
+defaults.pcm.card 0
+defaults.ctl.card 0
+ASND
 
 step "mask first-boot wizard + cloud-init"
 systemctl disable userconfig.service 2>/dev/null; systemctl mask userconfig.service 2>/dev/null
@@ -171,7 +151,7 @@ chown wall:wall /home/wall/.bash_profile
 step "MOTD + done"
 cat > /etc/motd <<M
 
-  $HOSTNAME_NEW — Pi Zero 2 W · Vigil camera wall on HDMI (framebuffer, 1080p)
+  $HOSTNAME_NEW — Pi 5 8GB · Vigil camera wall on HDMI (framebuffer) + alert audio
   Bridge: http://192.168.4.163:8091  ·  SSH: peta@$HOSTNAME_NEW.local
   Renderer log: /var/log/vigil-wall.log  ·  tune: /opt/vigil-wall/vigil-wall.py
 M

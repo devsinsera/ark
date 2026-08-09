@@ -3,11 +3,15 @@
 Vigil Wall — Sinsera Node 3.
 
 Renders the Eufy camera grid FULLSCREEN on the HDMI framebuffer (SDL kmsdrm,
-no X, no browser) for a Pi Zero 2 W driving a 75" TV at 1080p.
+no X, no browser) for a Pi 5 8GB driving a 75" TV at 1080p.
 
 Lightweight by design: it pulls JPEG *snapshots* from the eufy bridge
 (/snap/<serial>) ~1.5 fps per tile and tiles them — not live video — so the
-Zero 2 W stays smooth. /status (every 3s) drives the per-tile motion/live border.
+wall stays smooth. /status (every 3s) drives the per-tile motion/live border.
+
+Audio: when a camera flips into MOTION it plays a short chime out through
+ALSA → HDMI → the TV speakers (rising-edge, per-camera cooldown). Set env
+VIGIL_ALERT_SOUND=0 to silence, VIGIL_ALERT_COOLDOWN to retune the gap.
 
 The camera list is fetched LIVE from the bridge's /cams endpoint, so a newly
 paired SPARE camera shows up automatically (and the grid auto-sizes) without
@@ -26,6 +30,10 @@ import requests
 BRIDGE       = os.environ.get("VIGIL_BRIDGE", "http://192.168.4.163:8091")
 FPS_PER_TILE = float(os.environ.get("VIGIL_TILE_FPS", "1.5"))  # snapshot refresh/cam
 CAMS_REFRESH = 60.0   # re-pull /cams this often so a freshly paired spare appears
+ALERT_ON     = os.environ.get("VIGIL_ALERT_SOUND", "1") != "0"     # chime on motion
+ALERT_COOLDOWN = float(os.environ.get("VIGIL_ALERT_COOLDOWN", "20"))  # per-cam gap (s)
+ALERT_MIN_GAP  = 4.0   # global floor between any two chimes so a burst isn't a drone
+ALERT_WAV    = "/opt/vigil-wall/alert.wav"
 RES          = (1920, 1080)
 BG    = (8, 4, 6)
 GOLD  = (212, 160, 23)
@@ -41,6 +49,31 @@ FALLBACK_CAMS = [
     ("T8170T1025032AD7", "FRONT"),
     ("T8410P5025402107", "FRONT YARD"),
 ]
+
+
+def ensure_alert_wav(path):
+    """Synthesize a short two-tone 'ding' WAV once, using only the stdlib (the lean
+    image has no numpy). Returns the path, or None if it couldn't be written."""
+    if os.path.exists(path):
+        return path
+    try:
+        import wave, struct
+        sr = 22050
+        frames = bytearray()
+        def tone(freq, ms, vol=0.5):
+            n = int(sr * ms / 1000)
+            for i in range(n):
+                env = min(1.0, i / 220.0, (n - i) / 220.0)  # fade in/out, no click
+                frames.extend(struct.pack(
+                    "<h", int(vol * env * 32767 * math.sin(2 * math.pi * freq * i / sr))))
+        tone(880, 130)          # A5
+        tone(1320, 190)         # ~E6 — rising "ding"
+        with wave.open(path, "w") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
+            w.writeframes(bytes(frames))
+        return path
+    except Exception:
+        return None
 
 
 def fetch_cams():
@@ -146,9 +179,26 @@ def rotator(wall):
 
 def main():
     os.environ.setdefault("SDL_VIDEODRIVER", "kmsdrm")
-    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    os.environ.setdefault("SDL_AUDIODRIVER", "alsa" if ALERT_ON else "dummy")
     pygame.init()
     pygame.mouse.set_visible(False)
+
+    # Alert chime → ALSA → HDMI → TV speakers. Best-effort: if audio hardware is
+    # missing the wall keeps rendering silently (alert_snd stays None).
+    alert_snd = None
+    if ALERT_ON:
+        try:
+            pygame.mixer.init()
+            wavp = ensure_alert_wav(ALERT_WAV)
+            if wavp:
+                alert_snd = pygame.mixer.Sound(wavp)
+        except Exception as e:
+            alert_snd = None
+            try:
+                with open("/var/log/vigil-wall.log", "a") as _l:
+                    _l.write(f"[audio] disabled — mixer init failed: {e}\n")
+            except Exception:
+                pass
     screen = pygame.display.set_mode(RES, pygame.FULLSCREEN)
     W, H = screen.get_size()
     # diagnostic: confirm the real driver + the modeset size reached the framebuffer
@@ -180,6 +230,9 @@ def main():
     gap = 6
     clock = pygame.time.Clock()
     frame = 0
+    prev_motion: dict = {}   # serial -> last frame's motion bool (rising-edge detect)
+    last_alert: dict = {}    # serial -> ts of last chime for this cam (per-cam cooldown)
+    last_any_alert = 0.0     # ts of last chime for ANY cam (global min-gap throttle)
     while True:
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
@@ -217,6 +270,21 @@ def main():
             st = status.get(t.serial) or {}
             motion = bool(st.get("motion"))
             live = bool(st.get("live"))
+
+            # Chime on the rising edge of motion (off -> on), throttled per-camera and
+            # globally, so a real event dings once instead of droning while it lasts.
+            if alert_snd and motion and not prev_motion.get(t.serial):
+                now = time.time()
+                if (now - last_alert.get(t.serial, 0.0) > ALERT_COOLDOWN
+                        and now - last_any_alert > ALERT_MIN_GAP):
+                    try:
+                        alert_snd.play()
+                    except Exception:
+                        pass
+                    last_alert[t.serial] = now
+                    last_any_alert = now
+            prev_motion[t.serial] = motion
+
             stale = age > 12
             border = (80, 30, 30) if stale else (EMBER if motion else (GOLD if live else DIM))
             pygame.draw.rect(screen, border, rect, 2)
