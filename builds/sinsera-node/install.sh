@@ -25,9 +25,20 @@ apt-get install -y --no-install-recommends \
   xserver-xorg-core xserver-xorg-legacy xinit xserver-xorg-input-libinput \
   x11-xserver-utils openbox unclutter chromium \
   cage cog libseat1 \
+  pipewire pipewire-pulse pipewire-alsa wireplumber rtkit \
   fonts-dejavu-core fonts-liberation ca-certificates curl \
   nodejs npm tmux git python3 python3-pip rfkill raspi-config iw dmz-cursor-theme
 apt-get purge -y xserver-xorg-video-fbdev 2>/dev/null || true
+
+step "audio: PipeWire/WirePlumber for the kiosk session → HDMI (Chromium has no direct-ALSA)"
+# Chromium (v149+) emits sound only via PipeWire/PulseAudio, never ALSA directly — without an
+# audio server the kiosk is silent even though HDMI audio is fine. Enable the socket-activated
+# per-user PipeWire stack so every kiosk login gets a sink, plus rtkit for glitch-free RT
+# scheduling. WirePlumber auto-selects the connected HDMI as the default sink; the openbox
+# autostart unmutes it + sets a sane volume once the session is up. (Offline-safe: enable only
+# writes symlinks — nothing is started here in the chroot.)
+systemctl --global enable pipewire.socket pipewire-pulse.socket wireplumber.service 2>/dev/null || true
+systemctl enable rtkit-daemon.service 2>/dev/null || true
 
 step "ttyd web terminal (arm64)"
 curl -fsSL -o /usr/local/bin/ttyd https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.aarch64 && chmod +x /usr/local/bin/ttyd

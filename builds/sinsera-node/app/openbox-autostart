@@ -5,6 +5,12 @@ xset -dpms &
 xset s noblank &
 xrandr --auto &
 unclutter -idle 0.1 -root &
+# Audio: once PipeWire is up in this session, unmute the (auto-selected, connected) HDMI sink
+# at a sane level so Chromium / web-app sound reaches the TV speakers. WirePlumber picks the
+# live HDMI as @DEFAULT_AUDIO_SINK@; nothing to hard-code per node.
+( for _i in $(seq 1 30); do wpctl status >/dev/null 2>&1 && break; sleep 0.5; done
+  wpctl set-mute   @DEFAULT_AUDIO_SINK@ 0    2>/dev/null
+  wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.80 2>/dev/null ) &
 [ -f /opt/sinsera-node/display.env ] && . /opt/sinsera-node/display.env
 DSF="${KIOSK_SCALE:-1.0}"
 # Clear chromium's HTTP/GPU cache ONCE per session (not per relaunch) so a stale cache
