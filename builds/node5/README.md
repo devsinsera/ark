@@ -23,7 +23,7 @@ tuning (USB-dongle drivers, which radio hosts the AP, OBDLink BLE pairing).
 | Run mode | `gr86-idle-shutdown.timer` **STUB** — on with ignition, ~15–30 min parked window, then clean poweroff (needs supercap/UPS-hat wiring) | `/opt/gr86/idle-shutdown.sh` |
 | Tailscale | installed on **first boot** (network up); **no authkey baked** | `gr86-tailscale-install.service` |
 | SD guard | clean-shutdown-on-power-loss stub + documented overlayfs read-only-root toggle (**left OFF**) | `/opt/gr86/enable-overlayfs.sh` |
-| SSH | `peta` user, **key-only**, NOPASSWD sudo, fleet key baked; `gpu_mem=16` (headless) | — |
+| SSH | `peta`, **key-only** (`~/.ssh/sinsera_fleet`, fp `SHA256:vosk+ukg…`), NOPASSWD sudo; `gpu_mem=16` | `ssh node5` |
 
 ## Networks — who joins what
 
@@ -132,7 +132,7 @@ Base image: `Os/raspios_lite_arm64_latest.img.xz` (Pi 5 Bookworm, headless).
 ```bash
 # with Docker up (needs the ark-builder:0.1 image), or run it on Node 3:
 bash builder/lib/node5-bake.sh
-# output → Dev-Sinsera/Builds/node5.img   (flash to the Pi's SD/USB SSD)
+# output → Dev-Sinsera/Builds/sinsera-node-5-pi5-2gb.img  (flash to the Pi's SD/USB SSD)
 ```
 
 Optional bake-time creds (else placeholders remain): `~/.ssh/sinsera_fleet.pub`

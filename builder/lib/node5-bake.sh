@@ -29,7 +29,7 @@ OUT_DIR="$PROFILE_DIR/out"
 OUT_IMG="$OUT_DIR/ark-built.img"
 SRC_XZ="$REPO_ROOT/Os/raspios_lite_arm64_latest.img.xz"
 BUILDS_DELIVER_DIR="/Users/petastockdale/Dev-Sinsera/Builds"
-DELIVER_NAME="node5.img"
+DELIVER_NAME="sinsera-node-5-pi5-2gb.img"
 
 [ -f "$SRC_XZ" ] || { echo "ERROR: base image not found: $SRC_XZ" >&2; exit 1; }
 [ -f "$PROFILE_DIR/install.sh" ] || { echo "ERROR: missing $PROFILE_DIR/install.sh" >&2; exit 1; }
