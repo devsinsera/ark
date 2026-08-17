@@ -3,7 +3,7 @@
   "version":     1,
   "category":    "raspberry-pi-devices",
   "name":        "Node 5 — GR86 in-car Pi (Pi 5 2GB, headless OBD hub)",
-  "description": "Pi OS Lite 64-bit baked into the fleet's Node 5: a HEADLESS in-car Pi 5 (2GB) for the GR86. No HDMI/X/chromium/display stack — the dashboard is viewed via a URL on the iPad/phone. Runs the garage-pi-bridge OBD logger (OBDLink MX+ over the Ugreen BT USB dongle -> Supabase), hosts its own WiFi AP (Sinsera-GR86) on the 2nd radio so the iPad connects DIRECTLY and the local HUD works offline, and uplinks over known WiFi in priority home > iPhone-hotspot > car. Tailscale for headless remote SSH/mgmt (authkey added post-boot). Store-and-forward buffers OBD locally and rsyncs to Node 3's NVMe when home (Node-4 archive pattern). Fleet-integrated via node-status-reporter + node-command-runner (shows on the Nodes page, reboot/poweroff from Kiosks). peta SSH-key-only user + fleet key baked.",
+  "description": "Pi OS Lite 64-bit baked into the fleet's Node 5: a HEADLESS in-car Pi 5 (2GB) for the GR86. No HDMI/X/chromium/display stack — the dashboard is viewed via a URL on the iPad/phone. Runs the garage-pi-bridge OBD logger (OBDLink MX+ over the Ugreen BT USB dongle -> Supabase), hosts its own WiFi AP (Undercover Surveillance Van 5) on the 2nd radio so the iPad connects DIRECTLY and the local HUD works offline, and uplinks over known WiFi in priority home > iPhone-hotspot > car. Tailscale for headless remote SSH/mgmt (authkey added post-boot). Store-and-forward buffers OBD locally and rsyncs to Node 3's NVMe when home (Node-4 archive pattern). Fleet-integrated via node-status-reporter + node-command-runner (shows on the Nodes page, reboot/poweroff from Kiosks). peta SSH-key-only user + fleet key baked.",
   "supported_hardware": ["pi-5-2gb", "pi-5-4gb", "pi-5-8gb"],
   "base_image":  "raspios_lite_arm64_latest.img.xz",
   "preconfigured": {
@@ -11,9 +11,10 @@
     "user":         "peta (SSH-key only, sudo NOPASSWD) + fleet key baked",
     "display":      "NONE — fully headless (gpu_mem=16); HUD is served to the iPad over the Pi AP / cloud",
     "radios":       "onboard WiFi + TP-Link AX1300 USB (2 WiFi); onboard BT + Ugreen BT 6.0 USB (2 BT). One WiFi hosts the AP, the other uplinks; Ugreen BT -> OBDLink MX+",
-    "ap":           "Sinsera-GR86 (WPA2, method=shared 192.168.42.1/24) — iPad connects direct; passphrase is a placeholder",
+    "ap":           "Undercover Surveillance Van 5 (WPA2, method=shared 192.168.42.1/24) — iPad connects direct; real passphrase comes from ~/.ark/node5.conf at bake time, never committed",
     "uplink":       "NetworkManager autoconnect priority: home-wifi(100) > iphone-hotspot(50) > car-wifi(20); SSIDs/psks are placeholders",
     "obd":          "garage-obd-bridge.service (Restart=always) at /opt/garage-pi-bridge; .env baked with anon key + owner email, OBDLINK_MAC + CAR_ID + password BLANK placeholders",
+    "drone_relay":  "mediamtx v1.20.0 (mediamtx.service, /opt/mediamtx) — DJI Fly RTMP rtmp://192.168.42.1:1935/drone -> WebRTC http://192.168.42.1:8889/drone + HLS :8888 for the iPad. Node 5 is the FIELD media server (Node 3 does this at home). Fetched at bake time; non-fatal if the bake has no network — pre-stage mediamtx_v1.20.0_linux_arm64.tar.gz in app/ instead",
     "hud":          "gr86-hud.service — local-first HUD stub on :8080 (redirects to sinsera.co/garage/<car>/obd?hud=1 when online, placeholder page offline)",
     "tailscale":    "installed on first boot; NO authkey baked — run `sudo tailscale up --ssh --hostname node5` post-boot",
     "store_forward":"gr86-store-forward.timer (5 min) rsyncs /var/lib/garage-obd/buffer -> peta@192.168.4.182:/opt/garage-obd/node5 when Node 3 is reachable (home)",
@@ -25,6 +26,7 @@
     "UNVERIFIED ON HARDWARE — the Pi hasn't arrived. Expect on-Pi tuning: USB dongle drivers (TP-Link AX1300 mt76/rtl88xx-class + Ugreen BT), which radio ends up hosting the AP, OBDLink MX+ BLE pairing.",
     "Placeholders the user MUST fill: OBDLINK_MAC + CAR_ID + SUPABASE_PASSWORD in /opt/garage-pi-bridge/.env; AP passphrase + all uplink SSIDs/psks in the .nmconnection files; Tailscale authkey via `tailscale up`.",
     "Known gaps needing the physical Pi: the REAL gauge HUD (currently a stub that proxies the cloud), the supercap/UPS-hat idle-shutdown wiring, and USB-dongle driver verification. A USB SSD for camera/local buffer and the LiveKit camera publish are Phase 2 (not in this bake).",
-    "Headless: no display output at all — Node 5 is an OBD/network hub, not a screen."
+    "Headless: no display output at all — Node 5 is an OBD/network hub, not a screen.",
+    "mediamtx is baked but UNTESTED on the car AP: WebRTC ICE advertises 192.168.42.1 via webrtcAdditionalHosts (config validated against a real mediamtx v1.20.0 on Node 3, but never run on the Pi's own AP). Verify UDP 8189 flows over the AP interface, and test 2.4GHz (band=bg) vs 5GHz for video — 5GHz may collide with the drone's OcuSync downlink."
   ]
 }

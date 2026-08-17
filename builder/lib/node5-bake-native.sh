@@ -29,7 +29,8 @@ for f in bridge.py obd_pids.py requirements.txt .env.template hud-server.py \
          node-command-runner.service gr86-hud.service \
          gr86-store-forward.service gr86-store-forward.timer \
          gr86-idle-shutdown.service gr86-idle-shutdown.timer \
-         gr86-tailscale-install.service; do
+         gr86-tailscale-install.service \
+         mediamtx.yml mediamtx.service; do
   [ -f "$APP_DIR/$f" ] || { echo "ERROR: missing $APP_DIR/$f" >&2; exit 1; }
 done
 mkdir -p "$OUT_DIR"
@@ -53,7 +54,7 @@ VIGIL_EMAIL="peta.stockdale@outlook.com"; VIGIL_PASSWORD=""; SUPABASE_URL="https
 [ -n "$VIGIL_PASSWORD" ] || echo "WARNING: no camera password — node5 won't report to node_status until filled over SSH."
 
 # ── WiFi/AP/OBD — placeholders (recipe default; user fills post-boot) ──
-AP_SSID="Sinsera-GR86"; AP_PSK="CHANGE-ME-AP-PASSPHRASE"
+AP_SSID="Undercover Surveillance Van 5"; AP_PSK="CHANGE-ME-AP-PASSPHRASE"
 HOME_SSID=""; HOME_PSK=""; IPHONE_SSID=""; IPHONE_PSK=""
 OBDLINK_MAC=""; CAR_ID=""; WIFI_COUNTRY="AU"; OWNER_ID="82e75fd1-7878-45f5-9760-ba0af6838a3d"
 

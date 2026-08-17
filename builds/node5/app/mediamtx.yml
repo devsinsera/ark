@@ -1,0 +1,35 @@
+# Sinsera GR86 — in-car drone relay. Mirrors Node 3's Sky config, but tuned to be
+# the FIELD media server: at home the drone streams to Node 3 (192.168.4.182);
+# out in the car there is no Node 3, so Node 5 takes the job and the whole loop
+# stays on the Pi's own AP with no internet and no mobile data.
+#
+#   DJI Fly  --RTMP-->  rtmp://192.168.42.1:1935/drone
+#   iPad     <--WebRTC-- http://192.168.42.1:8889/drone        (~1s, use this)
+#   iPad     <--HLS-----  http://192.168.42.1:8888/drone/index.m3u8  (~2-4s)
+#
+# NB the iPad cannot play RTMP or RTSP — WebRTC/HLS are what make this work on
+# iOS at all, which is why they are explicitly enabled here.
+logLevel: info
+
+rtsp: yes
+rtspAddress: :8554          # local only (ffmpeg/recording); iOS can't play this
+rtmp: yes
+rtmpAddress: :1935          # DJI Fly ingest
+hls: yes
+hlsAddress: :8888
+webrtc: yes
+webrtcAddress: :8889
+srt: no
+api: yes                    # :9997 — health/paths, used by the HUD + diagnostics
+metrics: no
+
+# WebRTC ICE has to advertise an address the iPad can actually reach. On the
+# GR86 AP that is always 192.168.42.1; without this, mediamtx may offer only the
+# uplink-side address (the iPhone hotspot) and the iPad's connection stalls.
+webrtcAdditionalHosts: [192.168.42.1]
+# UDP media port — must stay open on the AP interface for WebRTC to flow.
+webrtcLocalUDPAddress: :8189
+
+paths:
+  drone:
+  all_others:

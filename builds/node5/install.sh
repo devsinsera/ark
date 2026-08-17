@@ -25,7 +25,7 @@ SEC="$ROOT/secrets.env"
 : "${OWNER_ID:=82e75fd1-7878-45f5-9760-ba0af6838a3d}"
 : "${CAR_ID:=}"
 : "${OBDLINK_MAC:=}"
-: "${AP_SSID:=Sinsera-GR86}"
+: "${AP_SSID:=Undercover Surveillance Van 5}"
 : "${AP_PSK:=CHANGE-ME-AP-PASSPHRASE}"
 : "${HOME_SSID:=}"      ; : "${HOME_PSK:=}"
 : "${IPHONE_SSID:=}"    ; : "${IPHONE_PSK:=}"
@@ -93,7 +93,7 @@ if [ -f "$BOOTCFG" ] && ! grep -q "node5 (headless)" "$BOOTCFG"; then
   printf "\n# node5 (headless)\ngpu_mem=16\n" >> "$BOOTCFG"
 fi
 
-step "NetworkManager: AP (Sinsera-GR86) + priority uplinks (home > iphone > car)"
+step "NetworkManager: AP (${AP_SSID}) + priority uplinks (home > iphone > car)"
 systemctl enable NetworkManager 2>/dev/null || true
 NMDIR=/etc/NetworkManager/system-connections
 mkdir -p "$NMDIR"
@@ -105,8 +105,8 @@ for f in ap-sinsera-gr86 uplink-home-wifi uplink-iphone-hotspot uplink-car-wifi;
 done
 # Substitute baked SSID/PSK values into the profiles when provided (else the
 # CHANGE-ME placeholders remain for the user to edit).
-[ -n "$AP_SSID" ]     && sed -i "s/^ssid=Sinsera-GR86/ssid=${AP_SSID}/"                 "$NMDIR/ap-sinsera-gr86.nmconnection"       2>/dev/null || true
-[ "$AP_PSK" != "CHANGE-ME-AP-PASSPHRASE" ] && sed -i "s/^psk=CHANGE-ME-AP-PASSPHRASE/psk=${AP_PSK}/" "$NMDIR/ap-sinsera-gr86.nmconnection" 2>/dev/null || true
+[ -n "$AP_SSID" ]     && sed -i "s|^ssid=.*|ssid=${AP_SSID}|"                            "$NMDIR/ap-sinsera-gr86.nmconnection"       2>/dev/null || true
+[ "$AP_PSK" != "CHANGE-ME-AP-PASSPHRASE" ] && sed -i "s|^psk=.*|psk=${AP_PSK}|"          "$NMDIR/ap-sinsera-gr86.nmconnection"       2>/dev/null || true
 [ -n "$HOME_SSID" ]   && sed -i "s/^ssid=CHANGE-ME-HOME-SSID/ssid=${HOME_SSID}/"        "$NMDIR/uplink-home-wifi.nmconnection"      2>/dev/null || true
 [ -n "$HOME_PSK" ]    && sed -i "s/^psk=CHANGE-ME-HOME-PSK/psk=${HOME_PSK}/"             "$NMDIR/uplink-home-wifi.nmconnection"      2>/dev/null || true
 [ -n "$IPHONE_SSID" ] && sed -i "s/^ssid=CHANGE-ME-IPHONE-SSID/ssid=${IPHONE_SSID}/"    "$NMDIR/uplink-iphone-hotspot.nmconnection" 2>/dev/null || true
@@ -192,6 +192,35 @@ chown -R peta:peta /opt/gr86-hud
 cp "$APPSRC/gr86-hud.service" /etc/systemd/system/gr86-hud.service
 systemctl enable gr86-hud.service 2>/dev/null || true
 
+step "mediamtx — in-car drone relay (DJI Fly RTMP -> WebRTC/HLS for the iPad)"
+# At home the drone streams to Node 3; in the car there is no Node 3, so Node 5
+# is the field media server and the whole loop stays on the Pi's own AP.
+# Version pinned to what Node 3 is proven on (v1.20.0, aarch64).
+MTX_VER="${MTX_VER:-1.20.0}"
+MTX_TGZ="mediamtx_v${MTX_VER}_linux_arm64.tar.gz"
+mkdir -p /opt/mediamtx
+if [ -f "$APPSRC/$MTX_TGZ" ]; then
+  # pre-staged tarball (offline bake)
+  tar -xzf "$APPSRC/$MTX_TGZ" -C /opt/mediamtx mediamtx 2>/dev/null || true
+elif curl -fsSL --retry 3 --connect-timeout 20 \
+      "https://github.com/bluenviron/mediamtx/releases/download/v${MTX_VER}/${MTX_TGZ}" \
+      -o /tmp/mediamtx.tgz; then
+  tar -xzf /tmp/mediamtx.tgz -C /opt/mediamtx mediamtx 2>/dev/null || true
+  rm -f /tmp/mediamtx.tgz
+fi
+if [ -x /opt/mediamtx/mediamtx ]; then
+  cp "$APPSRC/mediamtx.yml" /opt/mediamtx/mediamtx.yml
+  cp "$APPSRC/mediamtx.service" /etc/systemd/system/mediamtx.service
+  systemctl enable mediamtx.service 2>/dev/null || true
+  echo "   mediamtx v${MTX_VER} installed -> rtmp://192.168.42.1:1935/drone"
+else
+  # Non-fatal: the rest of the node is far more important than the relay, and
+  # this is recoverable post-boot. Do NOT fail the whole bake for it.
+  echo "   !! mediamtx NOT installed (no network during bake and no pre-staged"
+  echo "      $MTX_TGZ in app/). Fix on the Pi: re-run this step or drop the"
+  echo "      tarball in builds/node5/app/ and re-bake."
+fi
+
 step "store-and-forward (rsync OBD buffer -> Node 3) + idle-shutdown stub"
 mkdir -p /opt/gr86 /var/lib/garage-obd/buffer
 cp "$APPSRC/store-forward.sh"  /opt/gr86/store-forward.sh
@@ -229,7 +258,8 @@ cat > /etc/motd <<MOTD
 
   NODE 5 — GR86 in-car Pi (Pi 5 2GB, HEADLESS)
   OBD:    garage-obd-bridge.service  (fill OBDLINK_MAC + CAR_ID + password in /opt/garage-pi-bridge/.env)
-  AP:     Sinsera-GR86  ·  HUD: http://node5.local:8080  (iPad connects to the Pi AP)
+  AP:     ${AP_SSID}  ·  HUD: http://192.168.42.1:8080  (iPad connects to the Pi AP)
+  Drone:  DJI Fly RTMP -> rtmp://192.168.42.1:1935/drone  ·  iPad: http://192.168.42.1:8889/drone
   Fleet:  shows as node5 on the Nodes page  ·  reboot/poweroff from Kiosks
   Remote: sudo tailscale up --ssh --hostname node5   (join the tailnet)
   SSH:    peta@node5.local

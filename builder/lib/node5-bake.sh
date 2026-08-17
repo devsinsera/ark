@@ -7,7 +7,7 @@
 # Baked in (see builds/node5/install.sh):
 #   * garage-pi-bridge OBD logger (venv) -> garage-obd-bridge.service (Restart=always),
 #     .env with anon key + owner email; OBDLINK_MAC + CAR_ID + password BLANK placeholders
-#   * NetworkManager AP (Sinsera-GR86) + priority uplinks (home > iphone > car; placeholders)
+#   * NetworkManager AP (Undercover Surveillance Van 5) + priority uplinks (home > iphone > car; placeholders)
 #   * onboard + USB WiFi/BT dongle firmware + rfkill-unblock
 #   * node-status-reporter + node-command-runner (fleet: shows as node5, remote power)
 #   * local-first HUD stub (:8080), store-and-forward timer -> Node 3, idle-shutdown stub
@@ -42,7 +42,8 @@ for f in bridge.py obd_pids.py requirements.txt .env.template hud-server.py \
          node-command-runner.service gr86-hud.service \
          gr86-store-forward.service gr86-store-forward.timer \
          gr86-idle-shutdown.service gr86-idle-shutdown.timer \
-         gr86-tailscale-install.service; do
+         gr86-tailscale-install.service \
+         mediamtx.yml mediamtx.service; do
   [ -f "$APP_DIR/$f" ] || { echo "ERROR: missing $APP_DIR/$f" >&2; exit 1; }
 done
 mkdir -p "$OUT_DIR"
@@ -68,7 +69,7 @@ if [ -f "$HOME/.ark/vigil.env" ]; then set -a; . "$HOME/.ark/vigil.env"; set +a;
 [ -n "$VIGIL_PASSWORD" ] || echo "WARNING: no camera password (~/.ark/vigil.env) — node5 won't report to node_status until filled."
 
 # ── Optional WiFi/AP/OBD overrides (~/.ark/node5.conf) — all placeholders otherwise ──
-AP_SSID="Sinsera-GR86"; AP_PSK="CHANGE-ME-AP-PASSPHRASE"
+AP_SSID="Undercover Surveillance Van 5"; AP_PSK="CHANGE-ME-AP-PASSPHRASE"
 HOME_SSID=""; HOME_PSK=""; IPHONE_SSID=""; IPHONE_PSK=""
 OBDLINK_MAC=""; CAR_ID=""; WIFI_COUNTRY="AU"; OWNER_ID="82e75fd1-7878-45f5-9760-ba0af6838a3d"
 [ -f "$HOME/.ark/node5.conf" ] && { set -a; . "$HOME/.ark/node5.conf"; set +a; }

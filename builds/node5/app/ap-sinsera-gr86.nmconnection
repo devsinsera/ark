@@ -4,7 +4,9 @@
 # stays free for the uplink; NM binds it to that interface via [wifi].mac-address
 # once you know the dongle MAC (leave blank = NM picks any AP-capable radio).
 #
-# PLACEHOLDER: change psk= to a real passphrase before baking/first boot.
+# PLACEHOLDER ON PURPOSE — the REAL passphrase lives in ~/.ark/node5.conf
+# (AP_SSID/AP_PSK), outside this repo, and install.sh substitutes it at bake time.
+# Never commit the real psk here.
 # The install.sh rewrites `psk=` from AP_PSK in secrets.env when provided.
 [connection]
 id=ap-sinsera-gr86
@@ -15,7 +17,7 @@ autoconnect-priority=10
 
 [wifi]
 mode=ap
-ssid=Sinsera-GR86
+ssid=Undercover Surveillance Van 5
 band=bg
 # mac-address=            # optional: pin to the USB dongle's MAC
 

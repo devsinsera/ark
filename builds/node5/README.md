@@ -14,15 +14,27 @@ tuning (USB-dongle drivers, which radio hosts the AP, OBDLink BLE pairing).
 |------|------|-------|
 | OBD logger | `garage-pi-bridge` (venv) → `garage-obd-bridge.service` (Restart=always) | `/opt/garage-pi-bridge` |
 | Radios | onboard WiFi + **TP-Link AX1300 USB** (2 WiFi); onboard BT + **Ugreen BT 6.0 USB** (2 BT). Ugreen BT → OBDLink MX+. Firmware pkgs + rfkill-unblock service | `node5-wifi-unblock.service` |
-| AP | `Sinsera-GR86` (WPA2, `method=shared` 192.168.42.1/24) — iPad connects **direct**, HUD works offline | `ap-sinsera-gr86.nmconnection` |
+| AP | `Undercover Surveillance Van 5` (WPA2, `method=shared` 192.168.42.1/24) — iPad connects **direct**, HUD works offline | `ap-sinsera-gr86.nmconnection` |
 | Uplink | NetworkManager autoconnect priority **home(100) > iPhone-hotspot(50) > car(20)** | `uplink-*.nmconnection` |
 | Local HUD | `gr86-hud.service` on **:8080** — redirects to `sinsera.co/garage/<car>/obd?hud=1` when online, placeholder page offline | `/opt/gr86-hud` |
+| Drone relay | **mediamtx v1.20.0** (`mediamtx.service`) — DJI Fly RTMP in, **WebRTC/HLS out for the iPad**. In-car field media server (at home the drone uses Node 3). `rtmp://192.168.42.1:1935/drone` → `http://192.168.42.1:8889/drone` | `/opt/mediamtx` |
 | Fleet | `node-status-reporter` + `node-command-runner` → shows as **node5** on the Nodes page; reboot/poweroff from Kiosks | `/opt/sinsera-node` |
 | Store-and-forward | `gr86-store-forward.timer` (5 min) rsyncs `/var/lib/garage-obd/buffer` → `peta@192.168.4.182:/opt/garage-obd/node5` **when Node 3 is reachable (home)**. Copy-only + idempotent (Node-4 archive pattern) | `/opt/gr86/store-forward.sh` |
 | Run mode | `gr86-idle-shutdown.timer` **STUB** — on with ignition, ~15–30 min parked window, then clean poweroff (needs supercap/UPS-hat wiring) | `/opt/gr86/idle-shutdown.sh` |
 | Tailscale | installed on **first boot** (network up); **no authkey baked** | `gr86-tailscale-install.service` |
 | SD guard | clean-shutdown-on-power-loss stub + documented overlayfs read-only-root toggle (**left OFF**) | `/opt/gr86/enable-overlayfs.sh` |
 | SSH | `peta` user, **key-only**, NOPASSWD sudo, fleet key baked; `gpu_mem=16` (headless) | — |
+
+## Drone → iPad (in the car, no internet needed)
+
+1. iPad joins the Pi's AP (**Undercover Surveillance Van 5**).
+2. DJI Fly → Transmission → Live Streaming → **RTMP** → `rtmp://192.168.42.1:1935/drone`
+   (the controller/phone must be on the same AP, or on the iPhone hotspot alongside Node 5).
+3. iPad opens **`http://192.168.42.1:8889/drone`** (WebRTC, ~1s) or
+   `http://192.168.42.1:8888/drone/index.m3u8` (HLS, ~2-4s).
+
+The iPad cannot play RTMP/RTSP — WebRTC/HLS is what makes this work on iOS.
+Health check: `curl http://192.168.42.1:9997/v3/paths/list` (`ready:true` = stream up).
 
 ## Placeholders YOU must fill (nothing real is baked)
 

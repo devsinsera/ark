@@ -3,7 +3,7 @@
 GR86 local-first HUD server — Node 5.
 
 SCAFFOLD (see the README "known gaps"): serves a lightweight local page so the
-iPad/phone on the Pi's own AP (Sinsera-GR86) can see *something* with zero uplink.
+iPad/phone on the Pi's own AP (Undercover Surveillance Van 5) can see *something* with zero uplink.
 The REAL gauge HUD is the Garage kiosk editor's output at
     sinsera.co/garage/<carUuid>/obd?hud=1
 so when the Pi has an uplink this stub simply points the browser there. Offline,
