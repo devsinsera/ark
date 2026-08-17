@@ -37,10 +37,18 @@ Node 5 has **two WiFi radios**, and that is the whole design constraint:
 So: **iPad, RC2 and the dashcam all join Node 5's AP.** Node 5 itself joins the
 iPhone hotspot (or home WiFi) for internet, and shares it with everything on the AP.
 
-⚠ **Only two radios, three networks wanted.** The Thinkware CANNOT have Node 5
-join *its* AP while the AP + uplink are both in use — the dashcam has to come to
-Node 5 (WiFi **station mode**). If your Thinkware model can't do station mode,
-the dashcam can't be integrated this way; it stays a manual SD-card pull.
+⚠ **Only two radios, three networks wanted.** Both are committed (one hosts the
+AP, one uplinks), so there is no radio free to go and join a dashcam's own AP.
+
+**Thinkware U1000 — parked, needs a 3rd radio.** It hosts its own `Thinkware_…`
+AP, talks to the proprietary DASH CAM LINK app, and has no documented RTSP or
+station mode (default WiFi password `123456789`, though BT-equipped units
+authenticate over Bluetooth instead). So it cannot come to Node 5, and Node 5
+has no spare radio to go to it. **The fix is a second USB WiFi dongle** dedicated
+to joining the dashcam's AP — then set `DASHCAM_RTSP` and the mediamtx path
+lights up. Before buying: confirm the stream actually opens in VLC
+(`rtsp://<dashcam-ip>:554/`) while joined to its AP. If VLC can't play it, no
+dongle will help — there'd be no stream to pull.
 
 ## Every URL (all on the AP — no internet needed)
 
