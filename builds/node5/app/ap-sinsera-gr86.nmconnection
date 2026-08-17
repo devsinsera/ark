@@ -13,7 +13,10 @@ id=ap-sinsera-gr86
 type=wifi
 autoconnect=true
 autoconnect-priority=10
-# interface-name=wlan1   # pin to the TP-Link AX1300 once its ifname is known
+# PINNED so the AP is deterministic: it must ALWAYS be the USB dongle, leaving the
+# Pi's onboard radio free for the uplink. Without this NM may swap them between
+# boots, and 192.168.42.1 stops being a URL you can rely on.
+interface-name=wlan1
 
 [wifi]
 mode=ap

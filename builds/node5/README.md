@@ -72,7 +72,18 @@ Use the **mDNS name, not the IP** — `node5`'s home address is a DHCP lease
 Everything must be on `Obi-Lan Kenobi`. Away from home this phase does nothing —
 that is exactly what the dongle fixes.
 
-### Phase 2 — with the AP dongle: in the car, no internet needed
+### Phase 2 — with the AP dongle: ONE URL, anywhere
+
+The AP is **Node 5's own network** — it travels with the car and does not depend on
+your location, an uplink, or the internet. So once the dongle is fitted this is the
+single RTMP URL to put in DJI Fly and never change:
+
+```
+rtmp://192.168.42.1:1935/drone
+```
+
+The RC2 just always joins `Undercover Surveillance Van 5`. Home, driveway, paddock —
+same SSID, same URL, no internet required.
 
 | What | URL |
 |------|-----|
@@ -85,6 +96,11 @@ that is exactly what the dongle fixes.
 | SSH | `ssh node5` |
 
 `192.168.42.1` is fixed (`method=shared`), so unlike phase 1 it never moves.
+
+**Radios are PINNED so this stays true:** `ap-sinsera-gr86` → `wlan1` (USB dongle),
+all three uplinks → `wlan0` (onboard). Without pinning, NetworkManager can swap which
+radio hosts the AP between boots and the single-URL promise breaks. Applied to the
+recipe and to the running node 2026-08-17.
 
 The iPad **cannot play RTMP or RTSP** — WebRTC/HLS is what makes this work on iOS.
 A `302` from the WebRTC URL is normal (mediamtx sets a cookie); Safari handles it.

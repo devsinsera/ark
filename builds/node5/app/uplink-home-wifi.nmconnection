@@ -6,6 +6,7 @@
 [connection]
 id=uplink-home-wifi
 type=wifi
+interface-name=wlan0   # onboard radio — the AP owns wlan1
 autoconnect=true
 autoconnect-priority=100
 
