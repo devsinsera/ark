@@ -50,21 +50,55 @@ lights up. Before buying: confirm the stream actually opens in VLC
 (`rtsp://<dashcam-ip>:554/`) while joined to its AP. If VLC can't play it, no
 dongle will help — there'd be no stream to pull.
 
-## Every URL (all on the AP — no internet needed)
+## Every URL
+
+There are **two phases**, because the car AP only exists once a working USB WiFi
+dongle is fitted (the Pi's single onboard radio is taken by the uplink).
+
+### Phase 1 — no AP yet: on the home network (works today)
+
+Use the **mDNS name, not the IP** — `node5`'s home address is a DHCP lease
+(`ipv4.method: auto`) and will move. `node5.local` follows it. Verified working.
+
+| What | URL |
+|------|-----|
+| Drone in (DJI Fly → RTMP) | `rtmp://node5.local:1935/drone` |
+| Drone on the iPad (WebRTC) | `http://node5.local:8889/drone` |
+| Drone on the iPad (HLS) | `http://node5.local:8888/drone/index.m3u8` |
+| OBD HUD | `http://node5.local:8080` |
+| Relay health | `http://node5.local:9997/v3/paths/list` |
+| SSH | `ssh node5-home` |
+
+Everything must be on `Obi-Lan Kenobi`. Away from home this phase does nothing —
+that is exactly what the dongle fixes.
+
+### Phase 2 — with the AP dongle: in the car, no internet needed
 
 | What | URL |
 |------|-----|
 | **Drone in** (DJI Fly → Transmission → Live Streaming → RTMP) | `rtmp://192.168.42.1:1935/drone` |
 | **Drone on the iPad** (WebRTC, ~1 s) | `http://192.168.42.1:8889/drone` |
 | Drone on the iPad (HLS, ~2–4 s) | `http://192.168.42.1:8888/drone/index.m3u8` |
-| **Dashcam on the iPad** (once `DASHCAM_RTSP` is set) | `http://192.168.42.1:8889/dashcam` |
+| **Dashcam** (once `DASHCAM_RTSP` is set) | `http://192.168.42.1:8889/dashcam` |
 | **OBD HUD** | `http://192.168.42.1:8080` |
 | Relay health (`ready:true` = stream live) | `http://192.168.42.1:9997/v3/paths/list` |
-| SSH | `ssh peta@192.168.42.1` (key-only) |
+| SSH | `ssh node5` |
+
+`192.168.42.1` is fixed (`method=shared`), so unlike phase 1 it never moves.
 
 The iPad **cannot play RTMP or RTSP** — WebRTC/HLS is what makes this work on iOS.
+A `302` from the WebRTC URL is normal (mediamtx sets a cookie); Safari handles it.
+HLS returns `404` until something is actually publishing — that is not a fault.
 
 ## Connecting, in order
+
+**Prerequisite for steps 3–4:** a working USB WiFi dongle must be fitted, or there
+is no AP. Verified 2026-08-17 that the `35bc:0108` "Realtek 802.11ax" adapter binds
+**no driver** (`mt7921u` and `mt7925u` both fail `-22`) — it produces no interface at
+all. Replace it with a MediaTek MT7921AU/MT7612U (e.g. BrosTrend AX900); the
+`mt7921u`/`mt76x2u` modules already ship with Pi OS, so it should come up as `wlan1`
+and NetworkManager hands it the AP profile automatically. Until then use the phase-1
+URLs above.
 
 1. **Power on** Node 5 (ignition). Give it ~40 s.
 2. **iPhone**: Settings → Personal Hotspot → **on**. Node 5 joins it automatically
