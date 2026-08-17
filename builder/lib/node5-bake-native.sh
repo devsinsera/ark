@@ -56,7 +56,7 @@ VIGIL_EMAIL="peta.stockdale@outlook.com"; VIGIL_PASSWORD=""; SUPABASE_URL="https
 # ── WiFi/AP/OBD — placeholders (recipe default; user fills post-boot) ──
 AP_SSID="Undercover Surveillance Van 5"; AP_PSK="CHANGE-ME-AP-PASSPHRASE"
 HOME_SSID=""; HOME_PSK=""; IPHONE_SSID=""; IPHONE_PSK=""
-OBDLINK_MAC=""; CAR_ID=""; WIFI_COUNTRY="AU"; OWNER_ID="82e75fd1-7878-45f5-9760-ba0af6838a3d"
+OBDLINK_MAC=""; CAR_ID=""; DASHCAM_RTSP=""; DASHCAM_LABEL="Dashcam · GR86"; WIFI_COUNTRY="AU"; OWNER_ID="82e75fd1-7878-45f5-9760-ba0af6838a3d"
 
 echo "[node5-bake] decompressing base → $OUT_IMG"
 xz -dck "$SRC_XZ" > "$OUT_IMG"
@@ -130,6 +130,8 @@ HOME_SSID="${HOME_SSID}"
 HOME_PSK="${HOME_PSK}"
 IPHONE_SSID="${IPHONE_SSID}"
 IPHONE_PSK="${IPHONE_PSK}"
+DASHCAM_RTSP="${DASHCAM_RTSP}"
+DASHCAM_LABEL="${DASHCAM_LABEL}"
 WIFI_COUNTRY="${WIFI_COUNTRY}"
 HOSTNAME_NEW="node5"
 SEC

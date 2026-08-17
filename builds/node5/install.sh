@@ -29,6 +29,8 @@ SEC="$ROOT/secrets.env"
 : "${AP_PSK:=CHANGE-ME-AP-PASSPHRASE}"
 : "${HOME_SSID:=}"      ; : "${HOME_PSK:=}"
 : "${IPHONE_SSID:=}"    ; : "${IPHONE_PSK:=}"
+: "${DASHCAM_RTSP:=}"        # Thinkware RTSP URL once it is on the AP (blank = skip)
+: "${DASHCAM_LABEL:=Dashcam · GR86}"
 : "${WIFI_COUNTRY:=AU}"
 : "${HOSTNAME_NEW:=node5}"
 
@@ -77,7 +79,7 @@ if [ -n "$SSH_PUBKEY" ]; then
   printf '%s\n' "$SSH_PUBKEY" > /root/.ssh/authorized_keys
   chmod 600 /root/.ssh/authorized_keys
 fi
-# store-and-forward needs a key to reach Node 3 (peta@192.168.4.182). Generate an
+# store-and-forward needs a key to reach Node 1/Core (peta@192.168.5.54). Generate an
 # unattended one if absent; its .pub must be added to Node 3's authorized_keys
 # post-boot (README). Never overwrite an existing key.
 if [ ! -f /home/peta/.ssh/id_ed25519 ]; then
@@ -215,6 +217,23 @@ elif curl -fsSL --retry 3 --connect-timeout 20 \
 fi
 if [ -x /opt/mediamtx/mediamtx ]; then
   cp "$APPSRC/mediamtx.yml" /opt/mediamtx/mediamtx.yml
+  # Thinkware dashcam: pulled as a second path so it lands on the iPad AND can be
+  # re-published to the Vigil wall. sourceOnDemand means mediamtx only dials the
+  # camera when something actually asks for it — so a missing/asleep dashcam is
+  # not a reconnect loop in the logs while parked.
+  if [ -n "$DASHCAM_RTSP" ]; then
+    # inserted BEFORE all_others so the explicit path wins the match
+    python3 - "$DASHCAM_RTSP" <<'PYEOF'
+import sys, pathlib
+url = sys.argv[1]
+f = pathlib.Path("/opt/mediamtx/mediamtx.yml"); y = f.read_text()
+block = "  dashcam:\n    source: %s\n    sourceOnDemand: yes\n" % url
+f.write_text(y.replace("  all_others:", block + "  all_others:", 1))
+PYEOF
+    echo "   dashcam path added -> $DASHCAM_RTSP"
+  else
+    echo "   dashcam path SKIPPED (DASHCAM_RTSP empty) — add it later to /opt/mediamtx/mediamtx.yml"
+  fi
   cp "$APPSRC/mediamtx.service" /etc/systemd/system/mediamtx.service
   systemctl enable mediamtx.service 2>/dev/null || true
   echo "   mediamtx v${MTX_VER} installed -> rtmp://192.168.42.1:1935/drone"
@@ -226,7 +245,7 @@ else
   echo "      tarball in builds/node5/app/ and re-bake."
 fi
 
-step "store-and-forward (rsync OBD buffer -> Node 3) + idle-shutdown stub"
+step "store-and-forward (rsync OBD/dashcam buffer -> Node 1/Core) + idle-shutdown stub"
 mkdir -p /opt/gr86 /var/lib/garage-obd/buffer
 cp "$APPSRC/store-forward.sh"  /opt/gr86/store-forward.sh
 cp "$APPSRC/idle-shutdown.sh"  /opt/gr86/idle-shutdown.sh
@@ -264,7 +283,12 @@ cat > /etc/motd <<MOTD
   NODE 5 — GR86 in-car Pi (Pi 5 2GB, HEADLESS)
   OBD:    garage-obd-bridge.service  (fill OBDLINK_MAC + CAR_ID + password in /opt/garage-pi-bridge/.env)
   AP:     ${AP_SSID}  ·  HUD: http://192.168.42.1:8080  (iPad connects to the Pi AP)
-  Drone:  DJI Fly RTMP -> rtmp://192.168.42.1:1935/drone  ·  iPad: http://192.168.42.1:8889/drone
+  Drone:  DJI Fly RTMP -> rtmp://192.168.42.1:1935/drone
+  iPad:   drone   http://192.168.42.1:8889/drone
+          dashcam http://192.168.42.1:8889/dashcam
+          HUD     http://192.168.42.1:8080
+  Health: curl http://192.168.42.1:9997/v3/paths/list
+  Archive: OBD/dashcam buffer -> Node 1 (Core) when home
   Fleet:  shows as node5 on the Nodes page  ·  reboot/poweroff from Kiosks
   Remote: sudo tailscale up --ssh --hostname node5   (join the tailnet)
   SSH:    peta@node5.local

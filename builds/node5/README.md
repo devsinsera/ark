@@ -17,40 +17,113 @@ tuning (USB-dongle drivers, which radio hosts the AP, OBDLink BLE pairing).
 | AP | `Undercover Surveillance Van 5` (WPA2, `method=shared` 192.168.42.1/24) — iPad connects **direct**, HUD works offline | `ap-sinsera-gr86.nmconnection` |
 | Uplink | NetworkManager autoconnect priority **home(100) > iPhone-hotspot(50) > car(20)** | `uplink-*.nmconnection` |
 | Local HUD | `gr86-hud.service` on **:8080** — redirects to `sinsera.co/garage/<car>/obd?hud=1` when online, placeholder page offline | `/opt/gr86-hud` |
-| Drone relay | **mediamtx v1.20.0** (`mediamtx.service`) — DJI Fly RTMP in, **WebRTC/HLS out for the iPad**. In-car field media server (at home the drone uses Node 3). `rtmp://192.168.42.1:1935/drone` → `http://192.168.42.1:8889/drone` | `/opt/mediamtx` |
+| Drone relay | **mediamtx v1.20.0** (`mediamtx.service`) — DJI Fly RTMP in, **WebRTC/HLS out for the iPad**; also pulls the Thinkware as a `dashcam` path. In-car field media server. `rtmp://192.168.42.1:1935/drone` → `http://192.168.42.1:8889/drone` | `/opt/mediamtx` |
 | Fleet | `node-status-reporter` + `node-command-runner` → shows as **node5** on the Nodes page; reboot/poweroff from Kiosks | `/opt/sinsera-node` |
-| Store-and-forward | `gr86-store-forward.timer` (5 min) rsyncs `/var/lib/garage-obd/buffer` → `peta@192.168.4.182:/opt/garage-obd/node5` **when Node 3 is reachable (home)**. Copy-only + idempotent (Node-4 archive pattern) | `/opt/gr86/store-forward.sh` |
+| Store-and-forward | `gr86-store-forward.timer` (5 min) rsyncs `/var/lib/garage-obd/buffer` → `peta@<Node 1/Core>:/opt/garage-obd/node5` **when Core is reachable (home)**. Tries `.5.54` → `.5.61` → `sinsera-core.local`. Copy-only + idempotent (Node-4 archive pattern) | `/opt/gr86/store-forward.sh` |
 | Run mode | `gr86-idle-shutdown.timer` **STUB** — on with ignition, ~15–30 min parked window, then clean poweroff (needs supercap/UPS-hat wiring) | `/opt/gr86/idle-shutdown.sh` |
 | Tailscale | installed on **first boot** (network up); **no authkey baked** | `gr86-tailscale-install.service` |
 | SD guard | clean-shutdown-on-power-loss stub + documented overlayfs read-only-root toggle (**left OFF**) | `/opt/gr86/enable-overlayfs.sh` |
 | SSH | `peta` user, **key-only**, NOPASSWD sudo, fleet key baked; `gpu_mem=16` (headless) | — |
 
-## Drone → iPad (in the car, no internet needed)
+## Networks — who joins what
 
-1. iPad joins the Pi's AP (**Undercover Surveillance Van 5**).
-2. DJI Fly → Transmission → Live Streaming → **RTMP** → `rtmp://192.168.42.1:1935/drone`
-   (the controller/phone must be on the same AP, or on the iPhone hotspot alongside Node 5).
-3. iPad opens **`http://192.168.42.1:8889/drone`** (WebRTC, ~1s) or
-   `http://192.168.42.1:8888/drone/index.m3u8` (HLS, ~2-4s).
+Node 5 has **two WiFi radios**, and that is the whole design constraint:
 
-The iPad cannot play RTMP/RTSP — WebRTC/HLS is what makes this work on iOS.
-Health check: `curl http://192.168.42.1:9997/v3/paths/list` (`ready:true` = stream up).
+| Radio | Role | Detail |
+|-------|------|--------|
+| TP-Link AX1300 USB | **hosts the AP** | `Undercover Surveillance Van 5` · WPA2 · `192.168.42.1/24` · `method=shared` (NATs clients out through the uplink) |
+| onboard | **uplink** | autoconnect priority: `Obi-Lan Kenobi` (100) > iPhone hotspot (50) > car WiFi (20) |
 
-## Placeholders YOU must fill (nothing real is baked)
+So: **iPad, RC2 and the dashcam all join Node 5's AP.** Node 5 itself joins the
+iPhone hotspot (or home WiFi) for internet, and shares it with everything on the AP.
 
-1. **OBD** — over SSH, edit `/opt/garage-pi-bridge/.env`:
-   - `OBDLINK_MAC=` — pair once (`sudo bluetoothctl`) then paste the MX+ MAC
-   - `CAR_ID=` — the GR86's UUID from `garage_cars`
-   - `SUPABASE_PASSWORD=` — owner password (blank by default → cloud push off, like Vigil)
-   then `sudo systemctl restart garage-obd-bridge`
-2. **WiFi** — edit `/etc/NetworkManager/system-connections/*.nmconnection`:
-   - `ap-sinsera-gr86` → real **AP passphrase** (`psk=`)
-   - `uplink-home-wifi`, `uplink-iphone-hotspot`, `uplink-car-wifi` → real **SSIDs + psks**
-   (or supply them at bake time via `~/.ark/node5.conf` — see the bake script header)
-3. **Tailscale** — post-boot: `sudo tailscale up --ssh --hostname node5`
-4. **Store-and-forward key** — the bake generates `/home/peta/.ssh/id_ed25519`
-   (`node5-store-forward`); add its `.pub` to **Node 3's** `peta` authorized_keys, and
-   ensure `/opt/garage-obd/node5` exists on Node 3 (`chown peta:peta`).
+⚠ **Only two radios, three networks wanted.** The Thinkware CANNOT have Node 5
+join *its* AP while the AP + uplink are both in use — the dashcam has to come to
+Node 5 (WiFi **station mode**). If your Thinkware model can't do station mode,
+the dashcam can't be integrated this way; it stays a manual SD-card pull.
+
+## Every URL (all on the AP — no internet needed)
+
+| What | URL |
+|------|-----|
+| **Drone in** (DJI Fly → Transmission → Live Streaming → RTMP) | `rtmp://192.168.42.1:1935/drone` |
+| **Drone on the iPad** (WebRTC, ~1 s) | `http://192.168.42.1:8889/drone` |
+| Drone on the iPad (HLS, ~2–4 s) | `http://192.168.42.1:8888/drone/index.m3u8` |
+| **Dashcam on the iPad** (once `DASHCAM_RTSP` is set) | `http://192.168.42.1:8889/dashcam` |
+| **OBD HUD** | `http://192.168.42.1:8080` |
+| Relay health (`ready:true` = stream live) | `http://192.168.42.1:9997/v3/paths/list` |
+| SSH | `ssh peta@192.168.42.1` (key-only) |
+
+The iPad **cannot play RTMP or RTSP** — WebRTC/HLS is what makes this work on iOS.
+
+## Connecting, in order
+
+1. **Power on** Node 5 (ignition). Give it ~40 s.
+2. **iPhone**: Settings → Personal Hotspot → **on**. Node 5 joins it automatically
+   (priority 50) and NATs the AP clients out through it.
+3. **iPad**: WiFi → `Undercover Surveillance Van 5` → passphrase → open the URLs above.
+4. **RC2**: Settings → WiFi → `Undercover Surveillance Van 5`, then
+   DJI Fly → Transmission → **Live Streaming → RTMP** → `rtmp://192.168.42.1:1935/drone` → Start.
+   *(RC2 Bluetooth (`QCOM-BTD`) cannot carry video — ~1–3 Mbps vs 2–4 Mbps needed,
+   and DJI Fly only streams over IP. WiFi is the only path.)*
+5. **Thinkware**: put it in WiFi **station mode** and join it to the AP. Find its IP
+   (`ssh peta@192.168.42.1 'ip neigh'`), confirm the RTSP URL in VLC, then set
+   `DASHCAM_RTSP` in `~/.ark/node5.conf` and re-bake — or add the path live:
+   ```yaml
+   # /opt/mediamtx/mediamtx.yml, BEFORE all_others:
+     dashcam:
+       source: rtsp://192.168.42.x:554/<path>
+       sourceOnDemand: yes
+   ```
+   then `sudo systemctl restart mediamtx`.
+6. **OBD**: pair the OBDLink MX+ once (`sudo bluetoothctl` → `scan on` → `pair <MAC>`),
+   put the MAC in `/opt/garage-pi-bridge/.env`, `sudo systemctl restart garage-obd-bridge`.
+
+## Dashcam → the Vigil camera wall
+
+Two ways, depending on where you want it visible:
+
+- **At home (simplest).** The eufy/RTSP bridge on **Node 3** feeds the wall. Add to
+  `/opt/eufy/.env` on Node 3 and restart it:
+  ```
+  RTSP_CAM_GR86=Dashcam · GR86|rtsp://<node5-home-ip>:8554/dashcam|GR86
+  ```
+  This only works while the car is home and on `Obi-Lan Kenobi` — Node 5's home IP
+  is DHCP, so give it a reservation on the eero or the URL rots.
+- **Anywhere (needs work).** Run the `vigil_cam.py` frame-poster on Node 5 so it
+  pushes JPEGs to Supabase over the hotspot, exactly like Node 4. **Not baked yet** —
+  it needs the cloud password and a bandwidth cap so it doesn't eat mobile data.
+
+## Archive → Node 1 (Core) when you get home
+
+`gr86-store-forward.timer` (every 5 min) rsyncs `/var/lib/garage-obd/buffer` →
+`peta@<Core>:/opt/garage-obd/node5`, copy-only and idempotent. It tries
+`192.168.5.54`, then `192.168.5.61`, then `sinsera-core.local`, and is a silent
+no-op when none answer (i.e. away from home). Core has ~1.7 TB free.
+
+**One-time setup on Node 1 (Core):**
+```bash
+sudo mkdir -p /opt/garage-obd/node5 && sudo chown -R peta:peta /opt/garage-obd
+# then add Node 5's pubkey (printed at the end of the bake) to Core's authorized_keys
+```
+
+## What's pre-filled vs what you must still supply
+
+`~/.ark/node5.conf` (outside the repo, chmod 600) is read at bake time. **Already set:**
+AP SSID + passphrase, home WiFi (`Obi-Lan Kenobi`, read from the existing fleet nodes),
+iPhone hotspot passphrase.
+
+**Still needed — the image bakes fine without them, these just stay inert:**
+
+| Value | Where | Why it matters |
+|-------|-------|----------------|
+| `IPHONE_SSID` | `~/.ark/node5.conf` | ⚠ **VERIFY THIS.** It is the iPhone's *device* name (Settings → General → About → Name), exactly. Wrong = no uplink away from home, and it fails **silently** — Node 5 just never associates. |
+| `DASHCAM_RTSP` | `~/.ark/node5.conf` | blank = no dashcam path in mediamtx (everything else still works) |
+| `OBDLINK_MAC` | `/opt/garage-pi-bridge/.env` | pair once via `sudo bluetoothctl` |
+| `CAR_ID` | `/opt/garage-pi-bridge/.env` | the GR86's UUID from `garage_cars` |
+| `SUPABASE_PASSWORD` | `/opt/garage-pi-bridge/.env` | blank → local logging only, no cloud push (same default as Vigil) |
+| Tailscale authkey | post-boot | `sudo tailscale up --ssh --hostname node5` |
+| Store-forward key | Node 1 | bake prints `/home/peta/.ssh/id_ed25519.pub` — add it to **Core's** `peta` authorized_keys |
 
 ## How to bake
 
@@ -79,6 +152,13 @@ account for the fleet reporters), `~/.ark/node5.conf` (AP/uplink/OBD values).
 - **USB-dongle drivers** — firmware pkgs are installed best-effort; verify the
   TP-Link AX1300 (mt76/rtl88xx-class) and Ugreen BT 6.0 come up, and pin the AP to
   the dongle's interface so onboard stays free for uplink.
+- **Dashcam on the wall away from home** — the mediamtx `dashcam` path makes it
+  viewable on the iPad anywhere, but getting it onto the **Vigil wall** currently
+  needs the car to be home (Node 3's RTSP bridge pulls it). A `vigil_cam.py`-style
+  cloud frame-poster on Node 5 would fix that; not baked (needs the cloud password
+  and a data cap).
+- **Thinkware station mode is an assumption.** Model-dependent, and many Thinkware
+  units only run their own AP with a proprietary app — no station mode, no RTSP.
+  Confirm in VLC before relying on it; if it can't, the dashcam stays SD-card-only.
 - **Phase 2** (not in this bake): USB SSD for camera/local buffer, interior USB
-  webcam + wifi dashcam pull, LiveKit camera publish, 4G dongle + SIM for
-  remote-while-away.
+  webcam, LiveKit camera publish, 4G dongle + SIM for remote-while-away.

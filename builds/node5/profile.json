@@ -14,10 +14,10 @@
     "ap":           "Undercover Surveillance Van 5 (WPA2, method=shared 192.168.42.1/24) — iPad connects direct; real passphrase comes from ~/.ark/node5.conf at bake time, never committed",
     "uplink":       "NetworkManager autoconnect priority: home-wifi(100) > iphone-hotspot(50) > car-wifi(20); SSIDs/psks are placeholders",
     "obd":          "garage-obd-bridge.service (Restart=always) at /opt/garage-pi-bridge; .env baked with anon key + owner email, OBDLINK_MAC + CAR_ID + password BLANK placeholders",
-    "drone_relay":  "mediamtx v1.20.0 (mediamtx.service, /opt/mediamtx) — DJI Fly RTMP rtmp://192.168.42.1:1935/drone -> WebRTC http://192.168.42.1:8889/drone + HLS :8888 for the iPad. Node 5 is the FIELD media server (Node 3 does this at home). Fetched at bake time; non-fatal if the bake has no network — pre-stage mediamtx_v1.20.0_linux_arm64.tar.gz in app/ instead",
+    "drone_relay":  "mediamtx v1.20.0 (mediamtx.service, /opt/mediamtx) — DJI Fly RTMP rtmp://192.168.42.1:1935/drone -> WebRTC http://192.168.42.1:8889/drone + HLS :8888 for the iPad; a second sourceOnDemand path republishes the Thinkware dashcam (DASHCAM_RTSP) at /dashcam. Node 5 is the FIELD media server (Node 3 does this at home). Fetched at bake time; non-fatal if the bake has no network — pre-stage mediamtx_v1.20.0_linux_arm64.tar.gz in app/ instead",
     "hud":          "gr86-hud.service — local-first HUD stub on :8080 (redirects to sinsera.co/garage/<car>/obd?hud=1 when online, placeholder page offline)",
     "tailscale":    "installed on first boot; NO authkey baked — run `sudo tailscale up --ssh --hostname node5` post-boot",
-    "store_forward":"gr86-store-forward.timer (5 min) rsyncs /var/lib/garage-obd/buffer -> peta@192.168.4.182:/opt/garage-obd/node5 when Node 3 is reachable (home)",
+    "store_forward":"gr86-store-forward.timer (5 min) rsyncs /var/lib/garage-obd/buffer -> peta@<Node 1/Core>:/opt/garage-obd/node5 when Core is reachable (home; tries .5.54/.5.61/sinsera-core.local)",
     "fleet":        "node-status-reporter + node-command-runner (Supabase node_status / node_commands) — shows as node5 on the Nodes page; reboot/poweroff from Kiosks",
     "run_mode":     "gr86-idle-shutdown.timer STUB — on with ignition, ~15-30 min parked window then poweroff (needs supercap/UPS-hat wiring)",
     "sd_guard":     "clean-shutdown-on-power-loss stub + documented overlayfs read-only-root toggle (raspi-config nonint enable_overlayfs) left OFF (conflicts with the OBD buffer)"
