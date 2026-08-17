@@ -20,6 +20,10 @@ hlsAddress: :8888
 webrtc: yes
 webrtcAddress: :8889
 srt: no
+# MoQ is on by default and would open 8892/8893 (and self-generate a cert on
+# first run) — two more listeners on the car AP for a protocol nothing here
+# uses. Off.
+moq: no
 api: yes                    # :9997 — health/paths, used by the HUD + diagnostics
 metrics: no
 
