@@ -56,6 +56,9 @@ VIGIL_EMAIL="peta.stockdale@outlook.com"; VIGIL_PASSWORD=""; SUPABASE_URL="https
 # ── WiFi/AP/OBD — placeholders (recipe default; user fills post-boot) ──
 AP_SSID="Undercover Surveillance Van 5"; AP_PSK="CHANGE-ME-AP-PASSPHRASE"
 HOME_SSID=""; HOME_PSK=""; IPHONE_SSID=""; IPHONE_PSK=""
+# Staged overrides (same no-$HOME pattern as creds/fleet.pub) — AP/uplink/dashcam
+# values live in creds/node5.conf on the build host, never in git.
+[ -f "$REPO_ROOT/creds/node5.conf" ] && { set -a; . "$REPO_ROOT/creds/node5.conf"; set +a; }
 OBDLINK_MAC=""; CAR_ID=""; DASHCAM_RTSP=""; DASHCAM_LABEL="Dashcam · GR86"; WIFI_COUNTRY="AU"; OWNER_ID="82e75fd1-7878-45f5-9760-ba0af6838a3d"
 
 echo "[node5-bake] decompressing base → $OUT_IMG"
@@ -156,7 +159,13 @@ echo ""
 echo "[node5-bake] DONE — headless GR86 OBD/network hub, zero-touch fleet-integrated"
 echo "  image:   $OUT_IMG ($SZ_H)"
 echo "  ssh:     peta@node5.local"
-echo "  AP:      ${AP_SSID}   HUD: http://node5.local:8080"
+echo "  AP:      ${AP_SSID}   ·  iPad: http://192.168.42.1:8889/drone  ·  HUD: :8080"
 echo "  anon:    $([ -n "$ANON_KEY" ] && echo present || echo MISSING)"
-echo "  FILL post-boot: OBDLINK_MAC + CAR_ID + password (/opt/garage-pi-bridge/.env),"
-echo "                  AP/uplink SSIDs+psks (.nmconnection), tailscale authkey (tailscale up)."
+# Only report what is ACTUALLY still empty — saying "fill the SSIDs" when they were
+# just baked in sends you chasing a non-problem (and doubting a good image).
+echo "  WiFi baked:  AP=$([ "$AP_PSK" != "CHANGE-ME-AP-PASSPHRASE" ] && echo yes || echo NO) \
+home=$([ -n "$HOME_SSID" ] && echo yes || echo NO) \
+iphone=$([ -n "$IPHONE_SSID" ] && echo yes || echo NO) \
+car=$([ -n "${CAR_SSID:-}" ] && echo yes || echo no)"
+echo "  STILL TO FILL: OBDLINK_MAC + CAR_ID + password (/opt/garage-pi-bridge/.env),"
+echo "                 DASHCAM_RTSP (mediamtx.yml), tailscale authkey (tailscale up)."
