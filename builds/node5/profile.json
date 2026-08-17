@@ -10,7 +10,7 @@
     "hostname":     "node5",
     "user":         "peta (SSH-key only, sudo NOPASSWD) + fleet key baked",
     "display":      "NONE — fully headless (gpu_mem=16); HUD is served to the iPad over the Pi AP / cloud",
-    "radios":       "onboard WiFi + TP-Link AX1300 USB (2 WiFi); onboard BT + Ugreen BT 6.0 USB (2 BT). One WiFi hosts the AP, the other uplinks; Ugreen BT -> OBDLink MX+",
+    "radios":       "onboard WiFi wlan0 (uplink, PINNED) + BrosTrend AX900/MT7921AU USB wlan1 (AP, PINNED — mt7921u is in-kernel); onboard BT + Ugreen BT 6.0 USB hci1 -> OBDLink MX+. The 35bc:0108 Realtek dongle binds NO driver — do not use",
     "ap":           "Undercover Surveillance Van 5 (WPA2, method=shared 192.168.42.1/24) — iPad connects direct; real passphrase comes from ~/.ark/node5.conf at bake time, never committed",
     "uplink":       "NetworkManager autoconnect priority: home-wifi(100) > iphone-hotspot(50) > car-wifi(20); SSIDs/psks are placeholders",
     "obd":          "garage-obd-bridge.service (Restart=always) at /opt/garage-pi-bridge; .env baked with anon key + owner email, OBDLINK_MAC + CAR_ID + password BLANK placeholders",
@@ -23,7 +23,7 @@
     "sd_guard":     "clean-shutdown-on-power-loss stub + documented overlayfs read-only-root toggle (raspi-config nonint enable_overlayfs) left OFF (conflicts with the OBD buffer)"
   },
   "notes": [
-    "UNVERIFIED ON HARDWARE — the Pi hasn't arrived. Expect on-Pi tuning: USB dongle drivers (TP-Link AX1300 mt76/rtl88xx-class + Ugreen BT), which radio ends up hosting the AP, OBDLink MX+ BLE pairing.",
+    "BOOTED + VERIFIED 2026-08-17: joined home wifi on baked creds, SSH key auth, all services active, drone relay proven end-to-end (RTMP in -> HLS 1280x720 out), timezone fixed, archive path to Node 1 tested. STILL UNVERIFIED: the AP (awaiting the BrosTrend AX900), OBDLink pairing, and WebRTC over method=shared NAT.",
     "Placeholders the user MUST fill: OBDLINK_MAC + CAR_ID + SUPABASE_PASSWORD in /opt/garage-pi-bridge/.env; AP passphrase + all uplink SSIDs/psks in the .nmconnection files; Tailscale authkey via `tailscale up`.",
     "Known gaps needing the physical Pi: the REAL gauge HUD (currently a stub that proxies the cloud), the supercap/UPS-hat idle-shutdown wiring, and USB-dongle driver verification. A USB SSD for camera/local buffer and the LiveKit camera publish are Phase 2 (not in this bake).",
     "Headless: no display output at all — Node 5 is an OBD/network hub, not a screen.",

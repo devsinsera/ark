@@ -1,6 +1,6 @@
 # NetworkManager AP profile — Node 5 (GR86) hosts its OWN access point so the
 # iPad/phone connect DIRECTLY to the Pi and the offline HUD works with no uplink.
-# This should live on the 2nd radio (the TP-Link AX1300 USB) so the onboard chip
+# This lives on the 2nd radio (BrosTrend AX900 / MT7921AU USB = wlan1) so the onboard chip
 # stays free for the uplink; NM binds it to that interface via [wifi].mac-address
 # once you know the dongle MAC (leave blank = NM picks any AP-capable radio).
 #

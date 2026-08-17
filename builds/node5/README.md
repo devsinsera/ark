@@ -13,7 +13,7 @@ tuning (USB-dongle drivers, which radio hosts the AP, OBDLink BLE pairing).
 | Area | What | Where |
 |------|------|-------|
 | OBD logger | `garage-pi-bridge` (venv) → `garage-obd-bridge.service` (Restart=always) | `/opt/garage-pi-bridge` |
-| Radios | onboard WiFi + **TP-Link AX1300 USB** (2 WiFi); onboard BT + **Ugreen BT 6.0 USB** (2 BT). Ugreen BT → OBDLink MX+. Firmware pkgs + rfkill-unblock service | `node5-wifi-unblock.service` |
+| Radios | onboard WiFi (`wlan0`, uplink) + **BrosTrend AX900 / MT7921AU USB** (`wlan1`, AP); onboard BT + **Ugreen BT 6.0 USB** (`hci1` → OBDLink MX+). `mt7921u` is in-kernel — no driver install | `node5-wifi-unblock.service` |
 | AP | `Undercover Surveillance Van 5` (WPA2, `method=shared` 192.168.42.1/24) — iPad connects **direct**, HUD works offline | `ap-sinsera-gr86.nmconnection` |
 | Uplink | NetworkManager autoconnect priority **home(100) > iPhone-hotspot(50) > car(20)** | `uplink-*.nmconnection` |
 | Local HUD | `gr86-hud.service` on **:8080** — redirects to `sinsera.co/garage/<car>/obd?hud=1` when online, placeholder page offline | `/opt/gr86-hud` |
@@ -31,7 +31,7 @@ Node 5 has **two WiFi radios**, and that is the whole design constraint:
 
 | Radio | Role | Detail |
 |-------|------|--------|
-| TP-Link AX1300 USB | **hosts the AP** | `Undercover Surveillance Van 5` · WPA2 · `192.168.42.1/24` · `method=shared` (NATs clients out through the uplink) |
+| BrosTrend AX900 (MT7921AU) USB | **hosts the AP** | `Undercover Surveillance Van 5` · WPA2 · `192.168.42.1/24` · `method=shared` (NATs clients out through the uplink) |
 | onboard | **uplink** | autoconnect priority: `Obi-Lan Kenobi` (100) > iPhone hotspot (50) > car WiFi (20) |
 
 So: **iPad, RC2 and the dashcam all join Node 5's AP.** Node 5 itself joins the
@@ -208,8 +208,14 @@ account for the fleet reporters), `~/.ark/node5.conf` (AP/uplink/OBD values).
 - **Idle-shutdown** — stub only; wire the supercap/UPS-HAT "power good" GPIO so it
   cleanly powers down ~15–30 min after ignition off (protects the 12V battery + SD).
 - **USB-dongle drivers** — firmware pkgs are installed best-effort; verify the
-  TP-Link AX1300 (mt76/rtl88xx-class) and Ugreen BT 6.0 come up, and pin the AP to
-  the dongle's interface so onboard stays free for uplink.
+  BrosTrend AX900 comes up as `wlan1` (the `mt7921u` module is already installed and
+  carries the matching device ID, so it should be plug-and-play). The AP is already
+  pinned to `wlan1` and the uplinks to `wlan0`.
+  **Do NOT use the `35bc:0108` "Realtek 802.11ax" dongle** — verified 2026-08-17 to
+  bind no driver at all (`mt7921u`/`mt7925u` both probe-fail `-22`, firmware present,
+  and it first enumerates as USB mass storage — the Windows driver-CD trick). It is
+  almost certainly AIC8800-class: no mainline driver, and AP mode unlikely even with
+  the out-of-tree one.
 - **Dashcam on the wall away from home** — the mediamtx `dashcam` path makes it
   viewable on the iPad anywhere, but getting it onto the **Vigil wall** currently
   needs the car to be home (Node 3's RTSP bridge pulls it). A `vigil_cam.py`-style
