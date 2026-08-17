@@ -105,12 +105,17 @@ for f in ap-sinsera-gr86 uplink-home-wifi uplink-iphone-hotspot uplink-car-wifi;
 done
 # Substitute baked SSID/PSK values into the profiles when provided (else the
 # CHANGE-ME placeholders remain for the user to edit).
-[ -n "$AP_SSID" ]     && sed -i "s|^ssid=.*|ssid=${AP_SSID}|"                            "$NMDIR/ap-sinsera-gr86.nmconnection"       2>/dev/null || true
-[ "$AP_PSK" != "CHANGE-ME-AP-PASSPHRASE" ] && sed -i "s|^psk=.*|psk=${AP_PSK}|"          "$NMDIR/ap-sinsera-gr86.nmconnection"       2>/dev/null || true
-[ -n "$HOME_SSID" ]   && sed -i "s/^ssid=CHANGE-ME-HOME-SSID/ssid=${HOME_SSID}/"        "$NMDIR/uplink-home-wifi.nmconnection"      2>/dev/null || true
-[ -n "$HOME_PSK" ]    && sed -i "s/^psk=CHANGE-ME-HOME-PSK/psk=${HOME_PSK}/"             "$NMDIR/uplink-home-wifi.nmconnection"      2>/dev/null || true
-[ -n "$IPHONE_SSID" ] && sed -i "s/^ssid=CHANGE-ME-IPHONE-SSID/ssid=${IPHONE_SSID}/"    "$NMDIR/uplink-iphone-hotspot.nmconnection" 2>/dev/null || true
-[ -n "$IPHONE_PSK" ]  && sed -i "s/^psk=CHANGE-ME-IPHONE-PSK/psk=${IPHONE_PSK}/"         "$NMDIR/uplink-iphone-hotspot.nmconnection" 2>/dev/null || true
+# sed treats & in the REPLACEMENT as "the whole match", and \ escapes — so a
+# passphrase or SSID containing & or \ would be silently corrupted (you'd end up
+# with an AP whose password is not the one you set, and no error). Escape them,
+# plus the | delimiter, before substituting anything user-supplied.
+sedesc(){ printf '%s' "${1-}" | sed -e 's|[\\&|]|\\&|g'; }
+[ -n "$AP_SSID" ]     && sed -i "s|^ssid=.*|ssid=$(sedesc "$AP_SSID")|"                                       "$NMDIR/ap-sinsera-gr86.nmconnection"       2>/dev/null || true
+[ "$AP_PSK" != "CHANGE-ME-AP-PASSPHRASE" ] && sed -i "s|^psk=.*|psk=$(sedesc "$AP_PSK")|"                     "$NMDIR/ap-sinsera-gr86.nmconnection"       2>/dev/null || true
+[ -n "$HOME_SSID" ]   && sed -i "s|^ssid=CHANGE-ME-HOME-SSID|ssid=$(sedesc "$HOME_SSID")|"                    "$NMDIR/uplink-home-wifi.nmconnection"      2>/dev/null || true
+[ -n "$HOME_PSK" ]    && sed -i "s|^psk=CHANGE-ME-HOME-PSK|psk=$(sedesc "$HOME_PSK")|"                        "$NMDIR/uplink-home-wifi.nmconnection"      2>/dev/null || true
+[ -n "$IPHONE_SSID" ] && sed -i "s|^ssid=CHANGE-ME-IPHONE-SSID|ssid=$(sedesc "$IPHONE_SSID")|"                "$NMDIR/uplink-iphone-hotspot.nmconnection" 2>/dev/null || true
+[ -n "$IPHONE_PSK" ]  && sed -i "s|^psk=CHANGE-ME-IPHONE-PSK|psk=$(sedesc "$IPHONE_PSK")|"                    "$NMDIR/uplink-iphone-hotspot.nmconnection" 2>/dev/null || true
 
 step "WiFi country + rfkill-unblock boot service (needed for the USB radios)"
 raspi-config nonint do_wifi_country "$WIFI_COUNTRY" 2>/dev/null || true
