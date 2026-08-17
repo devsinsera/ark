@@ -32,6 +32,7 @@ SEC="$ROOT/secrets.env"
 : "${DASHCAM_RTSP:=}"        # Thinkware RTSP URL once it is on the AP (blank = skip)
 : "${DASHCAM_LABEL:=Dashcam · GR86}"
 : "${WIFI_COUNTRY:=AU}"
+: "${TIMEZONE:=Australia/Brisbane}"
 : "${HOSTNAME_NEW:=node5}"
 
 step(){ echo "" ; echo "== [node5-install] $* ==" ; }
@@ -118,6 +119,13 @@ sedesc(){ printf '%s' "${1-}" | sed -e 's|[\\&|]|\\&|g'; }
 [ -n "$HOME_PSK" ]    && sed -i "s|^psk=CHANGE-ME-HOME-PSK|psk=$(sedesc "$HOME_PSK")|"                        "$NMDIR/uplink-home-wifi.nmconnection"      2>/dev/null || true
 [ -n "$IPHONE_SSID" ] && sed -i "s|^ssid=CHANGE-ME-IPHONE-SSID|ssid=$(sedesc "$IPHONE_SSID")|"                "$NMDIR/uplink-iphone-hotspot.nmconnection" 2>/dev/null || true
 [ -n "$IPHONE_PSK" ]  && sed -i "s|^psk=CHANGE-ME-IPHONE-PSK|psk=$(sedesc "$IPHONE_PSK")|"                    "$NMDIR/uplink-iphone-hotspot.nmconnection" 2>/dev/null || true
+
+step "timezone (OBD/dashcam timestamps are useless in the wrong zone)"
+# Pi OS images default to Europe/London; without this every logged drive is
+# ~9-10 h out and the archive on Node 1 sorts wrong.
+ln -sf "/usr/share/zoneinfo/${TIMEZONE}" /etc/localtime 2>/dev/null || true
+echo "${TIMEZONE}" > /etc/timezone
+timedatectl set-timezone "${TIMEZONE}" 2>/dev/null || true
 
 step "WiFi country + rfkill-unblock boot service (needed for the USB radios)"
 raspi-config nonint do_wifi_country "$WIFI_COUNTRY" 2>/dev/null || true
