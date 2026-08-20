@@ -1,0 +1,5 @@
+[Unit]
+Description=GR86 parking sentry — alert on cabin movement while parked away
+[Service]
+Type=oneshot
+ExecStart=/opt/gr86/sentry.py

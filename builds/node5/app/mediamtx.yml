@@ -36,4 +36,5 @@ webrtcLocalUDPAddress: :8189
 
 paths:
   drone:
+  rear:
   all_others:

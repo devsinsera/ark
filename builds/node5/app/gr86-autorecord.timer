@@ -1,0 +1,8 @@
+[Unit]
+Description=Check whether the engine just started or stopped
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=20s
+AccuracySec=5s
+[Install]
+WantedBy=timers.target

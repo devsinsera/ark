@@ -206,6 +206,23 @@ class ELM327:
 
 # ── BLE discovery ──────────────────────────────────────────────────────────
 
+
+OBD_STATE_FILE = os.environ.get('OBD_STATE', '/run/gr86/obd.json')
+
+
+def _publish_live(row):
+    """Mirror the newest sample to a local file for the camera overlay."""
+    try:
+        os.makedirs(os.path.dirname(OBD_STATE_FILE), exist_ok=True)
+        tmp = OBD_STATE_FILE + '.tmp'
+        with open(tmp, 'w') as fh:
+            json.dump({k: row.get(k) for k in
+                       ('speed_kph', 'rpm', 'coolant_c', 'battery_v')}, fh)
+        os.replace(tmp, OBD_STATE_FILE)      # atomic: never a half-written file
+        os.chmod(OBD_STATE_FILE, 0o644)      # the camera runs as a different user
+    except Exception:
+        pass                                  # telemetry mirroring must never break logging
+
 async def discover_obdlink_uuids(client: BleakClient):
     """
     Walk the GATT tree and return (write_uuid, notify_uuid) for the
@@ -295,6 +312,7 @@ async def run_once():
                     if 'pids' not in row:
                         row['pids'] = pids_extra
                     buffer.append(row)
+                    _publish_live(row)
 
                     if len(buffer) >= BATCH_SIZE:
                         await sb.push_readings(list(buffer))

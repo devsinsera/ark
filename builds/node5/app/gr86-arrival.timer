@@ -1,0 +1,8 @@
+[Unit]
+Description=Check whether the car just arrived home or left
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=60s
+AccuracySec=15s
+[Install]
+WantedBy=timers.target

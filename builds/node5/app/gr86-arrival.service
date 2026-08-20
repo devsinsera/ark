@@ -1,0 +1,5 @@
+[Unit]
+Description=GR86 — act on arriving home / leaving
+[Service]
+Type=oneshot
+ExecStart=/opt/gr86/arrival.sh

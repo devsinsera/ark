@@ -8,12 +8,34 @@ set -a; . "$AUTH"; set +a
 NODE=$(hostname)
 CORES=$(nproc)
 
-report() {
-  TOK=$(curl -s --max-time 12 -X POST "$SUPABASE_URL/auth/v1/token?grant_type=password" \
+
+token() {
+  curl -s --max-time 12 -X POST "$SUPABASE_URL/auth/v1/token?grant_type=password" \
     -H "apikey: $SUPABASE_ANON_KEY" -H "Content-Type: application/json" \
     -d "{\"email\":\"$VIGIL_EMAIL\",\"password\":\"$VIGIL_PASSWORD\"}" \
-    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null)
-  [ -n "$TOK" ] || return
+    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null
+}
+
+# --- token cache -------------------------------------------------------------
+# A full password sign-in per loop is what trips Supabase's per-account auth rate
+# limit (429), which also locks out the Vigil camera daemons on this account.
+# The JWT is good for an hour; refresh at 45 min, and drop it on a 401.
+TOK=""
+TOK_AT=0
+TOK_TTL=2700
+
+get_token() {
+  local now
+  now=$(date +%s)
+  if [ -z "$TOK" ] || [ $(( now - TOK_AT )) -ge $TOK_TTL ]; then
+    TOK=$(token)
+    [ -n "$TOK" ] && TOK_AT=$now
+  fi
+  [ -n "$TOK" ]
+}
+
+report() {
+  get_token || return
   CPU=$(awk -v c="$CORES" '{v=$1/c*100; print (v>100?100:int(v))}' /proc/loadavg)  # parens: awk treats bare > as redirect
   TEMP=$(awk '{printf "%.1f", $1/1000}' /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
   RAM=$(free | awk '/Mem:/{printf "%d", $3/$2*100}')

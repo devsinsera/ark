@@ -1,0 +1,5 @@
+[Unit]
+Description=GR86 — shut down cleanly once the car has been off a while
+[Service]
+Type=oneshot
+ExecStart=/opt/gr86/car-off-shutdown.sh

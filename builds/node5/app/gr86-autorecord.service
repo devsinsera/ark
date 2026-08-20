@@ -1,0 +1,5 @@
+[Unit]
+Description=GR86 — cabin recording follows the engine
+[Service]
+Type=oneshot
+ExecStart=/opt/gr86/autorecord.sh

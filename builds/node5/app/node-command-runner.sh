@@ -16,11 +16,33 @@ token() {
     | python3 -c 'import sys,json;print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null
 }
 
+# --- token cache -------------------------------------------------------------
+# A full password sign-in per loop is what trips Supabase's per-account auth rate
+# limit (429), which also locks out the Vigil camera daemons on this account.
+# The JWT is good for an hour; refresh at 45 min, and drop it on a 401.
+TOK=""
+TOK_AT=0
+TOK_TTL=2700
+
+get_token() {
+  local now
+  now=$(date +%s)
+  if [ -z "$TOK" ] || [ $(( now - TOK_AT )) -ge $TOK_TTL ]; then
+    TOK=$(token)
+    [ -n "$TOK" ] && TOK_AT=$now
+  fi
+  [ -n "$TOK" ]
+}
+
 poll() {
-  TOK=$(token); [ -n "$TOK" ] || return
-  ROW=$(curl -s --max-time 12 \
+  get_token || return
+  RESP=$(curl -s --max-time 12 -w "\n%{http_code}" \
     "$SUPABASE_URL/rest/v1/node_commands?node=eq.$NODE&status=eq.pending&order=created_at.asc&limit=1" \
     -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $TOK")
+  CODE=$(printf '%s' "$RESP" | tail -n1)
+  ROW=$(printf '%s' "$RESP" | sed '$d')
+  # expired/revoked token: bin it, next tick signs in again
+  if [ "$CODE" = "401" ] || [ "$CODE" = "403" ]; then TOK=""; return; fi
   ID=$(echo "$ROW"  | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d[0]["id"] if d else "")' 2>/dev/null)
   CMD=$(echo "$ROW" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d[0]["command"] if d else "")' 2>/dev/null)
   [ -n "$ID" ] || return

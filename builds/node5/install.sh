@@ -266,6 +266,43 @@ cp "$APPSRC/gr86-idle-shutdown.timer"   /etc/systemd/system/gr86-idle-shutdown.t
 systemctl enable gr86-store-forward.timer 2>/dev/null || true
 systemctl enable gr86-idle-shutdown.timer 2>/dev/null || true
 
+step "GR86 automations — arrival, sentry, auto-record, car-off shutdown"
+# Added 2026-08-20 after the first in-car run. All are edge-triggered and guarded
+# so they are inert at home and never fight a manual choice.
+cp "$APPSRC/arrival.sh"           /opt/gr86/arrival.sh
+cp "$APPSRC/sentry.py"            /opt/gr86/sentry.py
+cp "$APPSRC/autorecord.sh"        /opt/gr86/autorecord.sh
+cp "$APPSRC/car-off-shutdown.sh"  /opt/gr86/car-off-shutdown.sh
+chmod 755 /opt/gr86/arrival.sh /opt/gr86/sentry.py /opt/gr86/autorecord.sh /opt/gr86/car-off-shutdown.sh
+cp "$APPSRC/cloud-cameras.json"   /opt/gr86-hud/cloud-cameras.json
+for u in gr86-arrival gr86-sentry gr86-autorecord gr86-caroff; do
+  cp "$APPSRC/$u.service" /etc/systemd/system/$u.service
+  cp "$APPSRC/$u.timer"   /etc/systemd/system/$u.timer
+  systemctl enable $u.timer 2>/dev/null || true
+done
+
+step "Clock, journal and USB power — lessons from the first in-car run"
+# No RTC battery: the clock restores from the last save, so save every 5 minutes
+# instead of hourly or a cold boot in the car stamps recordings with a stale time.
+mkdir -p /etc/systemd/system/fake-hwclock-save.timer.d
+cat > /etc/systemd/system/fake-hwclock-save.timer.d/frequent.conf <<'EOF'
+[Timer]
+OnUnitActiveSec=5min
+AccuracySec=30s
+EOF
+# Keep the journal across power cycles — this node loses power without warning and
+# a RAM-only journal means no evidence of whatever went wrong.
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/persist.conf <<'EOF'
+[Journal]
+Storage=persistent
+SystemMaxUse=200M
+EOF
+# A car buck converter is not USB-PD, so the Pi 5 caps ALL usb peripherals at
+# 600mA unless told otherwise — and this node runs two radios plus a camera.
+grep -q '^usb_max_current_enable=1' /boot/firmware/config.txt 2>/dev/null || \
+  printf '\nusb_max_current_enable=1\n' >> /boot/firmware/config.txt
+
 step "Tailscale first-boot installer (no authkey baked)"
 cp "$APPSRC/tailscale-firstboot.sh" /opt/gr86/tailscale-firstboot.sh
 chmod 755 /opt/gr86/tailscale-firstboot.sh
