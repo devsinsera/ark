@@ -300,8 +300,20 @@ SystemMaxUse=200M
 EOF
 # A car buck converter is not USB-PD, so the Pi 5 caps ALL usb peripherals at
 # 600mA unless told otherwise — and this node runs two radios plus a camera.
-grep -q '^usb_max_current_enable=1' /boot/firmware/config.txt 2>/dev/null || \
-  printf '\nusb_max_current_enable=1\n' >> /boot/firmware/config.txt
+# Guarded: the recipe runs under `set -e`, and an unguarded append would abort
+# the whole bake (taking every later step with it) wherever boot is mounted
+# somewhere else — which is exactly what happened when this was first written.
+BOOTCFG=""
+for c in /boot/firmware/config.txt /boot/config.txt; do
+  [ -f "$c" ] && { BOOTCFG="$c"; break; }
+done
+if [ -n "$BOOTCFG" ]; then
+  grep -q '^usb_max_current_enable=1' "$BOOTCFG" || \
+    printf '\nusb_max_current_enable=1\n' >> "$BOOTCFG"
+  echo "  usb_max_current_enable=1 -> $BOOTCFG"
+else
+  echo "  no config.txt found — skipping the USB current setting (not fatal)"
+fi
 
 step "Tailscale first-boot installer (no authkey baked)"
 cp "$APPSRC/tailscale-firstboot.sh" /opt/gr86/tailscale-firstboot.sh
