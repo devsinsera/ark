@@ -34,6 +34,13 @@ webrtcAdditionalHosts: [192.168.42.1]
 # UDP media port — must stay open on the AP interface for WebRTC to flow.
 webrtcLocalUDPAddress: :8189
 
+record: yes
+recordPath: /var/lib/vigil/rec/drone/%path-%Y-%m-%d_%H-%M-%S-%f
+recordFormat: fmp4
+recordPartDuration: 1s
+recordSegmentDuration: 10m
+recordDeleteAfter: 72h
+
 paths:
   drone:
   rear:

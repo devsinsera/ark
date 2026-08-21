@@ -52,7 +52,7 @@ if [ "$NOW" = "home" ]; then
   # only count the rolling clips; saved/ is deliberate keepsakes, copied too but
   # never deleted here.
   N=$(find "$REC_DIR" -maxdepth 1 -name '*.mp4' 2>/dev/null | wc -l | tr -d ' ')
-  COPIED=0; HOST=""
+  COPIED=0; DRONE=0; HOST=""
   if [ "$N" -gt 0 ] && [ -f "$KEY" ]; then
     for h in $ARCHIVE_HOSTS; do
       if ssh -i "$KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 \
@@ -60,15 +60,27 @@ if [ "$NOW" = "home" ]; then
     done
     if [ -n "$HOST" ]; then
       # copy-only; deleting is a separate decision and needs verification first
-      if rsync -a --ignore-existing --timeout=60 \
+      # cabin clips sit at the top level; mediamtx writes drone recordings into
+      # rec/drone/, which a bare *.mp4 glob never matches. Ship both.
+      if rsync -a --ignore-existing --min-size=50k --timeout=60 \
            -e "ssh -i $KEY -o StrictHostKeyChecking=accept-new" \
            "$REC_DIR"/*.mp4 peta@"$HOST":"$ARCHIVE_PATH"/ 2>/dev/null; then
         COPIED=$N
       fi
+      if [ -d "$REC_DIR/drone" ]; then
+        DRONE=$(find "$REC_DIR/drone" -name '*.mp4' 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$DRONE" -gt 0 ]; then
+          ssh -i "$KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 \
+              peta@"$HOST" "mkdir -p $ARCHIVE_PATH/drone" 2>/dev/null
+          rsync -a --ignore-existing --min-size=50k --timeout=60 \
+            -e "ssh -i $KEY -o StrictHostKeyChecking=accept-new" \
+            "$REC_DIR"/drone/ peta@"$HOST":"$ARCHIVE_PATH"/drone/ 2>/dev/null || DRONE=0
+        fi
+      fi
     fi
   fi
-  log "arrived home; $N clips, $COPIED copied to ${HOST:-nowhere}"
-  alert "GR86 is home" "Back on the home network. ${COPIED} of ${N} clip(s) copied to Node 1."
+  log "arrived home; $N cabin clips ($COPIED copied), $DRONE drone recording(s) -> ${HOST:-nowhere}"
+  alert "GR86 is home" "Back on the home network. ${COPIED} of ${N} cabin clip(s) and ${DRONE} drone recording(s) copied to Node 3."
 else
   log "left home"
   alert "GR86 has left" "The car dropped off the home network."
