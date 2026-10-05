@@ -1,5 +1,8 @@
 # Node 5 — GR86 in-car Pi (Ark build recipe)
 
+> **Physical power / fuse-tap install:** [`Portals/Garage/GR86_NODE5_PI_ELECTRICAL_INSTALL.md`](../../../../Portals/Garage/GR86_NODE5_PI_ELECTRICAL_INSTALL.md) (Altronics M7832 + 22-step ACC/IGN tap). This README stays software/bake only.
+
+
 A **Pi 5 (2GB), HEADLESS** in-car hub for the GR86. No HDMI/X/chromium/display
 stack — you view the dashboard via a URL on the iPad/phone (over the Pi's own AP
 or the cloud HUD). Node 5 logs OBD and ties the car into the Sinsera fleet.
