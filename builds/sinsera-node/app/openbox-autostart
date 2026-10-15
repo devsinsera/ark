@@ -4,7 +4,6 @@ xset s off &
 xset -dpms &
 xset s noblank &
 xrandr --auto &
-unclutter -idle 0.1 -root &
 # Audio: once PipeWire is up in this session, unmute the (auto-selected, connected) HDMI sink
 # at a sane level so Chromium / web-app sound reaches the TV speakers. WirePlumber picks the
 # live HDMI as @DEFAULT_AUDIO_SINK@; nothing to hard-code per node.
@@ -12,6 +11,9 @@ unclutter -idle 0.1 -root &
   wpctl set-mute   @DEFAULT_AUDIO_SINK@ 0    2>/dev/null
   wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.80 2>/dev/null ) &
 [ -f /opt/sinsera-node/display.env ] && . /opt/sinsera-node/display.env
+# Hide the pointer after N seconds idle: 0.1 for touch screens, 8 for a node with a mouse
+# (KIOSK_CURSOR_HIDE_AFTER in display.env, read above). Sinsera Screen has its own pointer policy.
+[ "${KIOSK_BROWSER:-chromium}" = "sinsera-screen" ] || unclutter -idle "${KIOSK_CURSOR_HIDE_AFTER:-0.1}" -root &
 DSF="${KIOSK_SCALE:-1.0}"
 # Clear chromium's HTTP/GPU cache ONCE per session (not per relaunch) so a stale cache
 # after a reboot can't leave the wall on a white screen. Login/session live elsewhere.
@@ -24,6 +26,13 @@ while true; do
   # via refresh grant — a relaunch hours after boot must not wake signed out).
   /usr/local/bin/sinsera-kiosk-freshurl.sh 2>/dev/null || true
   URL=$(cat /tmp/kiosk_url 2>/dev/null); [ -n "$URL" ] || URL="https://sinsera.co/?kiosk=1"
+  # KIOSK_BROWSER=sinsera-screen (display.env) runs the Sinsera Screen app instead of Chromium. Three
+  # quick exits in a row and this loop falls back to Chromium, so a screen is never left blank.
+  if [ "${KIOSK_BROWSER:-chromium}" = "sinsera-screen" ] && command -v sinsera-screen >/dev/null 2>&1 && [ "${SS_FAILS:-0}" -lt 3 ]; then
+    SS_T0=$(date +%s)
+    sinsera-screen >>/var/log/sinsera-kiosk.log 2>&1
+    if [ $(( $(date +%s) - SS_T0 )) -lt 20 ]; then SS_FAILS=$(( ${SS_FAILS:-0} + 1 )); else SS_FAILS=0; fi
+  else
   chromium \
     --kiosk --noerrdialogs --disable-infobars --no-first-run --start-maximized \
     --disable-session-crashed-bubble --disable-features=Translate \
@@ -31,5 +40,6 @@ while true; do
     --force-device-scale-factor="$DSF" \
     --user-data-dir=/home/kiosk/.config/chromium \
     "$URL" >>/var/log/sinsera-kiosk.log 2>&1
+  fi
   sleep 3
 done &

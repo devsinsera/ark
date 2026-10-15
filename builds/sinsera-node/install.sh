@@ -144,7 +144,7 @@ echo "XCURSOR_THEME=blank" > /opt/sinsera-node/cursor.env
 # Per-node display config the launcher reads (what to show + cursor/zoom/scale). This base image
 # is Node 2 (bedroom 18.5" touchscreen) → the weather module, touch (no forced cursor). The bake
 # overwrites display.env on Node 3 (lounge) to point at the LAN camera wall.
-printf 'KIOSK_VIEW=/weather\nKIOSK_CURSOR=\nKIOSK_ZOOM=\nKIOSK_SCALE=1.0\n' > /opt/sinsera-node/display.env
+printf 'KIOSK_VIEW=/weather\nKIOSK_CURSOR=\nKIOSK_ZOOM=\nKIOSK_SCALE=1.0\nKIOSK_CURSOR_HIDE_AFTER=\nKIOSK_BROWSER=chromium\n' > /opt/sinsera-node/display.env
 
 step "keep wifi awake — disable power-save (the classic Pi 'drops off the network' cause)"
 cat > /etc/systemd/system/wifi-powersave-off.service <<'WP'
