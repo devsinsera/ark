@@ -412,13 +412,23 @@ def drive_summary():
             _cloud["drive"] = (now, out)
             return out
         sess = sessions[0]
-        req = urllib.request.Request(
-            _cloud["url"] + "/rest/v1/garage_obd_readings"
-            f"?select=sampled_at,speed_kph,rpm,coolant_c,battery_v"
-            f"&session_id=eq.{sess['id']}&order=sampled_at.asc&limit=5000",
-            headers={"apikey": _cloud["key"], "Authorization": "Bearer " + tok})
-        with urllib.request.urlopen(req, timeout=20) as r:
-            rows = json.loads(r.read().decode())
+        # The WHOLE drive, a page at a time (13 Nov 2026). This asked for 5,000 readings in one
+        # request, but the cloud returns at most 1,000 whatever is asked — so the last-drive card
+        # (top speed, averages, length) was worked out from the first 1,000 samples of the drive only.
+        rows = []
+        offset = 0
+        while offset < 500000:
+            req = urllib.request.Request(
+                _cloud["url"] + "/rest/v1/garage_obd_readings"
+                f"?select=sampled_at,speed_kph,rpm,coolant_c,battery_v"
+                f"&session_id=eq.{sess['id']}&order=sampled_at.asc,id.asc&limit=1000&offset={offset}",
+                headers={"apikey": _cloud["key"], "Authorization": "Bearer " + tok})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                page = json.loads(r.read().decode())
+            rows.extend(page)
+            if len(page) < 1000:
+                break
+            offset += 1000
     except Exception:
         return hit[1] if hit else None
 
