@@ -45,6 +45,10 @@ LATEST = _Latest()
 
 class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    # Socket timeout: a viewer that vanishes without closing (Wi-Fi drop, kiosk
+    # reload, iPad asleep, this node's IP changing) used to hold its socket and
+    # thread forever; at 1,024 open files the camera stopped accepting anyone.
+    timeout = 30
 
     def log_message(self, *a):  # quiet
         pass
@@ -87,7 +91,7 @@ class _Handler(BaseHTTPRequestHandler):
                         continue
                     self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
                                      + str(len(buf)).encode() + b"\r\n\r\n" + buf + b"\r\n")
-            except (BrokenPipeError, ConnectionResetError):
+            except OSError:  # broken pipe, reset, or the 30 s timeout on a dead viewer
                 return
             return
         if p == "/rec" or p == "/rec/":
